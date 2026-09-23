@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "outDir": "dist-worker",
+    "rootDir": "src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "verbatimModuleSyntax": true
+  },
+  "include": [
+    "src/composition/worker.ts",
+    "src/composition/worker-process.ts",
+    "src/modules/jobs/**/*.ts",
+    "src/shared/infrastructure/config/**/*.ts",
+    "src/shared/infrastructure/logging/**/*.ts",
+    "src/shared/infrastructure/database/database-worker.ts",
+    "src/shared/infrastructure/database/schema.ts",
+    "src/shared/infrastructure/database/migrate.ts"
+  ]
+}

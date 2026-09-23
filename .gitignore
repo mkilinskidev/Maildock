@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next*/
+dist/
+dist-worker/
+build/
+coverage/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+attachments/
+
+# Tooling and operating systems
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

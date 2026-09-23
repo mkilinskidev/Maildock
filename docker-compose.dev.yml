@@ -1,0 +1,10 @@
+services:
+  app:
+    environment:
+      MAILDOCK_ENV: development
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

@@ -1,0 +1,11 @@
+allowBuilds:
+  cpu-features: false
+  esbuild: true
+  protobufjs: true
+  ssh2: false
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - dompurify@3.4.16
+  - imapflow@2.0.6
+  - pg-boss@12.33.7
+  - prettier@3.9.9

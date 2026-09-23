@@ -1,0 +1,55 @@
+{
+  "name": "maildock",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-user, self-hosted web mail application",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && tsc -p tsconfig.worker.json",
+    "start": "next start",
+    "start:worker": "node dist-worker/composition/worker-process.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/shared/infrastructure/database/migrate.ts",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@node-rs/argon2": "2.2.1",
+    "better-auth": "1.7.5",
+    "dompurify": "3.4.16",
+    "drizzle-orm": "0.45.3",
+    "imapflow": "2.0.6",
+    "jsdom": "30.1.1",
+    "mailparser": "3.9.28",
+    "next": "16.3.6",
+    "nodemailer": "10.0.10",
+    "pg-boss": "12.33.7",
+    "pino": "10.3.1",
+    "postgres": "3.4.9",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/jsdom": "30.0.0",
+    "@types/node": "24.10.9",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "drizzle-kit": "0.31.11",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.6",
+    "prettier": "3.9.9",
+    "testcontainers": "12.1.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.1"
+  }
+}

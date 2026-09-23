@@ -1,0 +1,5 @@
+.next
+dist-worker
+node_modules
+pnpm-lock.yaml
+coverage
