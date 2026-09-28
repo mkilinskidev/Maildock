@@ -538,14 +538,42 @@ export class ImapSmtpMailProvider implements MailProvider {
           downloaded.meta.filename
         )
           throw new Error("MIME part is an attachment.");
-        // ImapFlow download() decodes base64/quoted-printable and converts known
-        // declared charsets to UTF-8. Never decode those stages a second time.
+        // ImapFlow 2.0.6 download() decodes transfer encoding (or accepts
+        // server-decoded BINARY) and converts recognized text charsets to UTF-8.
+        // On successful conversion it changes meta.charset to "utf-8"; an
+        // unsupported charset remains unchanged with unconverted bytes.
         const charset = downloaded.meta.charset
           ?.toLowerCase()
           .replace(/[^a-z0-9]/g, "");
         if (charset && !["utf8", "ascii", "usascii"].includes(charset))
-          throw new Error("Unsupported message charset.");
-        const value = Buffer.concat(chunks).toString("utf8");
+          throw new MailProviderOperationError({
+            success: false,
+            category: "verification_failed",
+            message: "Unsupported message charset.",
+          });
+        const bytes = Buffer.concat(chunks);
+        if (
+          (charset === "ascii" || charset === "usascii") &&
+          bytes.some((byte) => byte > 0x7f)
+        )
+          throw new MailProviderOperationError({
+            success: false,
+            category: "verification_failed",
+            message: "Message text does not match its declared charset.",
+          });
+        let value: string;
+        try {
+          // Missing charset is accepted only when the resulting bytes really
+          // are UTF-8. Fatal decoding avoids silent replacement characters.
+          value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          throw new MailProviderOperationError({
+            success: false,
+            category: "verification_failed",
+            message:
+              "Message text is not valid UTF-8 after charset conversion.",
+          });
+        }
         if (selectedPart.type === "text/plain") result.plainText = value;
         else result.html = value;
       }
