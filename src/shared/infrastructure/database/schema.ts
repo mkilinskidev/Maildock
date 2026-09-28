@@ -431,6 +431,36 @@ export const mailboxMessages = pgTable(
   ],
 );
 
+export const messageContents = pgTable(
+  "message_contents",
+  {
+    messageId: uuid("message_id")
+      .primaryKey()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    status: text("status").default("not_fetched").notNull(),
+    plainText: text("plain_text"),
+    sanitizedHtml: text("sanitized_html"),
+    remoteContentBlocked: boolean("remote_content_blocked")
+      .default(false)
+      .notNull(),
+    policyVersion: text("policy_version"),
+    error: text("error"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "message_contents_status",
+      sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,
+    ),
+  ],
+);
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
@@ -489,6 +519,7 @@ export const schema = {
   mailboxes,
   messages,
   mailboxMessages,
+  messageContents,
   userRelations,
   sessionRelations,
   accountRelations,

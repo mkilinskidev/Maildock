@@ -24,9 +24,9 @@ MIME HTML
 → frame-specific strict CSP
 ```
 
-The initial sanitizer policy identifier will be versioned (starting with `email-html-v1`) so stored sanitized output can be invalidated and regenerated. The exact allowlist is finalized with message rendering, but it must remove scripts, forms, frames, active embeds, event handlers, unsafe SVG, dangerous URL schemes, and CSS that can load remote resources or escape the presentation boundary.
+Phase 1D stores the `email-html-v1` sanitizer policy identifier. DOMPurify uses the HTML-only profile, removes scripts, forms, frames, embeds, SVG, MathML, media, resource-bearing tags, sender `<style>` and `style`, event handlers, and unsafe URLs. A second DOM pass removes all resource URL attributes, IDs and names, and retains only explicit `http:`, `https:`, and `mailto:` links. CID images are unavailable. Only sanitized HTML is stored; raw HTML and RFC822 source are not.
 
-The iframe receives no `allow-scripts`, `allow-forms`, `allow-same-origin`, or `allow-popups` capability. Its CSP starts from `default-src 'none'`; only explicitly authorized local/CID and safe data resources may be added. Remote HTTP/HTTPS resources are blocked by default and require an explicit owner action through a privacy-preserving path.
+The iframe has an empty sandbox and receives no `allow-scripts`, `allow-forms`, `allow-same-origin`, or `allow-popups` capability. Its CSP uses `default-src 'none'` and explicitly blocks scripts, objects, frames, connections, images, media, fonts, form actions, and base URLs. Frame-local `style-src 'unsafe-inline'` permits Maildock-owned typography CSS only, after sender CSS has been removed. Remote HTTP/HTTPS resources are blocked by default. Phase 1D has no remote-image loading action or proxy.
 
 Do not use happy-dom for this boundary and do not inject sanitized mail HTML directly into the application DOM.
 
@@ -40,4 +40,4 @@ Do not use happy-dom for this boundary and do not inject sanitized mail HTML dir
 
 - jsdom is part of the trusted computing base and must receive prompt security updates.
 - Sanitizer and browser rendering tests must use the exact deployed parser and policy.
-- Phase 0 records the boundary but does not implement message rendering.
+- Phase 1D implements the boundary and tests adversarial HTML output.

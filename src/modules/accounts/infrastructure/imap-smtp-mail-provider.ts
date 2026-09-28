@@ -8,12 +8,16 @@ import {
   type MessageStructureObject,
 } from "imapflow";
 import nodemailer from "nodemailer";
+import type { Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 import type SMTPTransport from "nodemailer/lib/smtp-transport";
 
 import {
   MailProviderOperationError,
   relevantImapCapabilities,
   type ConnectionFailureCategory,
+  type DisplayContentRequest,
+  type DisplayContentResult,
   type ConnectionReport,
   type MailboxDiscoveryResult,
   type MailProvider,
@@ -55,6 +59,19 @@ type ImapClient = {
     options: { readOnly: boolean },
   ): Promise<{ uidValidity: bigint }>;
   mailboxClose(): Promise<boolean>;
+  download(
+    range: number,
+    part: string,
+    options: { uid: true; maxBytes: number },
+  ): Promise<{
+    meta: {
+      charset?: string;
+      contentType?: string;
+      disposition?: string | false;
+      filename?: string;
+    };
+    content: Readable;
+  }>;
   search(
     query: { since: Date },
     options: { uid: true },
@@ -447,6 +464,102 @@ export class ImapSmtpMailProvider implements MailProvider {
           await client.mailboxClose();
         } catch {
           /* logout/close remains authoritative */
+        }
+      }
+      if (connected) {
+        try {
+          await client.logout();
+        } catch {
+          /* close below */
+        }
+      }
+      client.close();
+    }
+  }
+
+  async fetchMessageContent(
+    account: ProviderImapAccount,
+    request: DisplayContentRequest,
+  ): Promise<DisplayContentResult> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    let connected = false;
+    let selected = false;
+    try {
+      const uid = Number(request.uid);
+      if (!Number.isSafeInteger(uid) || uid < 1)
+        throw new Error("Invalid remote UID.");
+      await client.connect();
+      connected = true;
+      const mailbox = await client.mailboxOpen(request.remotePath, {
+        readOnly: true,
+      });
+      selected = true;
+      if (mailbox.uidValidity.toString(10) !== request.expectedUidValidity)
+        throw new Error("Mailbox UIDVALIDITY changed.");
+      const result: { plainText: string | null; html: string | null } = {
+        plainText: null,
+        html: null,
+      };
+      for (const selectedPart of request.parts) {
+        if (!/^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(selectedPart.part))
+          throw new Error("Invalid MIME part.");
+        const downloaded = await client.download(uid, selectedPart.part, {
+          uid: true,
+          maxBytes: request.maxPartBytes + 1,
+        });
+        if (!downloaded.content)
+          throw new Error("Selected MIME part is unavailable.");
+        const chunks: Buffer[] = [];
+        let length = 0;
+        try {
+          for await (const chunk of downloaded.content) {
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            length += bytes.length;
+            if (length > request.maxPartBytes)
+              throw new MailProviderOperationError({
+                success: false,
+                category: "verification_failed",
+                message: "Message text part exceeds the configured size limit.",
+              });
+            chunks.push(bytes);
+          }
+        } catch (error) {
+          downloaded.content.destroy();
+          await finished(downloaded.content).catch(() => undefined);
+          throw error;
+        }
+        if (
+          downloaded.meta.contentType &&
+          downloaded.meta.contentType !== selectedPart.type
+        )
+          throw new Error("MIME part type changed.");
+        if (
+          downloaded.meta.disposition === "attachment" ||
+          downloaded.meta.filename
+        )
+          throw new Error("MIME part is an attachment.");
+        // ImapFlow download() decodes base64/quoted-printable and converts known
+        // declared charsets to UTF-8. Never decode those stages a second time.
+        const charset = downloaded.meta.charset
+          ?.toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
+        if (charset && !["utf8", "ascii", "usascii"].includes(charset))
+          throw new Error("Unsupported message charset.");
+        const value = Buffer.concat(chunks).toString("utf8");
+        if (selectedPart.type === "text/plain") result.plainText = value;
+        else result.html = value;
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof MailProviderOperationError) throw error;
+      // Avoid leaking server text, paths, or message data through job failures.
+      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+    } finally {
+      if (selected) {
+        try {
+          await client.mailboxClose();
+        } catch {
+          /* close below */
         }
       }
       if (connected) {

@@ -49,6 +49,9 @@ function factories(input?: {
       mailboxClose: async () => true,
       search: async () => [],
       fetch: async function* () {},
+      download: async () => {
+        throw new Error("Unexpected download");
+      },
       logout: async () => undefined,
       close: () => {
         state.imapClosed += 1;
@@ -395,6 +398,9 @@ describe("Phase 1C metadata normalization", () => {
               internalDate: new Date("2026-09-01T00:00:00Z"),
               size: 10,
             };
+        },
+        download: async () => {
+          throw new Error("Unexpected download");
         },
         logout: async () => undefined,
         close: () => undefined,

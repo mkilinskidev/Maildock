@@ -1,6 +1,7 @@
 import { createWorkerComposition } from "./worker.js";
 import { registerMailboxDiscoveryWorker } from "../modules/mail/infrastructure/mailbox-discovery-jobs.js";
 import { registerRecentSyncWorker } from "../modules/mail/infrastructure/recent-sync-jobs.js";
+import { registerContentWorker } from "../modules/mail/infrastructure/content-jobs.js";
 
 const worker = createWorkerComposition();
 let stopping = false;
@@ -35,6 +36,7 @@ try {
     worker.messages,
     worker.config.messageSyncConcurrency,
   );
+  await registerContentWorker(worker.jobs.boss, worker.content);
   await registerMailboxDiscoveryWorker(
     worker.jobs.boss,
     worker.mailboxDiscovery,

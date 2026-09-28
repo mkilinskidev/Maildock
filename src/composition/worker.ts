@@ -9,6 +9,7 @@ import { MailboxService } from "../modules/mail/application/mailbox-service.js";
 import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-discovery-service.js";
 import { MessageService } from "../modules/mail/application/message-service.js";
 import { MAILBOX_RECENT_SYNC_QUEUE } from "../modules/mail/infrastructure/recent-sync-jobs.js";
+import { MessageContentService } from "../modules/mail/application/message-content-service.js";
 
 export function createWorkerComposition() {
   const config = getConfig();
@@ -50,5 +51,12 @@ export function createWorkerComposition() {
       messages,
     ),
     messages,
+    content: new MessageContentService(
+      database.db,
+      undefined,
+      accounts,
+      provider,
+      config,
+    ),
   };
 }

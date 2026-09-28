@@ -7,6 +7,8 @@ import { MailboxService } from "@/modules/mail/application/mailbox-service";
 import { PgBossMailboxDiscoveryScheduler } from "@/modules/mail/infrastructure/mailbox-discovery-jobs";
 import { MessageService } from "@/modules/mail/application/message-service";
 import { PgBossRecentSyncScheduler } from "@/modules/mail/infrastructure/recent-sync-jobs";
+import { MessageContentService } from "@/modules/mail/application/message-content-service";
+import { PgBossContentScheduler } from "@/modules/mail/infrastructure/content-jobs";
 
 const config = getConfig();
 const encryption = new AesGcmSecretEncryption(
@@ -28,4 +30,8 @@ export const messageService = new MessageService(
   undefined,
   undefined,
   new PgBossRecentSyncScheduler(config),
+);
+export const messageContentService = new MessageContentService(
+  db,
+  new PgBossContentScheduler(config),
 );

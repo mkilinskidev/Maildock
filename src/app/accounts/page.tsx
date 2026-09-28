@@ -1,16 +1,14 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getCurrentSession } from "@/modules/auth/application/session";
-import { isInstanceInitialized } from "@/modules/auth/application/instance-auth";
+import { AccountList } from "@/components/account-list";
 import {
   accountsService,
   mailboxService,
 } from "@/modules/accounts/infrastructure/accounts";
-import { db } from "@/shared/infrastructure/database/runtime-database";
-import { MailClient } from "@/components/mail-client";
 
 export const dynamic = "force-dynamic";
-export default async function HomePage() {
-  if (!(await isInstanceInitialized(db))) redirect("/setup");
+export default async function AccountsPage() {
   if (!(await getCurrentSession())) redirect("/login");
   const accounts = await accountsService.list();
   const entries = await Promise.all(
@@ -20,9 +18,19 @@ export default async function HomePage() {
     ),
   );
   return (
-    <MailClient
-      accounts={accounts}
-      mailboxesByAccount={Object.fromEntries(entries)}
-    />
+    <main className="page-shell">
+      <section className="wide">
+        <header className="page-header">
+          <h1>Accounts</h1>
+          <Link className="button-link" href="/">
+            Back to mail
+          </Link>
+        </header>
+        <AccountList
+          accounts={accounts}
+          mailboxesByAccount={Object.fromEntries(entries)}
+        />
+      </section>
+    </main>
   );
 }

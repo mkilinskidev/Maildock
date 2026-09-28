@@ -84,6 +84,12 @@ const schema = z
       .min(1)
       .max(10)
       .default(2),
+    MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(20 * 1024 * 1024)
+      .default(5 * 1024 * 1024),
   })
   .superRefine((value, context) => {
     const origin = new URL(value.APP_ORIGIN);
@@ -126,6 +132,7 @@ export type AppConfig = Readonly<{
   initialSyncDays: number;
   messageFetchBatchSize: number;
   messageSyncConcurrency: number;
+  maxMessageTextPartBytes: number;
 }>;
 
 export class ConfigurationError extends Error {
@@ -169,6 +176,7 @@ export function parseConfig(
     initialSyncDays: result.data.MAILDOCK_INITIAL_SYNC_DAYS,
     messageFetchBatchSize: result.data.MAILDOCK_MESSAGE_FETCH_BATCH_SIZE,
     messageSyncConcurrency: result.data.MAILDOCK_MESSAGE_SYNC_CONCURRENCY,
+    maxMessageTextPartBytes: result.data.MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES,
   });
 }
 

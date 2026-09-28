@@ -141,6 +141,21 @@ export type RecentMailboxSyncResult = Readonly<{
   messageCount: number;
 }>;
 
+export type DisplayContentRequest = Readonly<{
+  remotePath: string;
+  uid: string;
+  expectedUidValidity: string;
+  parts: readonly Readonly<{
+    part: string;
+    type: "text/plain" | "text/html";
+  }>[];
+  maxPartBytes: number;
+}>;
+export type DisplayContentResult = Readonly<{
+  plainText: string | null;
+  html: string | null;
+}>;
+
 export interface MailProvider {
   testConnection(account: ProviderAccount): Promise<ConnectionReport>;
   listMailboxes(account: ProviderImapAccount): Promise<MailboxDiscoveryResult>;
@@ -149,4 +164,8 @@ export interface MailProvider {
     request: RecentMailboxSyncRequest,
     sink: RecentMailboxSyncSink,
   ): Promise<RecentMailboxSyncResult>;
+  fetchMessageContent(
+    account: ProviderImapAccount,
+    request: DisplayContentRequest,
+  ): Promise<DisplayContentResult>;
 }

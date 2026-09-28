@@ -30,6 +30,10 @@ import {
   MessageService,
   MailboxNotSynchronizableError,
 } from "@/modules/mail/application/message-service";
+import {
+  MessageContentService,
+  MessagePlacementNotFoundError,
+} from "@/modules/mail/application/message-content-service";
 import { PgBossMailboxDiscoveryScheduler } from "@/modules/mail/infrastructure/mailbox-discovery-jobs";
 import { AesGcmSecretEncryption } from "@/shared/infrastructure/crypto/aes-gcm-secret-encryption";
 import { getValidSession } from "@/modules/auth/application/session-validation";
@@ -52,6 +56,7 @@ import {
   mailboxes,
   messages,
   mailboxMessages,
+  messageContents,
   rateLimit,
   session,
   user,
@@ -255,6 +260,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
 
   it("stores encrypted account credentials, preserves or replaces them deliberately, and never returns them", async () => {
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       synchronizeRecentMailbox: unusedRecentSync,
       testConnection: async () => ({
         imap: { success: true },
@@ -358,6 +364,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
 
   it("records separate connection outcomes and deletes an account", async () => {
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       synchronizeRecentMailbox: unusedRecentSync,
       testConnection: async () => ({
         imap: { success: true },
@@ -409,6 +416,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
   it("schedules initial discovery after account persistence", async () => {
     const scheduled: string[] = [];
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       synchronizeRecentMailbox: unusedRecentSync,
       testConnection: async () => ({
         imap: { success: true },
@@ -457,6 +465,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
 
   it("keeps active path identity idempotent but gives recreated paths new UUIDs", async () => {
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       synchronizeRecentMailbox: unusedRecentSync,
       testConnection: async () => ({
         imap: { success: true },
@@ -705,6 +714,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
     let attempt = 0;
     let providerCalls = 0;
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       synchronizeRecentMailbox: unusedRecentSync,
       testConnection: async () => ({
         imap: { success: true },
@@ -908,6 +918,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
     let providerCalls = 0;
     let failAfterCommittedBatch = false;
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       testConnection: async () => ({
         imap: { success: true },
         smtp: { success: true },
@@ -1042,6 +1053,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
   it("rejects non-selectable recent sync before provider work", async () => {
     let providerCalls = 0;
     const provider: MailProvider = {
+      fetchMessageContent: async () => ({ plainText: null, html: null }),
       testConnection: async () => ({
         imap: { success: true },
         smtp: { success: true },
@@ -1104,5 +1116,220 @@ describe("Phase 0 PostgreSQL foundations", () => {
       ),
     ).rejects.toBeInstanceOf(MailboxNotSynchronizableError);
     expect(providerCalls).toBe(0);
+  });
+  it("fetches display content asynchronously through local state and keeps it offline", async () => {
+    const encryption = new AesGcmSecretEncryption(
+      config.credentialsEncryption.activeKeyId,
+      config.credentialsEncryption.keys,
+    );
+    let downloads = 0;
+    let fail = false;
+    const provider: MailProvider = {
+      testConnection: async () => ({
+        imap: { success: true },
+        smtp: { success: true },
+      }),
+      listMailboxes: async () => ({ mailboxes: [], capabilities: [] }),
+      synchronizeRecentMailbox: unusedRecentSync,
+      fetchMessageContent: async (_account, request) => {
+        downloads++;
+        expect(request).toMatchObject({
+          expectedUidValidity: "5",
+          parts: [{ part: "1", type: "text/html" }],
+        });
+        if (fail) throw new Error("server password=secret");
+        return {
+          plainText: null,
+          html: '<p>Hello</p><img src="https://tracker.example/x">',
+        };
+      },
+    };
+    const accounts = new AccountsService(db, encryption, provider);
+    const accountId = "00000000-0000-4000-8000-000000000081";
+    await accounts.create({
+      id: accountId,
+      displayName: "Content",
+      email: "content@example.test",
+      enabled: false,
+      providerType: "imap_smtp",
+      imap: {
+        host: "imap.example.test",
+        port: 993,
+        security: "tls",
+        username: "owner",
+        password: "secret",
+      },
+      smtp: {
+        host: "smtp.example.test",
+        port: 465,
+        security: "tls",
+        useImapCredentials: true,
+      },
+    });
+    await db
+      .update(mailAccounts)
+      .set({ enabled: true })
+      .where(eq(mailAccounts.id, accountId));
+    const mailService = new MailboxService(db);
+    await mailService.reconcile(accountId, [
+      {
+        remotePath: "INBOX",
+        name: "INBOX",
+        delimiter: "/",
+        attributes: [],
+        selectable: true,
+        specialUse: ["\\Inbox"],
+        uidValidity: "5",
+      },
+    ]);
+    const mailbox = (await mailService.listForAccount(accountId))[0]!;
+    await db
+      .update(mailboxes)
+      .set({ recentSyncUidValidity: 5n })
+      .where(eq(mailboxes.id, mailbox.id));
+    const metadata: RemoteMessageMetadata = {
+      uid: "42",
+      internalDate: "2026-09-20T10:00:00.000Z",
+      size: "100",
+      flags: [],
+      envelope: {
+        subject: "Content",
+        from: [{ address: "sender@example.test" }],
+        sender: [],
+        replyTo: [],
+        to: [],
+        cc: [],
+        bcc: [],
+      },
+      mimeStructure: {
+        part: "1",
+        type: "text/html",
+        disposition: null,
+        filename: null,
+        encoding: "quoted-printable",
+        size: "100",
+        contentId: null,
+        parameters: { charset: "utf-8" },
+        dispositionParameters: {},
+        children: [],
+      },
+      hasAttachments: false,
+    };
+    await new MessageService(db).persistBatch(accountId, mailbox.id, 5n, [
+      metadata,
+    ]);
+    const message = (await db.select().from(messages))[0]!;
+    let scheduled = 0;
+    const service = new MessageContentService(
+      db,
+      {
+        schedule: async () => {
+          scheduled++;
+          return true;
+        },
+      },
+      accounts,
+      provider,
+      config,
+    );
+    expect(
+      (await service.detail(accountId, mailbox.id, message.id)).content.status,
+    ).toBe("not_fetched");
+    expect(downloads).toBe(0);
+    expect(await service.request(accountId, mailbox.id, message.id)).toBe(true);
+    expect(
+      (await service.detail(accountId, mailbox.id, message.id)).content.status,
+    ).toBe("pending");
+    expect(await service.request(accountId, mailbox.id, message.id)).toBe(
+      false,
+    );
+    expect(scheduled).toBe(1);
+    await service.run(accountId, mailbox.id, message.id);
+    const ready = await service.detail(accountId, mailbox.id, message.id);
+    expect(ready.content).toMatchObject({
+      status: "ready",
+      remoteContentBlocked: true,
+    });
+    expect(ready.content.sanitizedHtml).toContain("Hello");
+    expect(ready.content.sanitizedHtml).not.toContain("tracker.example");
+    expect((await db.select().from(messageContents))[0]?.sanitizedHtml).toBe(
+      ready.content.sanitizedHtml,
+    );
+    expect(await service.request(accountId, mailbox.id, message.id)).toBe(
+      false,
+    );
+    fail = true;
+    await service.run(accountId, mailbox.id, message.id);
+    expect(downloads).toBe(1);
+    expect(
+      (await service.detail(accountId, mailbox.id, message.id)).content.status,
+    ).toBe("ready");
+    await new MessageService(db).persistBatch(accountId, mailbox.id, 5n, [
+      { ...metadata, uid: "43" },
+    ]);
+    const second = (await db.select().from(mailboxMessages)).find(
+      (item) => item.uid === 43n,
+    )!;
+    expect(await service.request(accountId, mailbox.id, second.messageId)).toBe(
+      true,
+    );
+    await expect(
+      service.run(accountId, mailbox.id, second.messageId),
+    ).rejects.toThrow("Message content could not be fetched.");
+    const failed = await service.detail(
+      accountId,
+      mailbox.id,
+      second.messageId,
+    );
+    expect(failed.content.status).toBe("failed");
+    expect(failed.content.error).not.toContain("password");
+    fail = false;
+    expect(await service.request(accountId, mailbox.id, second.messageId)).toBe(
+      true,
+    );
+    await service.run(accountId, mailbox.id, second.messageId);
+    expect(
+      (await service.detail(accountId, mailbox.id, second.messageId)).content
+        .status,
+    ).toBe("ready");
+    await new MessageService(db).persistBatch(accountId, mailbox.id, 5n, [
+      { ...metadata, uid: "44" },
+    ]);
+    const third = (await db.select().from(mailboxMessages)).find(
+      (item) => item.uid === 44n,
+    )!;
+    await db
+      .update(mailboxes)
+      .set({ recentSyncUidValidity: 6n })
+      .where(eq(mailboxes.id, mailbox.id));
+    expect(await service.request(accountId, mailbox.id, third.messageId)).toBe(
+      true,
+    );
+    const beforeStale = downloads;
+    await expect(
+      service.run(accountId, mailbox.id, third.messageId),
+    ).rejects.toThrow("Mailbox UIDVALIDITY changed");
+    expect(downloads).toBe(beforeStale);
+    expect(
+      (await service.detail(accountId, mailbox.id, third.messageId)).content
+        .status,
+    ).toBe("failed");
+    await expect(
+      service.detail(
+        accountId,
+        mailbox.id,
+        "00000000-0000-4000-8000-000000000099",
+      ),
+    ).rejects.toBeInstanceOf(MessagePlacementNotFoundError);
+    await db
+      .update(mailAccounts)
+      .set({ enabled: false })
+      .where(eq(mailAccounts.id, accountId));
+    await expect(
+      service.request(accountId, mailbox.id, third.messageId),
+    ).rejects.toThrow("disabled");
+    expect(
+      (await service.detail(accountId, mailbox.id, message.id)).content.status,
+    ).toBe("ready");
   });
 });

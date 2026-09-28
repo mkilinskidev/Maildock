@@ -43,6 +43,13 @@
       "when": 1790231042793,
       "tag": "0005_nosy_lightspeed",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790596388060,
+      "tag": "0006_glorious_exiles",
+      "breakpoints": true
     }
   ]
 }

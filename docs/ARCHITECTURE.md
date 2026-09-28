@@ -535,7 +535,7 @@ Status: bootstrap implemented. ADRs 0002 through 0008 resolve the Phase 0 techno
 ### Phase 4 — search and hardening
 
 - PostgreSQL full-text search and filters.
-- HTML rendering isolation, remote-image controls, security headers, and non-login rate/size limits.
+- Optional remote-image controls, broader security headers, and non-login rate/size limits. Phase 1D already isolates sanitized HTML and blocks remote resources by default.
 - Backup/restore documentation, metrics, operational screens, and failure recovery.
 
 ## 23. Definition of done for each feature
@@ -558,7 +558,7 @@ A feature is not complete unless:
 
 Phase 0 decisions are recorded in ADRs 0002 through 0008. The following implementation details remain deliberately deferred until their owning phase:
 
-- the exact `email-html-v1` sanitizer allowlist and CSS transformation rules, within ADR 0007's fixed isolation boundary
+- any future sender-CSS support beyond the Phase 1D `email-html-v1` policy, which removes sender CSS entirely
 - raw-MIME pruning controls and production capacity guidance; retention by default is fixed by ADR 0008
 - detailed sync-progress UI when a provider cannot report a stable total
 - optional attachment auto-cache policies beyond the V1 on-demand default
