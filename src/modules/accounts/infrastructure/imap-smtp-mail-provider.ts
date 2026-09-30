@@ -36,6 +36,8 @@ import {
   type RecentMailboxSyncResult,
   type RecentMailboxSyncSink,
   type DeltaMailboxSyncSink,
+  type BackfillMailboxSyncRequest,
+  type BackfillMailboxSyncSink,
 } from "../domain/mail-provider";
 
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -524,6 +526,111 @@ export class ImapSmtpMailProvider implements MailProvider {
           await client.mailboxClose();
         } catch {
           /* logout/close remains authoritative */
+        }
+      }
+      if (connected) {
+        try {
+          await client.logout();
+        } catch {
+          /* close below */
+        }
+      }
+      client.close();
+    }
+  }
+
+  async synchronizeBackfillMailbox(
+    account: ProviderImapAccount,
+    request: BackfillMailboxSyncRequest,
+    sink: BackfillMailboxSyncSink,
+  ): Promise<void> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    let connected = false;
+    let selected = false;
+    try {
+      await client.connect();
+      connected = true;
+      const mailbox = await client.mailboxOpen(request.remotePath, {
+        readOnly: true,
+      });
+      selected = true;
+      if (mailbox.uidNext === undefined)
+        throw new Error("Mailbox UIDNEXT is unavailable.");
+      const frontier =
+        request.frontier === null
+          ? BigInt(mailbox.uidNext) - 1n
+          : BigInt(request.frontier);
+      await sink.selected(mailbox.uidValidity.toString(), frontier.toString());
+      if (frontier === 0n) {
+        await sink.chunk([], "0");
+        return;
+      }
+      const lower =
+        frontier - BigInt(request.chunkSize) + 1n > 1n
+          ? frontier - BigInt(request.chunkSize) + 1n
+          : 1n;
+      const uidSearch = client.search as unknown as (
+        query: { uid: string },
+        options: { uid: true },
+      ) => Promise<number[] | false | undefined>;
+      const found = await uidSearch.call(
+        client,
+        { uid: `${lower}:${frontier}` },
+        { uid: true },
+      );
+      if (found === false || found === undefined)
+        throw new Error("Historical UID search failed.");
+      const uids = found.filter(
+        (uid) => BigInt(uid) >= lower && BigInt(uid) <= frontier,
+      );
+      const query = {
+        uid: true,
+        flags: true,
+        envelope: true,
+        bodyStructure: true,
+        internalDate: true,
+        size: true,
+        modseq: true,
+        emailId: true,
+      } as const;
+      const messages: RemoteMessageMetadata[] = [];
+      if (uids.length) {
+        for await (const item of client.fetch(uids.join(","), query, {
+          uid: true,
+        }))
+          messages.push(normalizeMessage(item));
+        const fetched = new Set(messages.map((item) => item.uid));
+        const missing = uids.filter((uid) => !fetched.has(uid.toString()));
+        if (missing.length) {
+          const stillPresent = await uidSearch.call(
+            client,
+            { uid: missing.join(",") },
+            { uid: true },
+          );
+          if (
+            stillPresent === false ||
+            stillPresent === undefined ||
+            stillPresent.length
+          )
+            throw new Error(
+              "Historical UID disappeared during FETCH; retrying range.",
+            );
+        }
+      }
+      await sink.chunk(messages, (lower - 1n).toString());
+    } catch (error) {
+      if (
+        error instanceof MailboxEpochChangedError ||
+        error instanceof MailProviderOperationError
+      )
+        throw error;
+      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+    } finally {
+      if (selected) {
+        try {
+          await client.mailboxClose();
+        } catch {
+          /* close below */
         }
       }
       if (connected) {

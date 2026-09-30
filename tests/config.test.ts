@@ -25,6 +25,7 @@ describe("configuration", () => {
     expect(config.databasePoolSize).toBe(10);
     expect(config.initialSyncDays).toBe(30);
     expect(config.messageFetchBatchSize).toBe(150);
+    expect(config.backfillChunkSize).toBe(500);
     expect(config.messageSyncConcurrency).toBe(2);
   });
 
@@ -38,6 +39,12 @@ describe("configuration", () => {
         MAILDOCK_MESSAGE_FETCH_BATCH_SIZE: "501",
       }),
     ).toThrow(/MAILDOCK_MESSAGE_FETCH_BATCH_SIZE/);
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        MAILDOCK_BACKFILL_CHUNK_SIZE: "5001",
+      }),
+    ).toThrow(/MAILDOCK_BACKFILL_CHUNK_SIZE/);
   });
 
   it("fails startup with useful field names when required configuration is invalid", () => {

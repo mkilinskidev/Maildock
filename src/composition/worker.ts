@@ -16,6 +16,11 @@ import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { enqueueDelta } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { IdleWatcherManager } from "../modules/mail/infrastructure/idle-watchers.js";
 import { createMailboxLock } from "../modules/mail/infrastructure/mailbox-lock.js";
+import { BackfillSyncService } from "../modules/mail/application/backfill-sync-service.js";
+import {
+  BackfillPoller,
+  enqueueBackfill,
+} from "../modules/mail/infrastructure/backfill-sync-jobs.js";
 
 export function createWorkerComposition() {
   const config = getConfig();
@@ -40,7 +45,7 @@ export function createWorkerComposition() {
       (await jobs.boss.send(
         MAILBOX_RECENT_SYNC_QUEUE,
         { version: 1, accountId, mailboxId },
-        { singletonKey: mailboxId },
+        { singletonKey: mailboxId, priority: 10 },
       )) !== null,
   };
   const messages = new MessageService(
@@ -52,6 +57,10 @@ export function createWorkerComposition() {
     {
       schedule: (accountId, mailboxId, reason) =>
         enqueueDelta(jobs.boss, accountId, mailboxId, reason),
+    },
+    {
+      schedule: (accountId, mailboxId) =>
+        enqueueBackfill(jobs.boss, accountId, mailboxId),
     },
   );
   const withMailboxLock = createMailboxLock(database.client);
@@ -74,6 +83,14 @@ export function createWorkerComposition() {
       jobs.boss,
       config.mailPollIntervalSeconds,
     ),
+    backfill: new BackfillSyncService(
+      database.db,
+      accounts,
+      provider,
+      messages,
+      config.backfillChunkSize,
+    ),
+    backfillPoller: new BackfillPoller(database.db, jobs.boss),
     watchers: new IdleWatcherManager(database.db, accounts, jobs.boss, logger),
     mailboxDiscovery: new MailboxDiscoveryService(
       database.db,

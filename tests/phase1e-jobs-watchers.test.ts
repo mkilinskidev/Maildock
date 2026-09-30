@@ -115,12 +115,12 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       {
         queue: MAILBOX_DELTA_SYNC_QUEUE,
         data: { version: 1, accountId, mailboxId, reason: "poll" },
-        options: { singletonKey: mailboxId },
+        options: { singletonKey: mailboxId, priority: 10 },
       },
       {
         queue: MAILBOX_DELTA_SYNC_QUEUE,
         data: { version: 1, accountId, mailboxId, reason: "idle" },
-        options: { singletonKey: mailboxId },
+        options: { singletonKey: mailboxId, priority: 10 },
       },
     ]);
   });

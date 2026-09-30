@@ -15,6 +15,7 @@ services:
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       ATTACHMENTS_PATH: /var/lib/maildock/attachments
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAILDOCK_BACKFILL_CHUNK_SIZE: ${MAILDOCK_BACKFILL_CHUNK_SIZE:-500}
     depends_on:
       postgres:
         condition: service_healthy

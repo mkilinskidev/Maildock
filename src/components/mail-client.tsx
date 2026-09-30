@@ -38,6 +38,9 @@ function address(values: Address[]) {
 function shell(html: string) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; form-action 'none'; base-uri 'none'; style-src 'unsafe-inline'"><style>body{font:15px/1.55 system-ui,sans-serif;color:#20242b;margin:20px;overflow-wrap:anywhere}table{max-width:100%;display:block;overflow:auto}pre{white-space:pre-wrap}blockquote{border-left:3px solid #d0d7de;padding-left:1em;margin-left:0;color:#596579}</style></head><body>${html}</body></html>`;
 }
+function formatCount(value: string): string {
+  return new Intl.NumberFormat().format(BigInt(value));
+}
 
 export function MailClient({
   accounts,
@@ -48,7 +51,10 @@ export function MailClient({
 }) {
   const first = accounts[0];
   const [accountId, setAccountId] = useState(first?.id ?? "");
-  const folders = mailboxesByAccount[accountId] ?? [];
+  const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
+    useState(mailboxesByAccount);
+  const [folderReloadNonce, setFolderReloadNonce] = useState(0);
+  const folders = liveMailboxesByAccount[accountId] ?? [];
   const [mailboxId, setMailboxId] = useState(
     () =>
       folders.find((item) => item.remotePath.toUpperCase() === "INBOX")?.id ??
@@ -64,6 +70,42 @@ export function MailClient({
   const [retryNonce, setRetryNonce] = useState(0);
   const folder = folders.find((item) => item.id === mailboxId);
   const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    let busy = false;
+    const load = () => {
+      if (document.visibilityState !== "visible" || busy) return;
+      busy = true;
+      fetch(`/api/accounts/${accountId}/mailboxes`, { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Mailboxes could not be loaded.");
+          return response.json() as Promise<{ mailboxes: MailboxView[] }>;
+        })
+        .then((result) => {
+          if (!cancelled)
+            setLiveMailboxesByAccount((current) => ({
+              ...current,
+              [accountId]: result.mailboxes,
+            }));
+        })
+        .catch(() => {
+          // Keep the last known counts; the next poll retries.
+        })
+        .finally(() => {
+          busy = false;
+        });
+    };
+    load();
+    const timer = setInterval(load, 20_000);
+    document.addEventListener("visibilitychange", load);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", load);
+    };
+  }, [accountId, folderReloadNonce]);
 
   useEffect(() => {
     if (!accountId || !mailboxId) return;
@@ -183,6 +225,7 @@ export function MailClient({
           setMessages(
             ((await result.json()) as { items: MessageListItem[] }).items,
           );
+        setFolderReloadNonce((value) => value + 1);
         setRefreshing(false);
       }, 2500);
     } catch {
@@ -205,7 +248,7 @@ export function MailClient({
             setDetail(null);
             setError("");
             setAccountId(id);
-            const next = mailboxesByAccount[id] ?? [];
+            const next = liveMailboxesByAccount[id] ?? [];
             setMailboxId(
               next.find((item) => item.remotePath.toUpperCase() === "INBOX")
                 ?.id ??
@@ -238,7 +281,7 @@ export function MailClient({
                 }}
               >
                 <span>{item.name}</span>
-                <small>{item.unseenCount ?? item.messageCount ?? ""}</small>
+                <small>{formatCount(item.synchronizedMessageCount)}</small>
               </button>
             ))}
         </nav>
@@ -252,7 +295,11 @@ export function MailClient({
         <header className="mail-pane-header">
           <div>
             <h1>{folder?.name ?? "Mail"}</h1>
-            <small>{messages.length} recent messages</small>
+            <small>
+              Showing {messages.length} of{" "}
+              {formatCount(folder?.synchronizedMessageCount ?? "0")}{" "}
+              synchronized messages
+            </small>
           </div>
           <button onClick={() => void refresh()} disabled={refreshing}>
             ↻ <span>Sync</span>

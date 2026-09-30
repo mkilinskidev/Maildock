@@ -128,6 +128,9 @@ export class MessageService {
         reason: DeltaReason,
       ): Promise<boolean>;
     },
+    private readonly backfillScheduler?: {
+      schedule(accountId: string, mailboxId: string): Promise<boolean>;
+    },
   ) {}
 
   async requestSync(accountId: string, mailboxId: string): Promise<boolean> {
@@ -260,6 +263,11 @@ export class MessageService {
                         deltaHighestModseq: null,
                         deltaSyncStatus: "not_started",
                         deltaSyncError: null,
+                        backfillUidValidity: null,
+                        backfillFrontierUid: null,
+                        backfillStatus: "not_started",
+                        backfillError: null,
+                        backfillCompletedAt: null,
                       }
                     : {}),
                   ...(changed
@@ -297,9 +305,16 @@ export class MessageService {
           recentSyncMessageCount: result.messageCount,
           recentSyncCompletedAt: completedAt,
           lastSuccessfulRecentSyncAt: completedAt,
+          backfillStatus:
+            mailbox.backfillUidValidity === BigInt(result.uidValidity) &&
+            mailbox.backfillStatus === "complete"
+              ? "complete"
+              : "pending",
           updatedAt: completedAt,
         })
         .where(eq(mailboxes.id, mailboxId));
+      if (this.backfillScheduler)
+        await this.backfillScheduler.schedule(accountId, mailboxId);
     } catch (error) {
       const failedAt = new Date();
       await this.database
@@ -323,8 +338,9 @@ export class MessageService {
     uidValidity: bigint,
     batch: readonly RemoteMessageMetadata[],
     throughUid?: bigint,
+    backfillProgress?: { frontier: bigint; nextFrontier: bigint },
   ): Promise<void> {
-    if (batch.length === 0) return;
+    if (batch.length === 0 && !backfillProgress) return;
     await this.database.transaction(async (tx) => {
       const synchronizedAt = new Date();
       for (const remote of batch) {
@@ -394,6 +410,32 @@ export class MessageService {
               eq(mailboxes.deltaUidValidity, uidValidity),
             ),
           );
+      if (backfillProgress) {
+        const advanced = await tx
+          .update(mailboxes)
+          .set({
+            backfillFrontierUid: backfillProgress.nextFrontier,
+            backfillStatus:
+              backfillProgress.nextFrontier === 0n ? "complete" : "pending",
+            backfillCompletedAt:
+              backfillProgress.nextFrontier === 0n ? synchronizedAt : null,
+            backfillError: null,
+            updatedAt: synchronizedAt,
+          })
+          .where(
+            and(
+              eq(mailboxes.id, mailboxId),
+              eq(mailboxes.backfillUidValidity, uidValidity),
+              eq(mailboxes.backfillFrontierUid, backfillProgress.frontier),
+              eq(mailboxes.recentSyncUidValidity, uidValidity),
+            ),
+          )
+          .returning({ id: mailboxes.id });
+        if (advanced.length !== 1)
+          throw new Error(
+            "Historical mailbox checkpoint changed during persistence.",
+          );
+      }
     });
   }
 

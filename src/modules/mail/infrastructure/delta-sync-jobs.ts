@@ -43,7 +43,7 @@ export async function enqueueDelta(
   const id = await boss.send(
     MAILBOX_DELTA_SYNC_QUEUE,
     { version: 1, accountId, mailboxId, reason },
-    { singletonKey: mailboxId },
+    { singletonKey: mailboxId, priority: 10 },
   );
   return id !== null;
 }

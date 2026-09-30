@@ -250,7 +250,9 @@ export function AccountList({
                       {String(mailbox.selectable)} · UIDVALIDITY{" "}
                       {mailbox.uidValidity ?? "n/a"} · UIDNEXT{" "}
                       {mailbox.uidNext ?? "n/a"} · HIGHESTMODSEQ{" "}
-                      {mailbox.highestModseq ?? "n/a"}
+                      {mailbox.highestModseq ?? "n/a"} · history{" "}
+                      {mailbox.backfill.status} · next historical UID ≤{" "}
+                      {mailbox.backfill.frontierUid ?? "n/a"}
                     </p>
                   ))}
                 </details>

@@ -50,7 +50,7 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
     const id = await this.boss.send(
       MAILBOX_RECENT_SYNC_QUEUE,
       { version: 1, accountId, mailboxId },
-      { singletonKey: mailboxId },
+      { singletonKey: mailboxId, priority: 10 },
     );
     return id !== null;
   }

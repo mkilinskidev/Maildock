@@ -151,6 +151,20 @@ export type RecentMailboxSyncResult = Readonly<{
   messageCount: number;
 }>;
 
+export type BackfillMailboxSyncRequest = Readonly<{
+  remotePath: string;
+  frontier: string | null;
+  chunkSize: number;
+}>;
+
+export type BackfillMailboxSyncSink = Readonly<{
+  selected(uidValidity: string, initialFrontier: string): Promise<void>;
+  chunk(
+    messages: readonly RemoteMessageMetadata[],
+    nextFrontier: string,
+  ): Promise<void>;
+}>;
+
 export type RemoteFlagDelta = Readonly<{
   uid: string;
   flags: readonly string[];
@@ -207,6 +221,11 @@ export interface MailProvider {
     request: RecentMailboxSyncRequest,
     sink: RecentMailboxSyncSink,
   ): Promise<RecentMailboxSyncResult>;
+  synchronizeBackfillMailbox?(
+    account: ProviderImapAccount,
+    request: BackfillMailboxSyncRequest,
+    sink: BackfillMailboxSyncSink,
+  ): Promise<void>;
   synchronizeDeltaMailbox?(
     account: ProviderImapAccount,
     remotePath: string,

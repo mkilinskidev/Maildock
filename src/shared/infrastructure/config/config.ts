@@ -80,6 +80,12 @@ const schema = z
       .min(10)
       .max(500)
       .default(150),
+    MAILDOCK_BACKFILL_CHUNK_SIZE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .default(500),
     MAILDOCK_MESSAGE_SYNC_CONCURRENCY: z.coerce
       .number()
       .int()
@@ -140,6 +146,7 @@ export type AppConfig = Readonly<{
   workerConcurrency: number;
   initialSyncDays: number;
   messageFetchBatchSize: number;
+  backfillChunkSize: number;
   messageSyncConcurrency: number;
   mailPollIntervalSeconds: number;
   maxMessageTextPartBytes: number;
@@ -189,6 +196,7 @@ export function parseConfig(
     workerConcurrency: result.data.WORKER_CONCURRENCY,
     initialSyncDays: result.data.MAILDOCK_INITIAL_SYNC_DAYS,
     messageFetchBatchSize: result.data.MAILDOCK_MESSAGE_FETCH_BATCH_SIZE,
+    backfillChunkSize: result.data.MAILDOCK_BACKFILL_CHUNK_SIZE,
     messageSyncConcurrency: result.data.MAILDOCK_MESSAGE_SYNC_CONCURRENCY,
     mailPollIntervalSeconds: result.data.MAILDOCK_MAIL_POLL_INTERVAL_SECONDS,
     maxMessageTextPartBytes: result.data.MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES,

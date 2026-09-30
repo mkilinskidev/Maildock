@@ -323,6 +323,13 @@ export const mailboxes = pgTable(
     lastSuccessfulRecentSyncAt: timestamp("last_successful_recent_sync_at", {
       withTimezone: true,
     }),
+    backfillUidValidity: bigint("backfill_uid_validity", { mode: "bigint" }),
+    backfillFrontierUid: bigint("backfill_frontier_uid", { mode: "bigint" }),
+    backfillStatus: text("backfill_status").default("not_started").notNull(),
+    backfillError: text("backfill_error"),
+    backfillCompletedAt: timestamp("backfill_completed_at", {
+      withTimezone: true,
+    }),
     deltaUidValidity: bigint("delta_uid_validity", { mode: "bigint" }),
     deltaLastSeenUid: bigint("delta_last_seen_uid", { mode: "bigint" }),
     deltaHighestModseq: bigint("delta_highest_modseq", { mode: "bigint" }),
@@ -356,6 +363,10 @@ export const mailboxes = pgTable(
     check(
       "mailboxes_delta_sync_status",
       sql`${table.deltaSyncStatus} in ('not_started', 'pending', 'running', 'success', 'failed')`,
+    ),
+    check(
+      "mailboxes_backfill_status",
+      sql`${table.backfillStatus} in ('not_started', 'pending', 'running', 'complete', 'failed')`,
     ),
     index("mailboxes_account_idx").on(table.accountId),
     index("mailboxes_account_path_idx").on(table.accountId, table.remotePath),

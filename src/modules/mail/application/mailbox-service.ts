@@ -4,7 +4,10 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import type { RemoteMailbox } from "../../accounts/domain/mail-provider";
 import type { Database } from "../../../shared/infrastructure/database/database";
-import { mailboxes } from "../../../shared/infrastructure/database/schema";
+import {
+  mailboxMessages,
+  mailboxes,
+} from "../../../shared/infrastructure/database/schema";
 
 type MailboxRow = typeof mailboxes.$inferSelect;
 
@@ -23,6 +26,7 @@ export type MailboxView = Readonly<{
   highestModseq: string | null;
   messageCount: string | null;
   unseenCount: string | null;
+  synchronizedMessageCount: string;
   lifecycleStatus: "active" | "missing";
   firstDiscoveredAt: string;
   lastDiscoveredAt: string;
@@ -50,9 +54,16 @@ export type MailboxView = Readonly<{
     completedAt: string | null;
     lastSuccessfulAt: string | null;
   }>;
+  backfill: Readonly<{
+    status: "not_started" | "pending" | "running" | "complete" | "failed";
+    uidValidity: string | null;
+    frontierUid: string | null;
+    error: string | null;
+    completedAt: string | null;
+  }>;
 }>;
 
-function view(row: MailboxRow): MailboxView {
+function view(row: MailboxRow, synchronizedMessageCount: string): MailboxView {
   return {
     id: row.id,
     remotePath: row.remotePath,
@@ -68,6 +79,7 @@ function view(row: MailboxRow): MailboxView {
     highestModseq: row.highestModseq?.toString() ?? null,
     messageCount: row.reportedMessageCount?.toString() ?? null,
     unseenCount: row.reportedUnseenCount?.toString() ?? null,
+    synchronizedMessageCount,
     lifecycleStatus: row.lifecycleStatus as "active" | "missing",
     firstDiscoveredAt: row.firstDiscoveredAt.toISOString(),
     lastDiscoveredAt: row.lastDiscoveredAt.toISOString(),
@@ -94,6 +106,13 @@ function view(row: MailboxRow): MailboxView {
       startedAt: row.deltaSyncStartedAt?.toISOString() ?? null,
       completedAt: row.deltaSyncCompletedAt?.toISOString() ?? null,
       lastSuccessfulAt: row.lastSuccessfulDeltaSyncAt?.toISOString() ?? null,
+    },
+    backfill: {
+      status: row.backfillStatus as MailboxView["backfill"]["status"],
+      uidValidity: row.backfillUidValidity?.toString() ?? null,
+      frontierUid: row.backfillFrontierUid?.toString() ?? null,
+      error: row.backfillError,
+      completedAt: row.backfillCompletedAt?.toISOString() ?? null,
     },
   };
 }
@@ -126,19 +145,33 @@ export class MailboxService {
     accountId: string,
     includeMissing = false,
   ): Promise<MailboxView[]> {
-    const rows = await this.database
-      .select()
-      .from(mailboxes)
-      .where(
-        includeMissing
-          ? eq(mailboxes.accountId, accountId)
-          : and(
-              eq(mailboxes.accountId, accountId),
-              eq(mailboxes.lifecycleStatus, "active"),
-            ),
-      )
-      .orderBy(asc(mailboxes.remotePath));
-    return rows.map(view);
+    const [rows, counts] = await Promise.all([
+      this.database
+        .select()
+        .from(mailboxes)
+        .where(
+          includeMissing
+            ? eq(mailboxes.accountId, accountId)
+            : and(
+                eq(mailboxes.accountId, accountId),
+                eq(mailboxes.lifecycleStatus, "active"),
+              ),
+        )
+        .orderBy(asc(mailboxes.remotePath)),
+      this.database
+        .select({
+          mailboxId: mailboxMessages.mailboxId,
+          count: sql<string>`count(*)::text`,
+        })
+        .from(mailboxMessages)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+        .where(eq(mailboxes.accountId, accountId))
+        .groupBy(mailboxMessages.mailboxId),
+    ]);
+    const countsByMailbox = new Map(
+      counts.map((row) => [row.mailboxId, row.count]),
+    );
+    return rows.map((row) => view(row, countsByMailbox.get(row.id) ?? "0"));
   }
 
   async countActive(accountId: string): Promise<number> {
