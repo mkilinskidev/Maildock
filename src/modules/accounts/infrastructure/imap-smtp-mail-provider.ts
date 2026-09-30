@@ -14,6 +14,7 @@ import type SMTPTransport from "nodemailer/lib/smtp-transport";
 
 import {
   MailProviderOperationError,
+  MailboxEpochChangedError,
   relevantImapCapabilities,
   type ConnectionFailureCategory,
   type DisplayContentRequest,
@@ -34,6 +35,7 @@ import {
   type RecentMailboxSyncRequest,
   type RecentMailboxSyncResult,
   type RecentMailboxSyncSink,
+  type DeltaMailboxSyncSink,
 } from "../domain/mail-provider";
 
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -57,7 +59,30 @@ type ImapClient = {
   mailboxOpen(
     path: string,
     options: { readOnly: boolean },
-  ): Promise<{ uidValidity: bigint }>;
+  ): Promise<{
+    uidValidity: bigint;
+    uidNext?: number;
+    exists?: number;
+    highestModseq?: bigint;
+    noModseq?: boolean;
+  }>;
+  status?(
+    path: string,
+    query: {
+      messages: true;
+      unseen: true;
+      uidNext: true;
+      highestModseq?: boolean;
+    },
+  ): Promise<
+    | {
+        messages?: number;
+        unseen?: number;
+        uidNext?: number;
+        highestModseq?: bigint;
+      }
+    | false
+  >;
   mailboxClose(): Promise<boolean>;
   download(
     range: number,
@@ -81,12 +106,14 @@ type ImapClient = {
     query: Readonly<{
       uid: true;
       flags: true;
-      envelope: true;
-      bodyStructure: true;
-      internalDate: true;
-      size: true;
+      envelope?: true;
+      bodyStructure?: true;
+      internalDate?: true;
+      size?: true;
+      modseq?: true;
+      emailId?: true;
     }>,
-    options: { uid: true },
+    options: { uid: true; changedSince?: bigint },
   ): AsyncGenerator<FetchMessageObject, false | void, undefined>;
 };
 type SmtpTransport = {
@@ -432,7 +459,9 @@ export class ImapSmtpMailProvider implements MailProvider {
         { since: request.cutoff },
         { uid: true },
       );
-      const uids = found === false || found === undefined ? [] : found;
+      if (found === false || found === undefined)
+        throw new Error("Recent UID search failed.");
+      const uids = found;
       let messageCount = 0;
       const query = {
         uid: true,
@@ -456,7 +485,11 @@ export class ImapSmtpMailProvider implements MailProvider {
       }
       return { uidValidity, messageCount };
     } catch (error) {
-      if (error instanceof MailProviderOperationError) throw error;
+      if (
+        error instanceof MailProviderOperationError ||
+        error instanceof MailboxEpochChangedError
+      )
+        throw error;
       throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
     } finally {
       if (selected) {
@@ -473,6 +506,211 @@ export class ImapSmtpMailProvider implements MailProvider {
           /* close below */
         }
       }
+      client.close();
+    }
+  }
+
+  async synchronizeDeltaMailbox(
+    account: ProviderImapAccount,
+    remotePath: string,
+    batchSize: number,
+    sink: DeltaMailboxSyncSink,
+  ): Promise<void> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    let connected = false;
+    let selected = false;
+    try {
+      await client.connect();
+      connected = true;
+      const mailbox = await client.mailboxOpen(remotePath, { readOnly: true });
+      selected = true;
+      const snapshot = await sink.selected(mailbox.uidValidity.toString());
+      let lastSeen = BigInt(snapshot.lastSeenUid);
+      if (snapshot.emptyBootstrapCutoff) {
+        // Preserve the recent-window boundary when Phase 1C found no placements.
+        // SELECT's UIDNEXT is a frontier, not evidence that any individual UID exists.
+        const frontier = BigInt((mailbox.uidNext ?? 1) - 1);
+        const found = await client.search(
+          { since: snapshot.emptyBootstrapCutoff },
+          { uid: true },
+        );
+        if (found === false || found === undefined)
+          throw new Error("Recent UID search failed.");
+        const recent = found
+          .filter((uid) => BigInt(uid) <= frontier)
+          .sort((a, b) => a - b);
+        const query = {
+          uid: true,
+          flags: true,
+          envelope: true,
+          bodyStructure: true,
+          internalDate: true,
+          size: true,
+          modseq: true,
+          emailId: true,
+        } as const;
+        for (let offset = 0; offset < recent.length; offset += batchSize) {
+          const group = recent.slice(offset, offset + batchSize);
+          const messages = [];
+          for await (const item of client.fetch(group.join(","), query, {
+            uid: true,
+          }))
+            messages.push(normalizeMessage(item));
+          if (messages.length)
+            await sink.newBatch(
+              messages,
+              messages
+                .reduce(
+                  (max, item) =>
+                    BigInt(item.uid) > max ? BigInt(item.uid) : max,
+                  lastSeen,
+                )
+                .toString(),
+            );
+        }
+        await sink.advanceUid(frontier.toString());
+        lastSeen = frontier;
+      }
+      const uidSearch = client.search as unknown as (
+        query: { uid: string },
+        options: { uid: true },
+      ) => Promise<number[] | false | undefined>;
+      {
+        const found = await uidSearch.call(
+          client,
+          { uid: `${lastSeen + 1n}:*` },
+          { uid: true },
+        );
+        if (found === false || found === undefined)
+          throw new Error("New UID search failed.");
+        const uids = found
+          .filter((uid) => BigInt(uid) > lastSeen)
+          .sort((a, b) => a - b);
+        const query = {
+          uid: true,
+          flags: true,
+          envelope: true,
+          bodyStructure: true,
+          internalDate: true,
+          size: true,
+          modseq: true,
+          emailId: true,
+        } as const;
+        for (let offset = 0; offset < uids.length; offset += batchSize) {
+          const group = uids.slice(offset, offset + batchSize);
+          const messages = [];
+          for await (const item of client.fetch(group.join(","), query, {
+            uid: true,
+          }))
+            messages.push(normalizeMessage(item));
+          // A searched UID may vanish before FETCH. Advance only through actually fetched UIDs.
+          if (messages.length)
+            await sink.newBatch(
+              messages,
+              messages
+                .reduce(
+                  (max, item) =>
+                    BigInt(item.uid) > max ? BigInt(item.uid) : max,
+                  lastSeen,
+                )
+                .toString(),
+            );
+        }
+      }
+      const condstore =
+        (client.capabilities.has("CONDSTORE") ||
+          client.enabled.has("CONDSTORE")) &&
+        !mailbox.noModseq &&
+        mailbox.highestModseq !== undefined;
+      if (condstore && snapshot.highestModseq !== null) {
+        const changes = [];
+        for await (const item of client.fetch(
+          "1:*",
+          { uid: true, flags: true, modseq: true },
+          { uid: true, changedSince: BigInt(snapshot.highestModseq) },
+        )) {
+          changes.push({
+            uid: item.uid.toString(),
+            flags: [...(item.flags ?? [])],
+            ...(item.modseq === undefined
+              ? {}
+              : { modseq: item.modseq.toString() }),
+          });
+          if (changes.length >= batchSize)
+            await sink.flagsBatch(changes.splice(0));
+        }
+        if (changes.length) await sink.flagsBatch(changes);
+      } else {
+        // Without a valid MODSEQ baseline, reconcile every locally indexed UID.
+        for (
+          let offset = 0;
+          offset < snapshot.localUids.length;
+          offset += batchSize
+        ) {
+          const group = snapshot.localUids.slice(offset, offset + batchSize);
+          const changes = [];
+          for await (const item of client.fetch(
+            group.join(","),
+            { uid: true, flags: true, modseq: true },
+            { uid: true },
+          ))
+            changes.push({
+              uid: item.uid.toString(),
+              flags: [...(item.flags ?? [])],
+              ...(item.modseq === undefined
+                ? {}
+                : { modseq: item.modseq.toString() }),
+            });
+          if (changes.length) await sink.flagsBatch(changes);
+        }
+      }
+      // SEARCH over known local UIDs is complete evidence for their absence. It never imports history.
+      for (
+        let offset = 0;
+        offset < snapshot.localUids.length;
+        offset += batchSize
+      ) {
+        const group = snapshot.localUids.slice(offset, offset + batchSize);
+        const found = await uidSearch.call(
+          client,
+          { uid: group.join(",") },
+          { uid: true },
+        );
+        if (found === false || found === undefined)
+          throw new Error("Known UID reconciliation failed.");
+        const present = new Set(found);
+        const missing = group.filter((uid) => !present.has(Number(uid)));
+        if (missing.length) await sink.removed(missing);
+      }
+      const status = await client.status?.(remotePath, {
+        messages: true,
+        unseen: true,
+        uidNext: true,
+        ...(condstore ? { highestModseq: true } : {}),
+      });
+      if (status === false)
+        throw new Error("Mailbox status observation failed.");
+      const observed = status ?? {};
+      await sink.completed({
+        uidNext: (observed.uidNext ?? mailbox.uidNext ?? 1).toString(),
+        messageCount: (observed.messages ?? mailbox.exists ?? 0).toString(),
+        unseenCount: observed.unseen?.toString() ?? null,
+        // SELECT's MODSEQ predates all queries; a later STATUS could skip a concurrent flag change.
+        highestModseq: condstore
+          ? (mailbox.highestModseq?.toString() ?? null)
+          : null,
+        condstore,
+      });
+    } catch (error) {
+      if (
+        error instanceof MailProviderOperationError ||
+        error instanceof MailboxEpochChangedError
+      )
+        throw error;
+      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+    } finally {
+      if (selected) await client.mailboxClose().catch(() => false);
+      if (connected) await client.logout().catch(() => undefined);
       client.close();
     }
   }

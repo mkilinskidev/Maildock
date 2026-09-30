@@ -62,7 +62,7 @@ export class MailboxDiscoveryService {
           selectable
             .filter((mailbox) => mailbox.selectable)
             .map((mailbox) =>
-              this.messages!.requestRecentSync(accountId, mailbox.id),
+              this.messages!.requestSync(accountId, mailbox.id),
             ),
         );
       }

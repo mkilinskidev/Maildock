@@ -10,6 +10,10 @@ import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-dis
 import { MessageService } from "../modules/mail/application/message-service.js";
 import { MAILBOX_RECENT_SYNC_QUEUE } from "../modules/mail/infrastructure/recent-sync-jobs.js";
 import { MessageContentService } from "../modules/mail/application/message-content-service.js";
+import { DeltaSyncService } from "../modules/mail/application/delta-sync-service.js";
+import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
+import { enqueueDelta } from "../modules/mail/infrastructure/delta-sync-jobs.js";
+import { IdleWatcherManager } from "../modules/mail/infrastructure/idle-watchers.js";
 
 export function createWorkerComposition() {
   const config = getConfig();
@@ -37,12 +41,51 @@ export function createWorkerComposition() {
     provider,
     config,
     recentSyncScheduler,
+    {
+      schedule: (accountId, mailboxId, reason) =>
+        enqueueDelta(jobs.boss, accountId, mailboxId, reason),
+    },
   );
+  const withMailboxLock = async (
+    mailboxId: string,
+    work: () => Promise<void>,
+  ) => {
+    const connection = await database.client.reserve();
+    try {
+      const result = await connection<
+        { acquired: boolean }[]
+      >`select pg_try_advisory_lock(hashtextextended(${`mailbox-sync:${mailboxId}`}, 0)) as acquired`;
+      if (!result[0]?.acquired)
+        throw new Error("Mailbox sync is already running.");
+      try {
+        await work();
+      } finally {
+        await connection`select pg_advisory_unlock(hashtextextended(${`mailbox-sync:${mailboxId}`}, 0))`;
+      }
+    } finally {
+      connection.release();
+    }
+  };
   return {
     config,
     logger,
     database,
     jobs,
+    withMailboxLock,
+    delta: new DeltaSyncService(
+      database.db,
+      accounts,
+      provider,
+      messages,
+      config.messageFetchBatchSize,
+      logger,
+    ),
+    poller: new DeltaPoller(
+      database.db,
+      jobs.boss,
+      config.mailPollIntervalSeconds,
+    ),
+    watchers: new IdleWatcherManager(database.db, accounts, jobs.boss, logger),
     mailboxDiscovery: new MailboxDiscoveryService(
       database.db,
       accounts,

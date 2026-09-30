@@ -15,7 +15,7 @@ export async function POST(
   if (denied) return denied;
   try {
     const values = await params;
-    const scheduled = await messageService.requestRecentSync(
+    const scheduled = await messageService.requestSync(
       z.uuid().parse(values.id),
       z.uuid().parse(values.mailboxId),
     );
@@ -31,7 +31,7 @@ export async function POST(
         { status: 400 },
       );
     return Response.json(
-      { error: "Recent synchronization could not be scheduled." },
+      { error: "Synchronization could not be scheduled." },
       { status: 500 },
     );
   }

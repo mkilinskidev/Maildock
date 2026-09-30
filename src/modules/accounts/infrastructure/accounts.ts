@@ -9,6 +9,7 @@ import { MessageService } from "@/modules/mail/application/message-service";
 import { PgBossRecentSyncScheduler } from "@/modules/mail/infrastructure/recent-sync-jobs";
 import { MessageContentService } from "@/modules/mail/application/message-content-service";
 import { PgBossContentScheduler } from "@/modules/mail/infrastructure/content-jobs";
+import { PgBossDeltaSyncScheduler } from "@/modules/mail/infrastructure/delta-sync-jobs";
 
 const config = getConfig();
 const encryption = new AesGcmSecretEncryption(
@@ -30,6 +31,7 @@ export const messageService = new MessageService(
   undefined,
   undefined,
   new PgBossRecentSyncScheduler(config),
+  new PgBossDeltaSyncScheduler(config),
 );
 export const messageContentService = new MessageContentService(
   db,

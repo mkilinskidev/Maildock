@@ -48,6 +48,14 @@ export class MailProviderOperationError extends Error {
   }
 }
 
+export class MailboxEpochChangedError extends Error {
+  constructor() {
+    super(
+      "Mailbox UIDVALIDITY changed; recent metadata rebuild was scheduled.",
+    );
+  }
+}
+
 export const relevantImapCapabilities = [
   "IMAP4REV2",
   "IDLE",
@@ -141,6 +149,39 @@ export type RecentMailboxSyncResult = Readonly<{
   messageCount: number;
 }>;
 
+export type RemoteFlagDelta = Readonly<{
+  uid: string;
+  flags: readonly string[];
+  modseq?: string;
+}>;
+
+export type DeltaMailboxSnapshot = Readonly<{
+  lastSeenUid: string;
+  highestModseq: string | null;
+  localUids: readonly string[];
+  emptyBootstrapCutoff?: Date;
+}>;
+
+export type DeltaMailboxSyncSink = Readonly<{
+  selected(uidValidity: string): Promise<DeltaMailboxSnapshot>;
+  advanceUid(uid: string): Promise<void>;
+  newBatch(
+    messages: readonly RemoteMessageMetadata[],
+    throughUid: string,
+  ): Promise<void>;
+  flagsBatch(changes: readonly RemoteFlagDelta[]): Promise<void>;
+  removed(uids: readonly string[]): Promise<void>;
+  completed(
+    observation: Readonly<{
+      uidNext: string;
+      messageCount: string;
+      unseenCount: string | null;
+      highestModseq: string | null;
+      condstore: boolean;
+    }>,
+  ): Promise<void>;
+}>;
+
 export type DisplayContentRequest = Readonly<{
   remotePath: string;
   uid: string;
@@ -164,6 +205,12 @@ export interface MailProvider {
     request: RecentMailboxSyncRequest,
     sink: RecentMailboxSyncSink,
   ): Promise<RecentMailboxSyncResult>;
+  synchronizeDeltaMailbox?(
+    account: ProviderImapAccount,
+    remotePath: string,
+    batchSize: number,
+    sink: DeltaMailboxSyncSink,
+  ): Promise<void>;
   fetchMessageContent(
     account: ProviderImapAccount,
     request: DisplayContentRequest,

@@ -17,6 +17,7 @@ import {
   messages,
 } from "../../../shared/infrastructure/database/schema";
 import type { RecentSyncScheduler } from "./recent-sync-scheduler";
+import type { DeltaReason } from "./delta-sync-service";
 
 export class MailboxNotSynchronizableError extends Error {
   constructor(message = "Mailbox is missing or not selectable.") {
@@ -120,7 +121,37 @@ export class MessageService {
       "initialSyncDays" | "messageFetchBatchSize"
     >,
     private readonly scheduler?: RecentSyncScheduler,
+    private readonly deltaScheduler?: {
+      schedule(
+        accountId: string,
+        mailboxId: string,
+        reason: DeltaReason,
+      ): Promise<boolean>;
+    },
   ) {}
+
+  async requestSync(accountId: string, mailboxId: string): Promise<boolean> {
+    const mailbox = await this.ownedMailbox(accountId, mailboxId);
+    if (
+      mailbox.recentSyncStatus !== "success" ||
+      mailbox.recentSyncUidValidity === null
+    )
+      return this.requestRecentSync(accountId, mailboxId);
+    if (!mailbox.selectable || mailbox.lifecycleStatus !== "active")
+      throw new MailboxNotSynchronizableError();
+    const [account] = await this.database
+      .select({ enabled: mailAccounts.enabled })
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, accountId))
+      .limit(1);
+    if (!account?.enabled)
+      throw new MailboxNotSynchronizableError(
+        "Disabled mail accounts cannot synchronize messages.",
+      );
+    if (!this.deltaScheduler)
+      throw new Error("Delta sync scheduler is unavailable.");
+    return this.deltaScheduler.schedule(accountId, mailboxId, "manual");
+  }
 
   async requestRecentSync(
     accountId: string,
@@ -224,6 +255,15 @@ export class MessageService {
                   recentSyncUidValidity: observed,
                   ...(changed
                     ? {
+                        deltaUidValidity: null,
+                        deltaLastSeenUid: null,
+                        deltaHighestModseq: null,
+                        deltaSyncStatus: "not_started",
+                        deltaSyncError: null,
+                      }
+                    : {}),
+                  ...(changed
+                    ? {
                         uidValidityChangedAt: new Date(),
                         uidValidityChangeCount:
                           current.uidValidityChangeCount + 1,
@@ -282,6 +322,7 @@ export class MessageService {
     mailboxId: string,
     uidValidity: bigint,
     batch: readonly RemoteMessageMetadata[],
+    throughUid?: bigint,
   ): Promise<void> {
     if (batch.length === 0) return;
     await this.database.transaction(async (tx) => {
@@ -300,11 +341,19 @@ export class MessageService {
           )
           .limit(1);
         if (placement) {
+          const staleFlags =
+            remote.modseq !== undefined &&
+            placement.modseq !== null &&
+            BigInt(remote.modseq) < placement.modseq;
           await tx
             .update(mailboxMessages)
             .set({
-              flags: [...remote.flags],
-              modseq: remote.modseq ? BigInt(remote.modseq) : null,
+              ...(staleFlags
+                ? {}
+                : {
+                    flags: [...remote.flags],
+                    modseq: remote.modseq ? BigInt(remote.modseq) : null,
+                  }),
               lastSynchronizedAt: synchronizedAt,
               updatedAt: synchronizedAt,
             })
@@ -335,6 +384,16 @@ export class MessageService {
           updatedAt: synchronizedAt,
         });
       }
+      if (throughUid !== undefined)
+        await tx
+          .update(mailboxes)
+          .set({ deltaLastSeenUid: throughUid, updatedAt: synchronizedAt })
+          .where(
+            and(
+              eq(mailboxes.id, mailboxId),
+              eq(mailboxes.deltaUidValidity, uidValidity),
+            ),
+          );
     });
   }
 

@@ -307,6 +307,20 @@ export const mailboxes = pgTable(
     lastSuccessfulRecentSyncAt: timestamp("last_successful_recent_sync_at", {
       withTimezone: true,
     }),
+    deltaUidValidity: bigint("delta_uid_validity", { mode: "bigint" }),
+    deltaLastSeenUid: bigint("delta_last_seen_uid", { mode: "bigint" }),
+    deltaHighestModseq: bigint("delta_highest_modseq", { mode: "bigint" }),
+    deltaSyncStatus: text("delta_sync_status").default("not_started").notNull(),
+    deltaSyncError: text("delta_sync_error"),
+    deltaSyncStartedAt: timestamp("delta_sync_started_at", {
+      withTimezone: true,
+    }),
+    deltaSyncCompletedAt: timestamp("delta_sync_completed_at", {
+      withTimezone: true,
+    }),
+    lastSuccessfulDeltaSyncAt: timestamp("last_successful_delta_sync_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -322,6 +336,10 @@ export const mailboxes = pgTable(
     check(
       "mailboxes_recent_sync_status",
       sql`${table.recentSyncStatus} in ('not_started', 'pending', 'running', 'success', 'failed')`,
+    ),
+    check(
+      "mailboxes_delta_sync_status",
+      sql`${table.deltaSyncStatus} in ('not_started', 'pending', 'running', 'success', 'failed')`,
     ),
     index("mailboxes_account_idx").on(table.accountId),
     index("mailboxes_account_path_idx").on(table.accountId, table.remotePath),

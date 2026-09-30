@@ -68,19 +68,32 @@ export function MailClient({
   useEffect(() => {
     if (!accountId || !mailboxId) return;
     let cancelled = false;
-    fetch(`${base}?pageSize=50`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Messages could not be loaded.");
-        return response.json() as Promise<{ items: MessageListItem[] }>;
-      })
-      .then((result) => {
-        if (!cancelled) setMessages(result.items);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Messages could not be loaded.");
-      });
+    let busy = false;
+    const load = () => {
+      if (document.visibilityState !== "visible" || busy) return;
+      busy = true;
+      fetch(`${base}?pageSize=50`, { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Messages could not be loaded.");
+          return response.json() as Promise<{ items: MessageListItem[] }>;
+        })
+        .then((result) => {
+          if (!cancelled) setMessages(result.items);
+        })
+        .catch(() => {
+          if (!cancelled) setError("Messages could not be loaded.");
+        })
+        .finally(() => {
+          busy = false;
+        });
+    };
+    load();
+    const timer = setInterval(load, 20_000);
+    document.addEventListener("visibilitychange", load);
     return () => {
       cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", load);
     };
   }, [accountId, mailboxId, base]);
 

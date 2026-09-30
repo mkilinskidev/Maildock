@@ -40,6 +40,16 @@ export type MailboxView = Readonly<{
     uidValidity: string | null;
     lastSuccessfulAt: string | null;
   }>;
+  deltaSync: Readonly<{
+    status: "not_started" | "pending" | "running" | "success" | "failed";
+    error: string | null;
+    uidValidity: string | null;
+    lastSeenUid: string | null;
+    highestModseq: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    lastSuccessfulAt: string | null;
+  }>;
 }>;
 
 function view(row: MailboxRow): MailboxView {
@@ -74,6 +84,16 @@ function view(row: MailboxRow): MailboxView {
       messageCount: row.recentSyncMessageCount,
       uidValidity: row.recentSyncUidValidity?.toString() ?? null,
       lastSuccessfulAt: row.lastSuccessfulRecentSyncAt?.toISOString() ?? null,
+    },
+    deltaSync: {
+      status: row.deltaSyncStatus as MailboxView["deltaSync"]["status"],
+      error: row.deltaSyncError,
+      uidValidity: row.deltaUidValidity?.toString() ?? null,
+      lastSeenUid: row.deltaLastSeenUid?.toString() ?? null,
+      highestModseq: row.deltaHighestModseq?.toString() ?? null,
+      startedAt: row.deltaSyncStartedAt?.toISOString() ?? null,
+      completedAt: row.deltaSyncCompletedAt?.toISOString() ?? null,
+      lastSuccessfulAt: row.lastSuccessfulDeltaSyncAt?.toISOString() ?? null,
     },
   };
 }

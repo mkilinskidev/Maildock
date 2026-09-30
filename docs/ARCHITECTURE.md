@@ -497,6 +497,8 @@ This does not require implementing unused adapters now. It requires stable ports
 
 ## 22. Implementation phases
 
+Phase 1E implements mailbox delta synchronization with a durable mailbox checkpoint, periodic pg-boss polling, and an INBOX-only IMAP IDLE wake-up watcher. The algorithm and restart semantics are documented in [PHASE_1E.md](PHASE_1E.md). IDLE events never write mail data directly.
+
 No phase should add Gmail API, Graph, POP3, AI, contacts, or calendars unless this architecture document is explicitly revised.
 
 ### Phase 0 — repository and decisions

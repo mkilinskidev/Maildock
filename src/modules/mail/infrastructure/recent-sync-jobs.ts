@@ -60,6 +60,10 @@ export async function registerRecentSyncWorker(
   boss: PgBoss,
   service: MessageService,
   concurrency: number,
+  withLock: (
+    mailboxId: string,
+    work: () => Promise<void>,
+  ) => Promise<void> = async (_mailboxId, work) => work(),
 ): Promise<void> {
   await ensureQueue(boss);
   await boss.work(
@@ -69,7 +73,9 @@ export async function registerRecentSyncWorker(
       const job = batch[0];
       if (!job) throw new Error("Recent sync received an empty batch.");
       const payload = recentSyncPayloadSchema.parse(job.data);
-      await service.runRecentSync(payload.accountId, payload.mailboxId);
+      await withLock(payload.mailboxId, () =>
+        service.runRecentSync(payload.accountId, payload.mailboxId),
+      );
     },
   );
 }
