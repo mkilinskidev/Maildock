@@ -596,6 +596,9 @@ export class ImapSmtpMailProvider implements MailProvider {
           modseq: true,
           emailId: true,
         } as const;
+        // An omitted FETCH response must keep the frontier below that UID.
+        // Later fetched messages may be saved, but a retry must revisit the gap.
+        let firstUnfetched: bigint | undefined;
         for (let offset = 0; offset < uids.length; offset += batchSize) {
           const group = uids.slice(offset, offset + batchSize);
           const messages = [];
@@ -603,18 +606,23 @@ export class ImapSmtpMailProvider implements MailProvider {
             uid: true,
           }))
             messages.push(normalizeMessage(item));
-          // A searched UID may vanish before FETCH. Advance only through actually fetched UIDs.
-          if (messages.length)
-            await sink.newBatch(
-              messages,
-              messages
-                .reduce(
-                  (max, item) =>
-                    BigInt(item.uid) > max ? BigInt(item.uid) : max,
-                  lastSeen,
-                )
-                .toString(),
+          const fetched = new Set(messages.map((item) => item.uid));
+          for (const uid of group)
+            if (!fetched.has(uid.toString()) && firstUnfetched === undefined)
+              firstUnfetched = BigInt(uid);
+          if (messages.length) {
+            const through = messages.reduce(
+              (max, item) =>
+                BigInt(item.uid) > max &&
+                (firstUnfetched === undefined ||
+                  BigInt(item.uid) < firstUnfetched)
+                  ? BigInt(item.uid)
+                  : max,
+              lastSeen,
             );
+            await sink.newBatch(messages, through.toString());
+            lastSeen = through;
+          }
         }
       }
       const condstore =

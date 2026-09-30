@@ -13,6 +13,17 @@ import {
 import { enqueueDelta } from "./delta-sync-jobs";
 
 type Watch = { stop(): void };
+export function idleReconnectDelay(backoff: number, random: number): number {
+  return backoff + Math.floor((random * backoff) / 2);
+}
+
+export function nextIdleReconnectBackoff(backoff: number): number {
+  return Math.min(backoff * 2, 5 * 60_000);
+}
+type IdleClient = Pick<
+  ImapFlow,
+  "once" | "on" | "connect" | "mailboxOpen" | "close" | "capabilities"
+>;
 
 export class IdleWatcherManager {
   private readonly watches = new Map<string, Watch>();
@@ -25,6 +36,9 @@ export class IdleWatcherManager {
     private readonly accounts: AccountsService,
     private readonly boss: PgBoss,
     private readonly logger: Logger,
+    private readonly createClient: (
+      options: ConstructorParameters<typeof ImapFlow>[0],
+    ) => IdleClient = (options) => new ImapFlow(options),
   ) {}
 
   async start(): Promise<void> {
@@ -91,7 +105,7 @@ export class IdleWatcherManager {
     remotePath: string,
   ): Watch {
     let cancelled = false;
-    let client: ImapFlow | undefined;
+    let client: IdleClient | undefined;
     let backoff = 1_000;
     let wakeTimer: ReturnType<typeof setTimeout> | undefined;
     let sleepTimer: ReturnType<typeof setTimeout> | undefined;
@@ -110,7 +124,8 @@ export class IdleWatcherManager {
         try {
           const account =
             await this.accounts.getProviderImapAccountForWork(accountId);
-          client = new ImapFlow({
+          if (cancelled || this.stopped) break;
+          client = this.createClient({
             ...imapOptions(account.imap),
             disableAutoIdle: false,
             autoIdleDelay: 1000,
@@ -158,12 +173,12 @@ export class IdleWatcherManager {
           resumeSleep = resolve;
           sleepTimer = setTimeout(
             resolve,
-            backoff + Math.floor((Math.random() * backoff) / 2),
+            idleReconnectDelay(backoff, Math.random()),
           );
         });
         sleepTimer = undefined;
         resumeSleep = undefined;
-        backoff = Math.min(backoff * 2, 5 * 60_000);
+        backoff = nextIdleReconnectBackoff(backoff);
       }
     };
     void loop();

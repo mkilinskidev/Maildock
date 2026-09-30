@@ -14,6 +14,7 @@ import { DeltaSyncService } from "../modules/mail/application/delta-sync-service
 import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { enqueueDelta } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { IdleWatcherManager } from "../modules/mail/infrastructure/idle-watchers.js";
+import { createMailboxLock } from "../modules/mail/infrastructure/mailbox-lock.js";
 
 export function createWorkerComposition() {
   const config = getConfig();
@@ -46,26 +47,7 @@ export function createWorkerComposition() {
         enqueueDelta(jobs.boss, accountId, mailboxId, reason),
     },
   );
-  const withMailboxLock = async (
-    mailboxId: string,
-    work: () => Promise<void>,
-  ) => {
-    const connection = await database.client.reserve();
-    try {
-      const result = await connection<
-        { acquired: boolean }[]
-      >`select pg_try_advisory_lock(hashtextextended(${`mailbox-sync:${mailboxId}`}, 0)) as acquired`;
-      if (!result[0]?.acquired)
-        throw new Error("Mailbox sync is already running.");
-      try {
-        await work();
-      } finally {
-        await connection`select pg_advisory_unlock(hashtextextended(${`mailbox-sync:${mailboxId}`}, 0))`;
-      }
-    } finally {
-      connection.release();
-    }
-  };
+  const withMailboxLock = createMailboxLock(database.client);
   return {
     config,
     logger,
