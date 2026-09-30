@@ -138,7 +138,13 @@ export function imapOptions(connection: ProviderConnection): ImapFlowOptions {
     port: connection.port,
     secure: !starttls,
     doSTARTTLS: starttls,
-    auth: { user: connection.username, pass: connection.password },
+    auth:
+      connection.credential.kind === "password"
+        ? { user: connection.username, pass: connection.credential.password }
+        : {
+            user: connection.username,
+            accessToken: connection.credential.accessToken,
+          },
     connectionTimeout: CONNECTION_TIMEOUT_MS,
     greetingTimeout: CONNECTION_TIMEOUT_MS,
     socketTimeout: SOCKET_TIMEOUT_MS,
@@ -158,7 +164,14 @@ export function smtpOptions(
     secure: !starttls,
     requireTLS: starttls,
     ignoreTLS: false,
-    auth: { user: connection.username, pass: connection.password },
+    auth:
+      connection.credential.kind === "password"
+        ? { user: connection.username, pass: connection.credential.password }
+        : {
+            type: "OAuth2",
+            user: connection.username,
+            accessToken: connection.credential.accessToken,
+          },
     connectionTimeout: CONNECTION_TIMEOUT_MS,
     greetingTimeout: CONNECTION_TIMEOUT_MS,
     socketTimeout: SOCKET_TIMEOUT_MS,
@@ -222,6 +235,20 @@ function sanitizeError(
     verification_failed: "SMTP verification failed.",
     internal_error: `${protocol} connection failed.`,
   };
+  if (
+    protocol === "SMTP" &&
+    category === "authentication_rejected" &&
+    /5\.7\.139|smtpclientauthentication is disabled|smtp auth (?:is )?disabled/.test(
+      message,
+    )
+  ) {
+    return {
+      success: false,
+      category,
+      message:
+        "SMTP AUTH is disabled for this mailbox or tenant. Ask the mail administrator to enable authenticated SMTP.",
+    };
+  }
   return { success: false, category, message: descriptions[category] };
 }
 

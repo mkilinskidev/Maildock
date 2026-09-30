@@ -2,6 +2,7 @@ import { AccountsService } from "@/modules/accounts/application/accounts-service
 import { ImapSmtpMailProvider } from "@/modules/accounts/infrastructure/imap-smtp-mail-provider";
 import { getConfig } from "@/shared/infrastructure/config/config";
 import { AesGcmSecretEncryption } from "@/shared/infrastructure/crypto/aes-gcm-secret-encryption";
+import { MicrosoftOAuthService } from "@/modules/accounts/infrastructure/microsoft-oauth";
 import { db } from "@/shared/infrastructure/database/runtime-database";
 import { MailboxService } from "@/modules/mail/application/mailbox-service";
 import { PgBossMailboxDiscoveryScheduler } from "@/modules/mail/infrastructure/mailbox-discovery-jobs";
@@ -16,12 +17,14 @@ const encryption = new AesGcmSecretEncryption(
   config.credentialsEncryption.activeKeyId,
   config.credentialsEncryption.keys,
 );
+export const microsoftOAuth = new MicrosoftOAuthService(db, encryption, config);
 
 export const accountsService = new AccountsService(
   db,
   encryption,
   new ImapSmtpMailProvider(),
   new PgBossMailboxDiscoveryScheduler(config),
+  microsoftOAuth,
 );
 
 export const mailboxService = new MailboxService(db);

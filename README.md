@@ -36,6 +36,8 @@ For controlled future rotation, `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` accepts a
 
 `APP_ORIGIN` is the exact canonical browser origin. Production requires HTTPS. `ATTACHMENTS_PATH` must be absolute and readable/writable by Maildock.
 
+To connect Microsoft mail accounts, register a Microsoft Entra application with a **Web** redirect URI of `${APP_ORIGIN}/api/oauth/microsoft/callback`. Enable both organizational and personal Microsoft accounts if you need Outlook.com. Add delegated Exchange Online `IMAP.AccessAsUser.All` and `SMTP.Send` permissions. Put its application (client) ID in `MICROSOFT_CLIENT_ID` and a client secret **value** in `MICROSOFT_CLIENT_SECRET`. Restart the app and worker, then sign in to Maildock and choose **Connect Microsoft account** on `/accounts`. See [`docs/PHASE_1F.md`](docs/PHASE_1F.md) for consent and verification details.
+
 Phase 0 intentionally has no password reset flow. Until a reviewed administrative recovery procedure is added, losing the owner password can require manual operator intervention. Back up PostgreSQL and the attachment volume as one logical recovery set.
 
 ## Local development

@@ -2,8 +2,11 @@ import pino from "pino";
 
 import type { AppConfig } from "../config/config.js";
 
-export function createLogger(config: Pick<AppConfig, "logLevel">) {
-  return pino({
+export function createLogger(
+  config: Pick<AppConfig, "logLevel">,
+  destination?: pino.DestinationStream,
+) {
+  const options = {
     level: config.logLevel,
     redact: {
       paths: [
@@ -15,6 +18,18 @@ export function createLogger(config: Pick<AppConfig, "logLevel">) {
         "**.auth.pass",
         "secret",
         "token",
+        "accessToken",
+        "*.accessToken",
+        "**.accessToken",
+        "refreshToken",
+        "*.refreshToken",
+        "**.refreshToken",
+        "clientSecret",
+        "*.clientSecret",
+        "**.clientSecret",
+        "code",
+        "*.code",
+        "**.code",
         "authorization",
         "cookie",
         "req.headers.authorization",
@@ -26,5 +41,6 @@ export function createLogger(config: Pick<AppConfig, "logLevel">) {
       ],
       censor: "[REDACTED]",
     },
-  });
+  };
+  return destination ? pino(options, destination) : pino(options);
 }

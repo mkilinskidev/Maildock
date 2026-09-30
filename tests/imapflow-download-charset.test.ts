@@ -86,7 +86,7 @@ async function throughMaildock(
       port: 993,
       security: "tls",
       username: "owner",
-      password: "secret",
+      credential: { kind: "password", password: "secret" },
     },
   };
   return new ImapSmtpMailProvider(factories).fetchMessageContent(account, {

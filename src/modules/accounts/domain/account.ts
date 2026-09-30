@@ -80,5 +80,5 @@ export type UpdateAccountInput = z.infer<typeof updateAccountInputSchema>;
 
 export const accountCredentialContext = (
   accountId: string,
-  purpose: "imap" | "smtp",
+  purpose: "imap" | "smtp" | "oauth-cache",
 ) => `maildock:account-credential:v1:${accountId}:${purpose}`;

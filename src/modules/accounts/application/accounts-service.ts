@@ -18,6 +18,7 @@ import type { SecretEncryption } from "../../../shared/application/secret-encryp
 import type { MailboxDiscoveryScheduler } from "./mailbox-discovery-scheduler";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import { mailAccounts } from "../../../shared/infrastructure/database/schema";
+import type { MicrosoftOAuthService } from "../infrastructure/microsoft-oauth";
 
 export class MailAccountNotFoundError extends Error {
   constructor() {
@@ -41,12 +42,14 @@ export type MailAccountView = Readonly<{
   email: string;
   enabled: boolean;
   providerType: "imap_smtp";
+  authMethod: "password" | "oauth2";
+  oauthStatus: "connected" | "reconnect_required" | null;
   imap: Readonly<{
     host: string;
     port: number;
     security: "tls" | "starttls";
     username: string;
-    hasStoredPassword: true;
+    hasStoredPassword: boolean;
   }>;
   smtp: Readonly<{
     host: string;
@@ -85,12 +88,14 @@ function toView(row: AccountRow): MailAccountView {
     email: row.email,
     enabled: row.enabled,
     providerType: "imap_smtp",
+    authMethod: row.authMethod as "password" | "oauth2",
+    oauthStatus: row.oauthStatus as MailAccountView["oauthStatus"],
     imap: {
       host: row.imapHost,
       port: row.imapPort,
       security: row.imapSecurity as "tls" | "starttls",
       username: row.imapUsername,
-      hasStoredPassword: true,
+      hasStoredPassword: row.imapPassword !== null,
     },
     smtp: {
       host: row.smtpHost,
@@ -133,6 +138,7 @@ export class AccountsService {
     private readonly encryption: SecretEncryption,
     private readonly provider: MailProvider,
     private readonly discoveryScheduler?: MailboxDiscoveryScheduler,
+    private readonly oauth?: MicrosoftOAuthService,
   ) {}
 
   async list(): Promise<MailAccountView[]> {
@@ -194,6 +200,7 @@ export class AccountsService {
   ): Promise<MailAccountView> {
     const parsed = updateAccountInputSchema.parse(input);
     const current = await this.getRow(id);
+    if (current.authMethod !== "password") throw new MailAccountNotFoundError();
     let smtpPassword = current.smtpPassword;
     if (parsed.smtp.useImapCredentials) smtpPassword = null;
     else if (parsed.smtp.password) {
@@ -280,9 +287,11 @@ export class AccountsService {
     input?: UpdateAccountInput,
   ): Promise<ConnectionReport> {
     const row = await this.getRow(id);
+    if (input && row.authMethod !== "password")
+      throw new MailAccountNotFoundError();
     const providerInput = input
       ? this.providerInputFromEdit(row, updateAccountInputSchema.parse(input))
-      : this.providerInputFromRow(row);
+      : await this.providerInputFromRow(row);
     const report = await this.provider.testConnection(providerInput);
     const bothSuccessful = report.imap.success && report.smtp.success;
     await this.database
@@ -321,10 +330,7 @@ export class AccountsService {
         port: row.imapPort,
         security: row.imapSecurity as "tls" | "starttls",
         username: row.imapUsername,
-        password: this.encryption.decrypt(
-          row.imapPassword,
-          accountCredentialContext(row.id, "imap"),
-        ),
+        credential: await this.resolveCredential(row),
       },
     };
   }
@@ -344,7 +350,13 @@ export class AccountsService {
   ): ProviderAccount {
     return {
       accountId: input.id,
-      imap: input.imap,
+      imap: {
+        host: input.imap.host,
+        port: input.imap.port,
+        security: input.imap.security,
+        username: input.imap.username,
+        credential: { kind: "password", password: input.imap.password },
+      },
       smtp: {
         host: input.smtp.host,
         port: input.smtp.port,
@@ -352,9 +364,12 @@ export class AccountsService {
         username: input.smtp.useImapCredentials
           ? input.imap.username
           : input.smtp.username!,
-        password: input.smtp.useImapCredentials
-          ? input.imap.password
-          : input.smtp.password!,
+        credential: {
+          kind: "password",
+          password: input.smtp.useImapCredentials
+            ? input.imap.password
+            : input.smtp.password!,
+        },
       },
     };
   }
@@ -402,11 +417,30 @@ export class AccountsService {
     }
   }
 
-  private providerInputFromRow(row: AccountRow): ProviderAccount {
-    const imapPassword = this.encryption.decrypt(
-      row.imapPassword,
-      accountCredentialContext(row.id, "imap"),
-    );
+  private async resolveCredential(
+    row: AccountRow,
+  ): Promise<ProviderAccount["imap"]["credential"]> {
+    if (row.authMethod === "oauth2") {
+      if (!this.oauth)
+        throw new Error("OAuth credential resolver is unavailable.");
+      return {
+        kind: "oauth2",
+        accessToken: await this.oauth.accessToken(row.id),
+      };
+    }
+    return {
+      kind: "password",
+      password: this.encryption.decrypt(
+        row.imapPassword,
+        accountCredentialContext(row.id, "imap"),
+      ),
+    };
+  }
+
+  private async providerInputFromRow(
+    row: AccountRow,
+  ): Promise<ProviderAccount> {
+    const imapCredential = await this.resolveCredential(row);
     return {
       accountId: row.id,
       imap: {
@@ -414,7 +448,7 @@ export class AccountsService {
         port: row.imapPort,
         security: row.imapSecurity as "tls" | "starttls",
         username: row.imapUsername,
-        password: imapPassword,
+        credential: imapCredential,
       },
       smtp: {
         host: row.smtpHost,
@@ -423,12 +457,15 @@ export class AccountsService {
         username: row.smtpUsesImapCredentials
           ? row.imapUsername
           : row.smtpUsername!,
-        password: row.smtpUsesImapCredentials
-          ? imapPassword
-          : this.encryption.decrypt(
-              row.smtpPassword,
-              accountCredentialContext(row.id, "smtp"),
-            ),
+        credential: row.smtpUsesImapCredentials
+          ? imapCredential
+          : {
+              kind: "password",
+              password: this.encryption.decrypt(
+                row.smtpPassword,
+                accountCredentialContext(row.id, "smtp"),
+              ),
+            },
       },
     };
   }
@@ -465,7 +502,13 @@ export class AccountsService {
         ));
     return {
       accountId: row.id,
-      imap: { ...input.imap, password: imapPassword },
+      imap: {
+        host: input.imap.host,
+        port: input.imap.port,
+        security: input.imap.security,
+        username: input.imap.username,
+        credential: { kind: "password", password: imapPassword },
+      },
       smtp: {
         host: input.smtp.host,
         port: input.smtp.port,
@@ -473,7 +516,7 @@ export class AccountsService {
         username: input.smtp.useImapCredentials
           ? input.imap.username
           : input.smtp.username!,
-        password: smtpPassword,
+        credential: { kind: "password", password: smtpPassword },
       },
     };
   }

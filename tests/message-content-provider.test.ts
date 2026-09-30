@@ -13,7 +13,7 @@ const account: ProviderImapAccount = {
     port: 993,
     security: "tls",
     username: "u",
-    password: "secret",
+    credential: { kind: "password", password: "secret" },
   },
 };
 const parts = [

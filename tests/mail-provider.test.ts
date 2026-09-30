@@ -21,14 +21,14 @@ const account: ProviderAccount = {
     port: 993,
     security: "tls",
     username: "owner",
-    password: "imap-secret",
+    credential: { kind: "password", password: "imap-secret" },
   },
   smtp: {
     host: "smtp.example.test",
     port: 587,
     security: "starttls",
     username: "owner",
-    password: "smtp-secret",
+    credential: { kind: "password", password: "smtp-secret" },
   },
 };
 
@@ -112,6 +112,27 @@ describe("IMAP/SMTP connection provider", () => {
     });
     expect(JSON.stringify(result)).not.toContain("smtp-secret");
     expect(fake.state).toEqual({ imapClosed: 1, smtpClosed: 1 });
+  });
+
+  it("explains disabled SMTP AUTH without leaking the server response", async () => {
+    const error = Object.assign(
+      new Error(
+        "535 5.7.139 SmtpClientAuthentication is disabled for the Tenant; access-secret",
+      ),
+      { code: "EAUTH" },
+    );
+    const result = await new ImapSmtpMailProvider(
+      factories({ smtpError: error }).value,
+    ).testConnection(account);
+    expect(result.smtp).toMatchObject({
+      success: false,
+      category: "authentication_rejected",
+    });
+    expect(result.smtp).toHaveProperty(
+      "message",
+      "SMTP AUTH is disabled for this mailbox or tenant. Ask the mail administrator to enable authenticated SMTP.",
+    );
+    expect(JSON.stringify(result)).not.toContain("access-secret");
   });
 
   it("maps implicit TLS and required STARTTLS without disabling certificate checks", () => {

@@ -79,7 +79,7 @@ function watchers(
         port: 993,
         security: "tls",
         username: "owner",
-        password: "secret",
+        credential: { kind: "password", password: "secret" },
       },
     }),
   } as unknown as AccountsService;

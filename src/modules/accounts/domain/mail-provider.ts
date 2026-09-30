@@ -5,7 +5,9 @@ export type ProviderConnection = Readonly<{
   port: number;
   security: TransportSecurity;
   username: string;
-  password: string;
+  credential:
+    | Readonly<{ kind: "password"; password: string }>
+    | Readonly<{ kind: "oauth2"; accessToken: string }>;
 }>;
 
 export type ProviderAccount = Readonly<{

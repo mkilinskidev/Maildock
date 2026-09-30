@@ -499,6 +499,8 @@ This does not require implementing unused adapters now. It requires stable ports
 
 Phase 1E implements mailbox delta synchronization with a durable mailbox checkpoint, periodic pg-boss polling, and an INBOX-only IMAP IDLE wake-up watcher. The algorithm and restart semantics are documented in [PHASE_1E.md](PHASE_1E.md). IDLE events never write mail data directly.
 
+Phase 1F adds delegated Microsoft OAuth2 as an account authentication method. `AccountsService` resolves a password or runtime access-token credential before invoking the existing IMAP/SMTP provider; discovery, recent and delta sync, IDLE, and content services remain provider-neutral. MSAL Node owns token renewal and its per-account serialized cache is encrypted in PostgreSQL. See [PHASE_1F.md](PHASE_1F.md).
+
 No phase should add Gmail API, Graph, POP3, AI, contacts, or calendars unless this architecture document is explicitly revised.
 
 ### Phase 0 — repository and decisions

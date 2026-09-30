@@ -359,7 +359,8 @@ describe("Phase 0 PostgreSQL foundations", () => {
     const [replaced] = await db.select().from(mailAccounts);
     expect(replaced?.imapPassword).not.toEqual(originalImapEnvelope);
     expect(replaced?.smtpPassword).not.toEqual(originalSmtpEnvelope);
-    expect(JSON.stringify(updated)).not.toContain("password");
+    expect(JSON.stringify(updated)).not.toContain("new-imap-password");
+    expect(JSON.stringify(updated)).not.toContain("new-smtp-password");
   });
 
   it("records separate connection outcomes and deletes an account", async () => {

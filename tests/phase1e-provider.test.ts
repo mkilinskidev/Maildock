@@ -20,7 +20,7 @@ const account: ProviderImapAccount = {
     port: 993,
     security: "tls",
     username: "owner",
-    password: "secret",
+    credential: { kind: "password", password: "secret" },
   },
 };
 

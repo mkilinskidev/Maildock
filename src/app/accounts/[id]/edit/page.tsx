@@ -24,6 +24,7 @@ export default async function EditAccountPage({
   if (!(await getCurrentSession())) redirect("/login");
   const { id } = await params;
   const account = await findAccount(id);
+  if (account.authMethod === "oauth2") redirect("/accounts");
   return (
     <main className="page-shell">
       <section className="wide">

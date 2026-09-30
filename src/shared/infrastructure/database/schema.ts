@@ -164,7 +164,11 @@ export const mailAccounts = pgTable(
     imapPort: integer("imap_port").notNull(),
     imapSecurity: text("imap_security").notNull(),
     imapUsername: text("imap_username").notNull(),
-    imapPassword: jsonb("imap_password").$type<EncryptedEnvelope>().notNull(),
+    imapPassword: jsonb("imap_password").$type<EncryptedEnvelope>(),
+    authMethod: text("auth_method").default("password").notNull(),
+    oauthCache: jsonb("oauth_cache").$type<EncryptedEnvelope>(),
+    oauthHomeAccountId: text("oauth_home_account_id"),
+    oauthStatus: text("oauth_status"),
     smtpHost: text("smtp_host").notNull(),
     smtpPort: integer("smtp_port").notNull(),
     smtpSecurity: text("smtp_security").notNull(),
@@ -245,10 +249,22 @@ export const mailAccounts = pgTable(
       "mail_accounts_smtp_credentials",
       sql`(${table.smtpUsesImapCredentials} and ${table.smtpUsername} is null and ${table.smtpPassword} is null) or (not ${table.smtpUsesImapCredentials} and ${table.smtpUsername} is not null and ${table.smtpPassword} is not null)`,
     ),
+    check(
+      "mail_accounts_auth_credential",
+      sql`(${table.authMethod} = 'password' and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthHomeAccountId} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
+    ),
     index("mail_accounts_enabled_idx").on(table.enabled),
     index("mail_accounts_email_idx").on(table.email),
   ],
 );
+
+export const oauthAuthorizationStates = pgTable("oauth_authorization_states", {
+  stateHash: text("state_hash").primaryKey(),
+  sessionId: text("session_id").notNull(),
+  codeVerifier: jsonb("code_verifier").$type<EncryptedEnvelope>().notNull(),
+  accountId: uuid("account_id"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
 
 export const mailboxes = pgTable(
   "mailboxes",
@@ -534,6 +550,7 @@ export const schema = {
   rateLimit,
   loginThrottle,
   mailAccounts,
+  oauthAuthorizationStates,
   mailboxes,
   messages,
   mailboxMessages,

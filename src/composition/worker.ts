@@ -4,6 +4,7 @@ import { createLogger } from "../shared/infrastructure/logging/logger.js";
 import { createWorkerDatabase } from "../shared/infrastructure/database/database-worker.js";
 import { AesGcmSecretEncryption } from "../shared/infrastructure/crypto/aes-gcm-secret-encryption.js";
 import { AccountsService } from "../modules/accounts/application/accounts-service.js";
+import { MicrosoftOAuthService } from "../modules/accounts/infrastructure/microsoft-oauth.js";
 import { ImapSmtpMailProvider } from "../modules/accounts/infrastructure/imap-smtp-mail-provider.js";
 import { MailboxService } from "../modules/mail/application/mailbox-service.js";
 import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-discovery-service.js";
@@ -25,7 +26,13 @@ export function createWorkerComposition() {
     config.credentialsEncryption.activeKeyId,
     config.credentialsEncryption.keys,
   );
-  const accounts = new AccountsService(database.db, encryption, provider);
+  const accounts = new AccountsService(
+    database.db,
+    encryption,
+    provider,
+    undefined,
+    new MicrosoftOAuthService(database.db, encryption, config),
+  );
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
   const recentSyncScheduler = {

@@ -9,11 +9,13 @@ import {
   type MailProvider,
 } from "../../accounts/domain/mail-provider";
 import type { Database } from "../../../shared/infrastructure/database/database";
+import { MicrosoftAuthorizationError } from "../../accounts/infrastructure/microsoft-oauth";
 import { mailAccounts } from "../../../shared/infrastructure/database/schema";
 import type { MailboxService } from "./mailbox-service";
 import type { MessageService } from "./message-service";
 
 function sanitizedDiscoveryError(error: unknown): string {
+  if (error instanceof MicrosoftAuthorizationError) return error.message;
   if (error instanceof DisabledMailAccountError) return error.message;
   if (error instanceof MailProviderOperationError) return error.message;
   return "Mailbox discovery failed.";

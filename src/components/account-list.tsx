@@ -46,13 +46,31 @@ function MailboxHierarchy({ mailboxes }: { mailboxes: MailboxView[] }) {
 export function AccountList({
   accounts,
   mailboxesByAccount,
+  oauthConfigured,
+  oauthResult,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
+  oauthConfigured: boolean;
+  oauthResult: { oauth?: string; oauth_error?: string };
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState<string>();
+  const oauthErrorMessage = oauthResult.oauth_error
+    ? ({
+        configuration:
+          "Microsoft connection is not configured. Set the Microsoft app registration values.",
+        start: "Microsoft connection could not start. Try again.",
+        state:
+          "Microsoft sign-in expired or was invalid. Try connecting again.",
+        denied:
+          "Microsoft consent was denied. Grant the requested mail permissions to connect.",
+        identity: "Reconnect using the same Microsoft account as before.",
+        authorization:
+          "Microsoft sign-in failed. Check consent, account access, and tenant policy, then try again.",
+      }[oauthResult.oauth_error] ?? "Microsoft connection failed. Try again.")
+    : null;
 
   const discoveryInProgress = accounts.some((account) =>
     ["pending", "running"].includes(account.mailboxDiscovery.status),
@@ -115,12 +133,20 @@ export function AccountList({
     return (
       <div className="empty-state">
         <h2>No mail accounts</h2>
+        {oauthErrorMessage ? (
+          <p className="error">{oauthErrorMessage}</p>
+        ) : null}
         <p>
           Add your first email account to test and store its IMAP and SMTP
           configuration.
         </p>
-        <Link className="button-link" href="/accounts/new">
-          Add your first email account
+        {oauthConfigured ? (
+          <Link className="button-link" href="/api/oauth/microsoft/start">
+            Connect Microsoft account
+          </Link>
+        ) : null}
+        <Link className="button-link secondary" href="/accounts/new">
+          Configure IMAP/SMTP manually
         </Link>
       </div>
     );
@@ -128,6 +154,20 @@ export function AccountList({
 
   return (
     <>
+      <div className="actions">
+        {oauthConfigured ? (
+          <Link className="button-link" href="/api/oauth/microsoft/start">
+            Connect Microsoft account
+          </Link>
+        ) : null}
+        <Link className="button-link secondary" href="/accounts/new">
+          Configure IMAP/SMTP manually
+        </Link>
+      </div>
+      {oauthResult.oauth === "connected" ? (
+        <p>Microsoft account connected.</p>
+      ) : null}
+      {oauthErrorMessage ? <p className="error">{oauthErrorMessage}</p> : null}
       {error ? <p className="error">{error}</p> : null}
       <div className="account-list">
         {accounts.map((account) => (
@@ -135,6 +175,14 @@ export function AccountList({
             <div className="account-details">
               <h2>{account.displayName}</h2>
               <p>{account.email}</p>
+              {account.authMethod === "oauth2" ? (
+                <p className="muted">
+                  Microsoft OAuth ·{" "}
+                  {account.oauthStatus === "reconnect_required"
+                    ? "Reconnect required"
+                    : "Connected"}
+                </p>
+              ) : null}
               <p className="muted">
                 {account.enabled ? "Enabled" : "Disabled"} ·{" "}
                 {account.connectionStatus === "verified"
@@ -209,12 +257,21 @@ export function AccountList({
               ) : null}
             </div>
             <div className="actions">
-              <Link
-                className="button-link secondary"
-                href={`/accounts/${account.id}/edit`}
-              >
-                Edit
-              </Link>
+              {account.authMethod === "oauth2" ? (
+                <Link
+                  className="button-link secondary"
+                  href={`/api/oauth/microsoft/start?accountId=${account.id}`}
+                >
+                  Reconnect Microsoft account
+                </Link>
+              ) : (
+                <Link
+                  className="button-link secondary"
+                  href={`/accounts/${account.id}/edit`}
+                >
+                  Edit
+                </Link>
+              )}
               <button
                 disabled={pending === account.id}
                 onClick={() => mutate(account.id, "test")}

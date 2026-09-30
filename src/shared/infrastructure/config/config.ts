@@ -57,6 +57,8 @@ const schema = z
     CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
     CREDENTIALS_ENCRYPTION_KEY_ID: keyIdSchema.default("v1"),
     CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: previousKeysSchema,
+    MICROSOFT_CLIENT_ID: z.string().trim().default(""),
+    MICROSOFT_CLIENT_SECRET: z.string().default(""),
     ATTACHMENTS_PATH: z
       .string()
       .min(1)
@@ -131,6 +133,7 @@ export type AppConfig = Readonly<{
     activeKeyId: string;
     keys: Readonly<Record<string, string>>;
   }>;
+  microsoft: Readonly<{ clientId: string; clientSecret: string }>;
   attachmentsPath: string;
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   databasePoolSize: number;
@@ -175,6 +178,10 @@ export function parseConfig(
         [result.data.CREDENTIALS_ENCRYPTION_KEY_ID]:
           result.data.CREDENTIALS_ENCRYPTION_KEY,
       }),
+    }),
+    microsoft: Object.freeze({
+      clientId: result.data.MICROSOFT_CLIENT_ID,
+      clientSecret: result.data.MICROSOFT_CLIENT_SECRET,
     }),
     attachmentsPath: result.data.ATTACHMENTS_PATH,
     logLevel: result.data.LOG_LEVEL,
