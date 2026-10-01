@@ -7,7 +7,9 @@ import { useEffect, useState } from "react";
 
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
+import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import { MessageList } from "@/components/message-list";
+import { SystemFolders } from "@/components/system-folders";
 
 function count(value: string | null): string {
   return value === null ? "" : new Intl.NumberFormat().format(BigInt(value));
@@ -47,11 +49,13 @@ function MailboxHierarchy({ mailboxes }: { mailboxes: MailboxView[] }) {
 export function AccountList({
   accounts,
   mailboxesByAccount,
+  rolesByAccount,
   oauthConfigured,
   oauthResult,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
+  rolesByAccount: Record<string, MailboxRoleView[]>;
   oauthConfigured: boolean;
   oauthResult: { oauth?: string; oauth_error?: string };
 }) {
@@ -280,6 +284,12 @@ export function AccountList({
                     ).toLocaleString()
                   : ""}
               </p>
+              <SystemFolders
+                key={JSON.stringify(rolesByAccount[account.id] ?? [])}
+                accountId={account.id}
+                initialRoles={rolesByAccount[account.id] ?? []}
+                mailboxes={mailboxesByAccount[account.id] ?? []}
+              />
               <MailboxHierarchy
                 mailboxes={mailboxesByAccount[account.id] ?? []}
               />

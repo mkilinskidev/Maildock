@@ -4,6 +4,7 @@ import { isInstanceInitialized } from "@/modules/auth/application/instance-auth"
 import {
   accountsService,
   mailboxService,
+  mailboxRoleService,
 } from "@/modules/accounts/infrastructure/accounts";
 import { db } from "@/shared/infrastructure/database/runtime-database";
 import { MailClient } from "@/components/mail-client";
@@ -19,10 +20,17 @@ export default async function HomePage() {
         [account.id, await mailboxService.listForAccount(account.id)] as const,
     ),
   );
+  const roleEntries = await Promise.all(
+    accounts.map(
+      async (account) =>
+        [account.id, await mailboxRoleService.list(account.id)] as const,
+    ),
+  );
   return (
     <MailClient
       accounts={accounts}
       mailboxesByAccount={Object.fromEntries(entries)}
+      rolesByAccount={Object.fromEntries(roleEntries)}
     />
   );
 }

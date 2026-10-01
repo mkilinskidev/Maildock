@@ -38,6 +38,8 @@ import {
   type DeltaMailboxSyncSink,
   type BackfillMailboxSyncRequest,
   type BackfillMailboxSyncSink,
+  type RemoteMutationRequest,
+  type RemoteMutationResult,
 } from "../domain/mail-provider";
 
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -117,6 +119,26 @@ type ImapClient = {
     }>,
     options: { uid: true; changedSince?: bigint },
   ): AsyncGenerator<FetchMessageObject, false | void, undefined>;
+  fetchOne?(
+    seq: string,
+    query: { uid: true; flags: true; modseq?: true },
+    options: { uid: true },
+  ): Promise<FetchMessageObject | false | undefined>;
+  messageFlagsAdd?(
+    range: string,
+    flags: string[],
+    options: { uid: true; unchangedSince?: bigint },
+  ): Promise<boolean>;
+  messageFlagsRemove?(
+    range: string,
+    flags: string[],
+    options: { uid: true; unchangedSince?: bigint },
+  ): Promise<boolean>;
+  messageMove?(
+    range: string,
+    destination: string,
+    options: { uid: true },
+  ): Promise<{ uidValidity?: bigint; uidMap?: Map<number, number> } | false>;
 };
 type SmtpTransport = {
   verify(): Promise<unknown>;
@@ -421,6 +443,99 @@ export class ImapSmtpMailProvider implements MailProvider {
   constructor(
     private readonly factories: ProtocolClientFactories = defaultFactories,
   ) {}
+
+  async mutateMessage(
+    account: ProviderImapAccount,
+    request: RemoteMutationRequest,
+  ): Promise<RemoteMutationResult> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    let connected = false;
+    let selected = false;
+    try {
+      await client.connect();
+      connected = true;
+      const mailbox = await client.mailboxOpen(request.sourcePath, {
+        readOnly: false,
+      });
+      selected = true;
+      if (mailbox.uidValidity.toString() !== request.uidValidity)
+        throw new MailboxEpochChangedError();
+      const uid = Number(request.uid);
+      if (!Number.isSafeInteger(uid) || uid < 1)
+        throw new Error("Invalid message UID.");
+      if (
+        !client.fetchOne ||
+        !client.messageFlagsAdd ||
+        !client.messageFlagsRemove ||
+        !client.messageMove
+      )
+        throw new Error("IMAP mutation methods are unavailable.");
+      const current = await client.fetchOne(
+        request.uid,
+        { uid: true, flags: true, modseq: true },
+        { uid: true },
+      );
+      if (!current || current.uid !== uid) return { outcome: "source_missing" };
+      if (request.action === "archive" || request.action === "trash") {
+        if (!client.capabilities.has("MOVE") || !request.destinationPath)
+          throw new Error("IMAP MOVE is unavailable.");
+        const moved = await client.messageMove(
+          request.uid,
+          request.destinationPath,
+          { uid: true },
+        );
+        if (!moved) return { outcome: "source_missing" };
+        const mapped = moved.uidMap?.get(uid);
+        return {
+          outcome: "applied",
+          ...(moved.uidValidity === undefined
+            ? {}
+            : { destinationUidValidity: moved.uidValidity.toString() }),
+          ...(mapped === undefined
+            ? {}
+            : { destinationUid: mapped.toString() }),
+        };
+      }
+      const flag =
+        request.action === "mark_read" || request.action === "mark_unread"
+          ? "\\Seen"
+          : "\\Flagged";
+      const add = request.action === "mark_read" || request.action === "flag";
+      const options = {
+        uid: true as const,
+        ...(request.modseq &&
+        current.modseq &&
+        client.enabled.has("CONDSTORE")
+          ? { unchangedSince: BigInt(request.modseq) }
+          : {}),
+      };
+      const changed = add
+        ? await client.messageFlagsAdd(request.uid, [flag], options)
+        : await client.messageFlagsRemove(request.uid, [flag], options);
+      return { outcome: changed ? "applied" : "conflict" };
+    } catch (error) {
+      if (
+        error instanceof MailboxEpochChangedError ||
+        error instanceof MailProviderOperationError
+      )
+        throw error;
+      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+    } finally {
+      if (selected)
+        try {
+          await client.mailboxClose();
+        } catch {
+          /* connection cleanup follows */
+        }
+      if (connected)
+        try {
+          await client.logout();
+        } catch {
+          /* close follows */
+        }
+      client.close();
+    }
+  }
 
   async testConnection(account: ProviderAccount): Promise<ConnectionReport> {
     return {

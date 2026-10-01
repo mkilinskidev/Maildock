@@ -520,6 +520,16 @@ a {
   padding: 20px clamp(24px, 5vw, 64px) 16px;
   border-bottom: 1px solid var(--border);
 }
+.message-actions {
+  display: flex;
+  gap: 4px;
+  margin: -7px 0 14px;
+  color: var(--muted);
+}
+.message-actions .icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 .mail-detail-header h2 {
   margin: 0 0 16px;
   font-size: clamp(19px, 2vw, 24px);
@@ -755,6 +765,49 @@ a {
   display: grid;
   gap: 4px;
   margin: 12px 0;
+}
+.system-folders {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.system-folders h3 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 13px;
+}
+.system-folders > p {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+.system-folder-row {
+  display: grid;
+  grid-template-columns: 72px minmax(150px, 1fr) minmax(90px, auto) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 7px 0;
+}
+.system-folder-row label {
+  color: var(--text);
+}
+.system-folder-row select {
+  min-width: 0;
+}
+.system-folder-source {
+  color: var(--muted);
+}
+.system-folder-row .button {
+  margin: 0;
+}
+@media (max-width: 650px) {
+  .system-folder-row {
+    grid-template-columns: 70px minmax(0, 1fr);
+  }
+  .system-folder-source {
+    grid-column: 2;
+  }
 }
 .mailbox-row {
   display: grid;

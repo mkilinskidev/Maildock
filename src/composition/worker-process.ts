@@ -4,6 +4,7 @@ import { registerRecentSyncWorker } from "../modules/mail/infrastructure/recent-
 import { registerContentWorker } from "../modules/mail/infrastructure/content-jobs.js";
 import { registerDeltaWorker } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { registerBackfillWorker } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
+import { registerMessageCommandWorker } from "../modules/mail/infrastructure/message-command-jobs.js";
 
 const worker = createWorkerComposition();
 let stopping = false;
@@ -18,6 +19,7 @@ async function shutdown(signal: string) {
   try {
     worker.poller.stop();
     worker.backfillPoller.stop();
+    worker.commandPoller.stop();
     await worker.watchers.stop();
     await worker.jobs.stop();
     await worker.database.client.end();
@@ -54,6 +56,11 @@ try {
     worker.withMailboxLock,
   );
   await registerContentWorker(worker.jobs.boss, worker.content);
+  await registerMessageCommandWorker(
+    worker.jobs.boss,
+    worker.commands,
+    worker.withMailboxLock,
+  );
   await registerMailboxDiscoveryWorker(
     worker.jobs.boss,
     worker.mailboxDiscovery,
@@ -61,6 +68,7 @@ try {
   );
   await worker.poller.start();
   await worker.backfillPoller.start();
+  await worker.commandPoller.start();
   await worker.watchers.start();
 } catch (error) {
   worker.logger.fatal(

@@ -456,6 +456,7 @@ export class MessageService {
         and(
           eq(mailboxMessages.mailboxId, mailboxId),
           eq(messages.accountId, accountId),
+          eq(mailboxMessages.actionHidden, false),
           cursorValue
             ? or(
                 lt(messages.internalDate, cursorValue[0]),

@@ -7,6 +7,7 @@ import { microsoftOAuth } from "@/modules/accounts/infrastructure/accounts";
 import {
   accountsService,
   mailboxService,
+  mailboxRoleService,
 } from "@/modules/accounts/infrastructure/accounts";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,12 @@ export default async function AccountsPage({
     accounts.map(
       async (account) =>
         [account.id, await mailboxService.listForAccount(account.id)] as const,
+    ),
+  );
+  const roleEntries = await Promise.all(
+    accounts.map(
+      async (account) =>
+        [account.id, await mailboxRoleService.list(account.id)] as const,
     ),
   );
   return (
@@ -41,6 +48,7 @@ export default async function AccountsPage({
         <AccountList
           accounts={accounts}
           mailboxesByAccount={Object.fromEntries(entries)}
+          rolesByAccount={Object.fromEntries(roleEntries)}
           oauthConfigured={microsoftOAuth.configured}
           oauthResult={await searchParams}
         />

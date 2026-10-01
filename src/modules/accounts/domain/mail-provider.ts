@@ -213,6 +213,20 @@ export type DisplayContentResult = Readonly<{
   html: string | null;
 }>;
 
+export type RemoteMutationRequest = Readonly<{
+  sourcePath: string;
+  uidValidity: string;
+  uid: string;
+  action: "mark_read" | "mark_unread" | "flag" | "unflag" | "archive" | "trash";
+  destinationPath?: string;
+  modseq?: string;
+}>;
+export type RemoteMutationResult = Readonly<{
+  outcome: "applied" | "source_missing" | "conflict";
+  destinationUidValidity?: string;
+  destinationUid?: string;
+}>;
+
 export interface MailProvider {
   testConnection(account: ProviderAccount): Promise<ConnectionReport>;
   listMailboxes(account: ProviderImapAccount): Promise<MailboxDiscoveryResult>;
@@ -236,4 +250,8 @@ export interface MailProvider {
     account: ProviderImapAccount,
     request: DisplayContentRequest,
   ): Promise<DisplayContentResult>;
+  mutateMessage?(
+    account: ProviderImapAccount,
+    request: RemoteMutationRequest,
+  ): Promise<RemoteMutationResult>;
 }

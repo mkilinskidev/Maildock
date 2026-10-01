@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -381,6 +382,38 @@ export const mailboxes = pgTable(
   ],
 );
 
+export const mailboxRoles = pgTable(
+  "mailbox_roles",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.role] }),
+    check(
+      "mailbox_roles_role",
+      sql`${table.role} in ('archive', 'trash', 'sent', 'drafts', 'junk')`,
+    ),
+    check(
+      "mailbox_roles_source",
+      sql`${table.source} in ('special_use', 'manual')`,
+    ),
+    index("mailbox_roles_mailbox_idx").on(table.mailboxId),
+  ],
+);
+
 export type MailAddress = Readonly<{ name?: string; address?: string }>;
 export type MimePart = Readonly<{
   part: string | null;
@@ -452,6 +485,7 @@ export const mailboxMessages = pgTable(
     uid: bigint("uid", { mode: "bigint" }).notNull(),
     modseq: bigint("modseq", { mode: "bigint" }),
     flags: text("flags").array().default([]).notNull(),
+    actionHidden: boolean("action_hidden").default(false).notNull(),
     firstSynchronizedAt: timestamp("first_synchronized_at", {
       withTimezone: true,
     }).notNull(),
@@ -502,6 +536,70 @@ export const messageContents = pgTable(
     check(
       "message_contents_status",
       sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,
+    ),
+  ],
+);
+
+export const messageCommands = pgTable(
+  "message_commands",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    placementId: uuid("placement_id").references(() => mailboxMessages.id, {
+      onDelete: "set null",
+    }),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    status: text("status").default("pending").notNull(),
+    sourcePath: text("source_path").notNull(),
+    sourceUidValidity: bigint("source_uid_validity", {
+      mode: "bigint",
+    }).notNull(),
+    sourceUid: bigint("source_uid", { mode: "bigint" }).notNull(),
+    destinationMailboxId: uuid("destination_mailbox_id").references(
+      () => mailboxes.id,
+      { onDelete: "set null" },
+    ),
+    destinationPath: text("destination_path"),
+    destinationUidValidity: bigint("destination_uid_validity", {
+      mode: "bigint",
+    }),
+    destinationUid: bigint("destination_uid", { mode: "bigint" }),
+    originalFlags: text("original_flags").array().default([]).notNull(),
+    error: text("error"),
+    attempts: integer("attempts").default(0).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "message_commands_action",
+      sql`${table.action} in ('mark_read', 'mark_unread', 'flag', 'unflag', 'archive', 'trash')`,
+    ),
+    check(
+      "message_commands_status",
+      sql`${table.status} in ('pending', 'executing', 'succeeded', 'failed')`,
+    ),
+    index("message_commands_placement_status_idx").on(
+      table.placementId,
+      table.status,
+    ),
+    index("message_commands_account_created_idx").on(
+      table.accountId,
+      table.createdAt,
     ),
   ],
 );
@@ -563,9 +661,11 @@ export const schema = {
   mailAccounts,
   oauthAuthorizationStates,
   mailboxes,
+  mailboxRoles,
   messages,
   mailboxMessages,
   messageContents,
+  messageCommands,
   userRelations,
   sessionRelations,
   accountRelations,

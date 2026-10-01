@@ -21,6 +21,11 @@ import {
   BackfillPoller,
   enqueueBackfill,
 } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
+import { MessageCommandService } from "../modules/mail/application/message-command-service.js";
+import {
+  MessageCommandPoller,
+  enqueueMessageCommand,
+} from "../modules/mail/infrastructure/message-command-jobs.js";
 
 export function createWorkerComposition() {
   const config = getConfig();
@@ -64,12 +69,23 @@ export function createWorkerComposition() {
     },
   );
   const withMailboxLock = createMailboxLock(database.client);
+  const commands = new MessageCommandService(
+    database.db,
+    (id) => enqueueMessageCommand(jobs.boss, id),
+    async (accountId, mailboxId) => {
+      await enqueueDelta(jobs.boss, accountId, mailboxId, "manual");
+    },
+    accounts,
+    provider,
+  );
   return {
     config,
     logger,
     database,
     jobs,
     withMailboxLock,
+    commands,
+    commandPoller: new MessageCommandPoller(jobs.boss, commands),
     delta: new DeltaSyncService(
       database.db,
       accounts,

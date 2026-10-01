@@ -12,10 +12,15 @@ import {
   RefreshCw,
   Settings2,
   ShieldOff,
+  Trash2,
+  Star,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
+import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import type {
   MessageListItem,
   MessagePage,
@@ -42,6 +47,12 @@ type Detail = {
     error: string | null;
   };
 };
+type CountAdjustment = {
+  key: string;
+  mailboxId: string;
+  delta: number;
+  completedAt: string | null;
+};
 function address(values: Address[]) {
   return values
     .map((value) =>
@@ -61,14 +72,17 @@ function formatCount(value: string): string {
 export function MailClient({
   accounts,
   mailboxesByAccount,
+  rolesByAccount,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
+  rolesByAccount: Record<string, MailboxRoleView[]>;
 }) {
   const first = accounts[0];
   const [accountId, setAccountId] = useState(first?.id ?? "");
   const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
     useState(mailboxesByAccount);
+  const [liveRolesByAccount, setLiveRolesByAccount] = useState(rolesByAccount);
   const [folderReloadNonce, setFolderReloadNonce] = useState(0);
   const folders = liveMailboxesByAccount[accountId] ?? [];
   const [mailboxId, setMailboxId] = useState(
@@ -77,6 +91,7 @@ export function MailClient({
       folders.find((item) => item.selectable)?.id ??
       "",
   );
+  const activeLocationRef = useRef(`${accountId}:${mailboxId}`);
   const [messages, setMessages] = useState<MessageListItem[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(Boolean(first));
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -95,8 +110,192 @@ export function MailClient({
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const [pendingCommands, setPendingCommands] = useState<
+    Record<
+      string,
+      {
+        accountId: string;
+        mailboxId: string;
+        adjustmentKey: string | null;
+      }
+    >
+  >({});
+  const [countAdjustments, setCountAdjustments] = useState<CountAdjustment[]>(
+    [],
+  );
   const folder = folders.find((item) => item.id === mailboxId);
   const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+  const selectedMessage = messages.find((item) => item.id === selectedId);
+  const moveAvailable = (action: "archive" | "trash") => {
+    const mapping = liveRolesByAccount[accountId]?.find(
+      (item) => item.role === action,
+    );
+    return Boolean(
+      activeAccount?.enabled &&
+      activeAccount.mailboxDiscovery.capabilities.includes("MOVE") &&
+      mapping?.available &&
+      mapping.mailboxId !== mailboxId,
+    );
+  };
+
+  async function act(
+    action:
+      "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "unflag",
+  ) {
+    if (!selectedId || !selectedMessage) return;
+    const targetId = selectedId;
+    const previous = [...messages];
+    const countDelta =
+      action === "mark_read" && !selectedMessage.seen
+        ? -1
+        : action === "mark_unread" && selectedMessage.seen
+          ? 1
+          : 0;
+    const adjustmentKey = countDelta === 0 ? null : crypto.randomUUID();
+    if (adjustmentKey)
+      setCountAdjustments((current) => [
+        ...current,
+        { key: adjustmentKey, mailboxId, delta: countDelta, completedAt: null },
+      ]);
+    setError("");
+    if (action === "archive" || action === "trash") {
+      const index = messages.findIndex((item) => item.id === targetId);
+      const next = messages[index + 1] ?? messages[index - 1];
+      setMessages((current) => current.filter((item) => item.id !== targetId));
+      setSelectedId(next?.id ?? "");
+      setDetail(null);
+      setLoadingDetail(Boolean(next));
+    } else {
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === targetId
+            ? {
+                ...item,
+                seen:
+                  action === "mark_read"
+                    ? true
+                    : action === "mark_unread"
+                      ? false
+                      : item.seen,
+                flagged:
+                  action === "flag"
+                    ? true
+                    : action === "unflag"
+                      ? false
+                      : item.flagged,
+              }
+            : item,
+        ),
+      );
+    }
+    try {
+      const response = await fetch(`${base}/${targetId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !result.id)
+        throw new Error(result.error ?? "Message action could not be queued.");
+      setPendingCommands((current) => ({
+        ...current,
+        [result.id!]: { accountId, mailboxId, adjustmentKey },
+      }));
+    } catch (failure) {
+      if (adjustmentKey)
+        setCountAdjustments((current) =>
+          current.filter((item) => item.key !== adjustmentKey),
+        );
+      if (activeLocationRef.current === `${accountId}:${mailboxId}`) {
+        setMessages(previous);
+        setSelectedId(targetId);
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Message action could not be queued.",
+        );
+      }
+    }
+  }
+
+  useEffect(() => {
+    const entries = Object.entries(pendingCommands);
+    if (!entries.length) return;
+    let cancelled = false;
+    const idsByAccount = new Map<string, string[]>();
+    for (const [id, command] of entries) {
+      const ids = idsByAccount.get(command.accountId) ?? [];
+      ids.push(id);
+      idsByAccount.set(command.accountId, ids);
+    }
+    const timer = setInterval(() => {
+      for (const [commandAccountId, ids] of idsByAccount)
+        void fetch(
+          `/api/accounts/${commandAccountId}/message-commands?${ids.map((id) => `id=${encodeURIComponent(id)}`).join("&")}`,
+          { cache: "no-store" },
+        )
+          .then(async (response) =>
+            response.ok
+              ? (response.json() as Promise<{
+                  commands: {
+                    id: string;
+                    status: string;
+                    error: string | null;
+                    completedAt: string | null;
+                  }[];
+                }>)
+              : Promise.reject(),
+          )
+          .then((result) => {
+            if (cancelled) return;
+            const finished = result.commands.filter(
+              (item) => item.status === "failed" || item.status === "succeeded",
+            );
+            if (!finished.length) return;
+            setCountAdjustments((current) =>
+              current.flatMap((adjustment) => {
+                const match = finished.find(
+                  (item) =>
+                    pendingCommands[item.id]?.adjustmentKey === adjustment.key,
+                );
+                if (!match) return [adjustment];
+                if (match.status === "failed") return [];
+                return [{ ...adjustment, completedAt: match.completedAt }];
+              }),
+            );
+            setPendingCommands((current) => {
+              const next = { ...current };
+              for (const item of finished) delete next[item.id];
+              return next;
+            });
+            if (finished.some((item) => item.status === "succeeded"))
+              setFolderReloadNonce((value) => value + 1);
+            const failure = finished.find((item) => item.status === "failed");
+            if (failure) {
+              const source = pendingCommands[failure.id];
+              if (source?.accountId === accountId) {
+                setError(failure.error ?? "Message action failed.");
+                if (source.mailboxId === mailboxId)
+                  void fetch(`${base}?pageSize=50`, { cache: "no-store" }).then(
+                    async (response) => {
+                      if (response.ok && !cancelled)
+                        setMessages(
+                          (
+                            (await response.json()) as MessagePage
+                          ).items.slice(),
+                        );
+                    },
+                  );
+              }
+            }
+          })
+          .catch(() => undefined);
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [accountId, mailboxId, base, pendingCommands]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
     setMessages((current) => {
@@ -120,14 +319,36 @@ export function MailClient({
       fetch(`/api/accounts/${accountId}/mailboxes`, { cache: "no-store" })
         .then(async (response) => {
           if (!response.ok) throw new Error("Mailboxes could not be loaded.");
-          return response.json() as Promise<{ mailboxes: MailboxView[] }>;
+          return response.json() as Promise<{
+            mailboxes: MailboxView[];
+            roles: MailboxRoleView[];
+          }>;
         })
         .then((result) => {
-          if (!cancelled)
+          if (!cancelled) {
             setLiveMailboxesByAccount((current) => ({
               ...current,
               [accountId]: result.mailboxes,
             }));
+            setLiveRolesByAccount((current) => ({
+              ...current,
+              [accountId]: result.roles,
+            }));
+            setCountAdjustments((current) =>
+              current.filter((adjustment) => {
+                if (!adjustment.completedAt) return true;
+                const mailbox = result.mailboxes.find(
+                  (item) => item.id === adjustment.mailboxId,
+                );
+                const synchronizedAt = mailbox?.deltaSync.lastSuccessfulAt;
+                return (
+                  !synchronizedAt ||
+                  new Date(synchronizedAt).getTime() <
+                    new Date(adjustment.completedAt).getTime()
+                );
+              }),
+            );
+          }
         })
         .catch(() => {
           // Keep the last known counts; the next poll retries.
@@ -377,13 +598,14 @@ export function MailClient({
                   setLoadingMessages(true);
                   setAccountId(id);
                   const next = liveMailboxesByAccount[id] ?? [];
-                  setMailboxId(
+                  const nextMailboxId =
                     next.find(
                       (item) => item.remotePath.toUpperCase() === "INBOX",
                     )?.id ??
-                      next.find((item) => item.selectable)?.id ??
-                      "",
-                  );
+                    next.find((item) => item.selectable)?.id ??
+                    "";
+                  activeLocationRef.current = `${id}:${nextMailboxId}`;
+                  setMailboxId(nextMailboxId);
                 }}
               >
                 {accounts.map((account) => (
@@ -401,9 +623,23 @@ export function MailClient({
               {visibleFolders.map((item) => {
                 const inbox = item.remotePath.toUpperCase() === "INBOX";
                 const Icon = inbox ? Inbox : Archive;
+                const projected =
+                  item.unseenCount === null
+                    ? null
+                    : BigInt(item.unseenCount) +
+                      BigInt(
+                        countAdjustments
+                          .filter(
+                            (adjustment) => adjustment.mailboxId === item.id,
+                          )
+                          .reduce(
+                            (sum, adjustment) => sum + adjustment.delta,
+                            0,
+                          ),
+                      );
                 const unread =
-                  item.unseenCount && item.unseenCount !== "0"
-                    ? item.unseenCount
+                  projected !== null && projected > 0n
+                    ? projected.toString()
                     : null;
                 return (
                   <button
@@ -425,6 +661,7 @@ export function MailClient({
                       setDetail(null);
                       setError("");
                       setLoadingMessages(true);
+                      activeLocationRef.current = `${accountId}:${item.id}`;
                       setMailboxId(item.id);
                     }}
                   >
@@ -616,6 +853,61 @@ export function MailClient({
         {detail ? (
           <>
             <header className="mail-detail-header">
+              <div
+                className="message-actions"
+                role="toolbar"
+                aria-label="Message actions"
+              >
+                <button
+                  className="icon-button"
+                  title="Archive"
+                  aria-label="Archive"
+                  disabled={!moveAvailable("archive")}
+                  onClick={() => void act("archive")}
+                >
+                  <Archive size={17} />
+                </button>
+                <button
+                  className="icon-button"
+                  title="Move to Trash"
+                  aria-label="Move to Trash"
+                  disabled={!moveAvailable("trash")}
+                  onClick={() => void act("trash")}
+                >
+                  <Trash2 size={17} />
+                </button>
+                <button
+                  className="icon-button"
+                  title={selectedMessage?.seen ? "Mark unread" : "Mark read"}
+                  aria-label={
+                    selectedMessage?.seen ? "Mark unread" : "Mark read"
+                  }
+                  onClick={() =>
+                    void act(
+                      selectedMessage?.seen ? "mark_unread" : "mark_read",
+                    )
+                  }
+                >
+                  {selectedMessage?.seen ? (
+                    <EyeOff size={17} />
+                  ) : (
+                    <Eye size={17} />
+                  )}
+                </button>
+                <button
+                  className="icon-button"
+                  title={selectedMessage?.flagged ? "Unflag" : "Flag"}
+                  aria-label={selectedMessage?.flagged ? "Unflag" : "Flag"}
+                  onClick={() =>
+                    void act(selectedMessage?.flagged ? "unflag" : "flag")
+                  }
+                >
+                  <Star
+                    size={17}
+                    fill={selectedMessage?.flagged ? "currentColor" : "none"}
+                  />
+                </button>
+              </div>
               <h2>{detail.subject || "(No subject)"}</h2>
               <div className="reader-sender">
                 <span className="sender-avatar">{senderName.charAt(0)}</span>
