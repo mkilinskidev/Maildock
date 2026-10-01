@@ -40,6 +40,10 @@ import {
   type BackfillMailboxSyncSink,
   type RemoteMutationRequest,
   type RemoteMutationResult,
+  type SmtpDeliveryResult,
+  type SentCopyAppendRequest,
+  type SentCopyAppendResult,
+  type SentCopyLookupResult,
 } from "../domain/mail-provider";
 
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -102,7 +106,7 @@ type ImapClient = {
     content: Readable;
   }>;
   search(
-    query: { since: Date },
+    query: { since?: Date; header?: Record<string, string>; uid?: string },
     options: { uid: true },
   ): Promise<number[] | false | undefined>;
   fetch(
@@ -121,7 +125,7 @@ type ImapClient = {
   ): AsyncGenerator<FetchMessageObject, false | void, undefined>;
   fetchOne?(
     seq: string,
-    query: { uid: true; flags: true; modseq?: true },
+    query: { uid: true; flags: true; modseq?: true; envelope?: true },
     options: { uid: true },
   ): Promise<FetchMessageObject | false | undefined>;
   messageFlagsAdd?(
@@ -139,9 +143,20 @@ type ImapClient = {
     destination: string,
     options: { uid: true },
   ): Promise<{ uidValidity?: bigint; uidMap?: Map<number, number> } | false>;
+  append?(
+    path: string,
+    content: Buffer,
+    flags: string[],
+    internalDate: Date,
+  ): Promise<{ uidValidity?: bigint; uid?: number } | false>;
 };
 type SmtpTransport = {
   verify(): Promise<unknown>;
+  sendMail?(message: {
+    envelope: { from: string; to: string[] };
+    raw: Buffer;
+    messageId: string;
+  }): Promise<{ accepted: unknown[]; rejected: unknown[] }>;
   close(): void;
 };
 
@@ -188,6 +203,8 @@ export function smtpOptions(
     secure: !starttls,
     requireTLS: starttls,
     ignoreTLS: false,
+    logger: false,
+    debug: false,
     auth:
       connection.credential.kind === "password"
         ? { user: connection.username, pass: connection.credential.password }
@@ -440,6 +457,190 @@ export function normalizeMessage(
 }
 
 export class ImapSmtpMailProvider implements MailProvider {
+  async appendMessage(
+    account: ProviderImapAccount,
+    request: SentCopyAppendRequest,
+    mime: Buffer,
+  ): Promise<SentCopyAppendResult> {
+    let client: ImapClient | undefined;
+    let appendStarted = false;
+    try {
+      client = this.factories.createImap(imapOptions(account.imap));
+      await client.connect();
+      await client.mailboxOpen(request.remotePath, { readOnly: true });
+      if (!client.append) return { outcome: "failed" };
+      appendStarted = true;
+      const result = await client.append(
+        request.remotePath,
+        mime,
+        request.flags,
+        request.internalDate,
+      );
+      if (!result) return { outcome: "uncertain" };
+      return {
+        outcome: "saved",
+        ...(result.uidValidity === undefined
+          ? {}
+          : { uidValidity: result.uidValidity.toString() }),
+        ...(result.uid === undefined ? {} : { uid: result.uid.toString() }),
+      };
+    } catch {
+      return { outcome: appendStarted ? "uncertain" : "failed" };
+    } finally {
+      try {
+        await client?.logout();
+      } catch {
+        /* Cleanup cannot revoke success. */
+      }
+      try {
+        client?.close();
+      } catch {
+        /* No protocol details are logged. */
+      }
+    }
+  }
+
+  async findSentCopy(
+    account: ProviderImapAccount,
+    remotePath: string,
+    messageId: string,
+  ): Promise<SentCopyLookupResult> {
+    let client: ImapClient | undefined;
+    try {
+      client = this.factories.createImap(imapOptions(account.imap));
+      await client.connect();
+      const selected = await client.mailboxOpen(remotePath, { readOnly: true });
+      const uids = await client.search(
+        { header: { "Message-ID": messageId } },
+        { uid: true },
+      );
+      if (!Array.isArray(uids) || uids.length > 100 || !client.fetchOne)
+        return { outcome: "uncertain" };
+      // IMAP HEADER search is a substring search. Confirm exact envelope IDs
+      // before treating a hit as proof of this one Maildock-generated operation.
+      for (const uid of uids) {
+        const message = await client.fetchOne(
+          uid.toString(),
+          { uid: true, flags: true, envelope: true },
+          { uid: true },
+        );
+        if (message && message.envelope?.messageId === messageId)
+          return {
+            outcome: "found",
+            uidValidity: selected.uidValidity.toString(),
+            uid: message.uid.toString(),
+          };
+      }
+      return { outcome: "not_found" };
+    } catch {
+      return { outcome: "uncertain" };
+    } finally {
+      try {
+        await client?.logout();
+      } catch {
+        /* Read-only recovery cleanup. */
+      }
+      try {
+        client?.close();
+      } catch {
+        /* No protocol details are logged. */
+      }
+    }
+  }
+  async deliverMessage(
+    account: Pick<ProviderAccount, "accountId" | "smtp">,
+    envelope: { from: string; to: string[] },
+    mime: Buffer,
+  ): Promise<SmtpDeliveryResult> {
+    let transport: SmtpTransport | undefined;
+    let submissionStarted = false;
+    try {
+      // Nodemailer also creates an internal MIME node for raw transport metadata.
+      // Give it the snapshot's ID so even that metadata never generates a new ID.
+      const headerEnd = mime.indexOf("\r\n\r\n");
+      const messageId =
+        headerEnd >= 0
+          ? /^Message-ID: (<[^>\r\n]+>)[ \t]*\r?$/im.exec(
+              mime.subarray(0, headerEnd).toString("ascii"),
+            )?.[1]
+          : undefined;
+      if (!messageId)
+        return {
+          outcome: "definite_failure",
+          retryable: false,
+          message: "The outgoing MIME snapshot is invalid.",
+        };
+      transport = this.factories.createSmtp(smtpOptions(account.smtp));
+      // verify performs no MAIL/DATA submission. Only failures in this stage
+      // can be retried automatically, using structured transport codes.
+      await transport.verify();
+      if (!transport.sendMail)
+        return {
+          outcome: "definite_failure",
+          retryable: false,
+          message: "SMTP delivery is unavailable.",
+        };
+      submissionStarted = true;
+      const result = await transport.sendMail({
+        envelope,
+        raw: mime,
+        messageId,
+      });
+      if (!result.accepted.length) return { outcome: "uncertain" };
+      return {
+        outcome: "accepted",
+        acceptedCount: result.accepted.length,
+        rejectedCount: result.rejected.length,
+      };
+    } catch (error) {
+      const failure = error as {
+        code?: string;
+        command?: string;
+        responseCode?: number;
+      } | null;
+      if (!submissionStarted) {
+        const retryable = [
+          "ETIMEDOUT",
+          "ECONNECTION",
+          "EDNS",
+          "EAI_AGAIN",
+          "ENOTFOUND",
+          "ECONNREFUSED",
+          "EHOSTUNREACH",
+          "ENETUNREACH",
+        ].includes(failure?.code ?? "");
+        return {
+          outcome: "definite_failure",
+          retryable,
+          message: retryable
+            ? "SMTP connection could not be established."
+            : "SMTP authentication or configuration failed.",
+        };
+      }
+      // Nodemailer reports these explicit negative envelope replies before DATA.
+      // Socket errors can be labelled CONN even during DATA: never retry those.
+      if (
+        ["MAIL FROM", "RCPT TO"].includes(failure?.command ?? "") &&
+        failure?.responseCode &&
+        failure.responseCode >= 500 &&
+        failure.responseCode <= 599
+      ) {
+        return {
+          outcome: "definite_failure",
+          retryable: false,
+          message: "SMTP rejected the sender or recipients.",
+        };
+      }
+      return { outcome: "uncertain" };
+    } finally {
+      // A cleanup error must never replace a positive acceptance result.
+      try {
+        transport?.close();
+      } catch {
+        /* No message data is logged. */
+      }
+    }
+  }
   constructor(
     private readonly factories: ProtocolClientFactories = defaultFactories,
   ) {}
@@ -503,9 +704,7 @@ export class ImapSmtpMailProvider implements MailProvider {
       const add = request.action === "mark_read" || request.action === "flag";
       const options = {
         uid: true as const,
-        ...(request.modseq &&
-        current.modseq &&
-        client.enabled.has("CONDSTORE")
+        ...(request.modseq && current.modseq && client.enabled.has("CONDSTORE")
           ? { unchangedSince: BigInt(request.modseq) }
           : {}),
       };

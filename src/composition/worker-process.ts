@@ -5,6 +5,8 @@ import { registerContentWorker } from "../modules/mail/infrastructure/content-jo
 import { registerDeltaWorker } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { registerBackfillWorker } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
 import { registerMessageCommandWorker } from "../modules/mail/infrastructure/message-command-jobs.js";
+import { registerOutgoingWorker } from "../modules/mail/infrastructure/outgoing-jobs.js";
+import { registerSentCopyWorker } from "../modules/mail/infrastructure/sent-copy-jobs.js";
 
 const worker = createWorkerComposition();
 let stopping = false;
@@ -20,6 +22,8 @@ async function shutdown(signal: string) {
     worker.poller.stop();
     worker.backfillPoller.stop();
     worker.commandPoller.stop();
+    worker.outgoingPoller.stop();
+    worker.sentCopyPoller.stop();
     await worker.watchers.stop();
     await worker.jobs.stop();
     await worker.database.client.end();
@@ -38,6 +42,9 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 
 try {
   await worker.jobs.start();
+  await registerSentCopyWorker(worker.jobs.boss, worker.sentCopy);
+  await registerOutgoingWorker(worker.jobs.boss, worker.outgoing);
+  await worker.outgoingPoller.start();
   await registerRecentSyncWorker(
     worker.jobs.boss,
     worker.messages,
@@ -69,6 +76,7 @@ try {
   await worker.poller.start();
   await worker.backfillPoller.start();
   await worker.commandPoller.start();
+  await worker.sentCopyPoller.start();
   await worker.watchers.start();
 } catch (error) {
   worker.logger.fatal(

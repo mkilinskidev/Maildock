@@ -27,8 +27,27 @@ import type {
 } from "@/modules/mail/application/message-service";
 import { LogoutButton } from "@/components/logout-button";
 import { ThemeControl } from "@/components/theme-control";
+import {
+  MailComposer,
+  sendStatusText,
+  sendingAccountAvailable,
+} from "@/components/mail-composer";
 
 type Address = { name?: string; address?: string };
+type SendFeedback = {
+  status: string;
+  error?: string | null;
+  sentCopyStatus?: string;
+  sentCopyError?: string | null;
+};
+function autoDismissSentFeedback(item?: SendFeedback) {
+  return (
+    item?.status === "sent" &&
+    !["pending", "saving", "failed", "uncertain"].includes(
+      item.sentCopyStatus ?? "",
+    )
+  );
+}
 type Detail = {
   id: string;
   subject: string | null;
@@ -79,6 +98,83 @@ export function MailClient({
   rolesByAccount: Record<string, MailboxRoleView[]>;
 }) {
   const first = accounts[0];
+  const [composing, setComposing] = useState(false);
+  const [outgoing, setOutgoing] = useState<Record<string, SendFeedback>>({});
+  const sentFeedbackTimers = useRef(
+    new Map<string, ReturnType<typeof setTimeout>>(),
+  );
+  useEffect(() => {
+    const timers = sentFeedbackTimers.current;
+    for (const [id, timer] of timers) {
+      if (!autoDismissSentFeedback(outgoing[id])) {
+        clearTimeout(timer);
+        timers.delete(id);
+      }
+    }
+    for (const [id, item] of Object.entries(outgoing)) {
+      if (!autoDismissSentFeedback(item) || timers.has(id)) continue;
+      timers.set(
+        id,
+        setTimeout(() => {
+          timers.delete(id);
+          setOutgoing((current) => {
+            if (!autoDismissSentFeedback(current[id])) return current;
+            const next = { ...current };
+            delete next[id];
+            return next;
+          });
+        }, 5000),
+      );
+    }
+  }, [outgoing]);
+  useEffect(() => {
+    const timers = sentFeedbackTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+  useEffect(() => {
+    const ids = Object.entries(outgoing)
+      .filter(
+        ([, item]) =>
+          item.status === "queued" ||
+          item.status === "sending" ||
+          (item.status === "sent" &&
+            ["pending", "saving"].includes(item.sentCopyStatus ?? "")),
+      )
+      .map(([id]) => id);
+    if (!ids.length) return;
+    let cancelled = false;
+    const poll = async () => {
+      for (const id of ids) {
+        try {
+          const response = await fetch(`/api/outgoing/${id}`, {
+            cache: "no-store",
+          });
+          if (!response.ok) continue;
+          const result = (await response.json()) as SendFeedback;
+          if (!cancelled)
+            setOutgoing((current) =>
+              current[id]?.status === result.status &&
+              current[id]?.error === result.error &&
+              current[id]?.sentCopyStatus === result.sentCopyStatus &&
+              current[id]?.sentCopyError === result.sentCopyError
+                ? current
+                : { ...current, [id]: result },
+            );
+        } catch {
+          /* Keep polling without claiming a delivery failure. */
+        }
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [outgoing]);
   const [accountId, setAccountId] = useState(first?.id ?? "");
   const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
     useState(mailboxesByAccount);
@@ -619,6 +715,14 @@ export function MailClient({
               {activeAccount?.email}
             </div>
             <div className="sidebar-label">Mailboxes</div>
+            <button
+              className="button compose-action"
+              disabled={!accounts.some(sendingAccountAvailable)}
+              onClick={() => setComposing(true)}
+            >
+              <Plus size={15} />
+              Compose
+            </button>
             <nav className="mail-folders" aria-label="Mailboxes">
               {visibleFolders.map((item) => {
                 const inbox = item.remotePath.toUpperCase() === "INBOX";
@@ -834,160 +938,216 @@ export function MailClient({
         </div>
       </section>
       <section className="mail-detail-pane" aria-label="Message detail">
-        {!selectedId ? (
-          <div className="pane-empty reader-empty">
-            <MailOpen size={30} strokeWidth={1.4} />
-            <strong>Select a message</strong>
-            <p>Choose a message from the list to read it here.</p>
-          </div>
-        ) : null}
-        {selectedId && loadingDetail && !detail ? (
-          <div className="mail-detail-header">
-            <div className="skeleton" style={{ width: "60%", height: 22 }} />
-            <div
-              className="skeleton"
-              style={{ width: "40%", height: 13, marginTop: 24 }}
-            />
-          </div>
-        ) : null}
-        {detail ? (
-          <>
-            <header className="mail-detail-header">
-              <div
-                className="message-actions"
-                role="toolbar"
-                aria-label="Message actions"
+        {Object.entries(outgoing).map(([id, item]) => (
+          <div
+            className={`send-feedback send-${item.status}${item.status === "sent" && ["failed", "uncertain"].includes(item.sentCopyStatus ?? "") ? " send-copy-warning" : ""}`}
+            role="status"
+            key={id}
+          >
+            <span>
+              {item.status === "sent" && item.sentCopyError
+                ? item.sentCopyError
+                : sendStatusText(item.status, item.sentCopyStatus)}
+              {item.status === "sent" && item.error ? ` · ${item.error}` : ""}
+              {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
+            </span>
+            {!["queued", "sending"].includes(item.status) ? (
+              <button
+                className="icon-button"
+                aria-label="Dismiss send status"
+                onClick={() =>
+                  setOutgoing((current) => {
+                    const next = { ...current };
+                    delete next[id];
+                    return next;
+                  })
+                }
               >
-                <button
-                  className="icon-button"
-                  title="Archive"
-                  aria-label="Archive"
-                  disabled={!moveAvailable("archive")}
-                  onClick={() => void act("archive")}
-                >
-                  <Archive size={17} />
-                </button>
-                <button
-                  className="icon-button"
-                  title="Move to Trash"
-                  aria-label="Move to Trash"
-                  disabled={!moveAvailable("trash")}
-                  onClick={() => void act("trash")}
-                >
-                  <Trash2 size={17} />
-                </button>
-                <button
-                  className="icon-button"
-                  title={selectedMessage?.seen ? "Mark unread" : "Mark read"}
-                  aria-label={
-                    selectedMessage?.seen ? "Mark unread" : "Mark read"
-                  }
-                  onClick={() =>
-                    void act(
-                      selectedMessage?.seen ? "mark_unread" : "mark_read",
-                    )
-                  }
-                >
-                  {selectedMessage?.seen ? (
-                    <EyeOff size={17} />
-                  ) : (
-                    <Eye size={17} />
-                  )}
-                </button>
-                <button
-                  className="icon-button"
-                  title={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                  aria-label={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                  onClick={() =>
-                    void act(selectedMessage?.flagged ? "unflag" : "flag")
-                  }
-                >
-                  <Star
-                    size={17}
-                    fill={selectedMessage?.flagged ? "currentColor" : "none"}
-                  />
-                </button>
-              </div>
-              <h2>{detail.subject || "(No subject)"}</h2>
-              <div className="reader-sender">
-                <span className="sender-avatar">{senderName.charAt(0)}</span>
-                <div className="reader-addresses">
-                  <strong>{senderName}</strong>
-                  <small>
-                    {sender?.name ? sender.address : address(detail.from)}
-                  </small>
-                </div>
-                <time
-                  className="reader-date"
-                  dateTime={detail.sentAt ?? detail.date}
-                >
-                  {new Date(detail.sentAt ?? detail.date).toLocaleString()}
-                </time>
-              </div>
-              <div className="reader-meta">
-                To: {address(detail.to)}
-                {detail.cc.length ? " · Cc: " + address(detail.cc) : ""}
-              </div>
-            </header>
-            {detail.content.remoteContentBlocked ? (
-              <div className="mail-privacy">
-                <ShieldOff size={15} />
-                Remote content blocked for your privacy
+                ×
+              </button>
+            ) : null}
+          </div>
+        ))}
+        {composing ? (
+          <MailComposer
+            accounts={accounts}
+            accountId={accountId}
+            onClose={() => setComposing(false)}
+            onQueued={(id) => {
+              setOutgoing((current) => ({
+                ...current,
+                [id]: { status: "queued" },
+              }));
+              setComposing(false);
+            }}
+          />
+        ) : (
+          <>
+            {!selectedId ? (
+              <div className="pane-empty reader-empty">
+                <MailOpen size={30} strokeWidth={1.4} />
+                <strong>Select a message</strong>
+                <p>Choose a message from the list to read it here.</p>
               </div>
             ) : null}
-            <div className="mail-body">
-              {detail.content.status === "ready" ? (
-                detail.content.sanitizedHtml !== null ? (
-                  <iframe
-                    title="Email content"
-                    sandbox=""
-                    referrerPolicy="no-referrer"
-                    srcDoc={shell(detail.content.sanitizedHtml)}
-                  />
-                ) : (
-                  <pre>{detail.content.plainText}</pre>
-                )
-              ) : detail.content.status === "failed" ? (
-                <div className="mail-content-failure">
-                  <p className="error">
-                    <CircleAlert size={15} />{" "}
-                    {detail.content.error ?? "Content fetch failed."}
-                  </p>
-                  <button
-                    className="button secondary"
-                    onClick={() => void retryContent()}
-                    disabled={retrying}
-                  >
-                    Retry download
-                  </button>
-                </div>
-              ) : (
-                <div className="pane-empty">
-                  <div
-                    className="skeleton"
-                    style={{ width: 180, height: 11 }}
-                  />
-                  <p>Downloading message content…</p>
-                </div>
-              )}
-            </div>
-            {detail.attachments.length > 0 ? (
-              <div className="mail-attachments">
-                <h3>Attachments</h3>
-                {detail.attachments.map((item, index) => (
-                  <span key={index} className="mail-attachment">
-                    <Paperclip size={13} />
-                    {item.filename ?? "Unnamed attachment"}
-                    {item.size
-                      ? " · " + Math.ceil(Number(item.size) / 1024) + " KB"
-                      : ""}{" "}
-                    · Not available yet
-                  </span>
-                ))}
+            {selectedId && loadingDetail && !detail ? (
+              <div className="mail-detail-header">
+                <div
+                  className="skeleton"
+                  style={{ width: "60%", height: 22 }}
+                />
+                <div
+                  className="skeleton"
+                  style={{ width: "40%", height: 13, marginTop: 24 }}
+                />
               </div>
+            ) : null}
+            {detail ? (
+              <>
+                <header className="mail-detail-header">
+                  <div
+                    className="message-actions"
+                    role="toolbar"
+                    aria-label="Message actions"
+                  >
+                    <button
+                      className="icon-button"
+                      title="Archive"
+                      aria-label="Archive"
+                      disabled={!moveAvailable("archive")}
+                      onClick={() => void act("archive")}
+                    >
+                      <Archive size={17} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      title="Move to Trash"
+                      aria-label="Move to Trash"
+                      disabled={!moveAvailable("trash")}
+                      onClick={() => void act("trash")}
+                    >
+                      <Trash2 size={17} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      title={
+                        selectedMessage?.seen ? "Mark unread" : "Mark read"
+                      }
+                      aria-label={
+                        selectedMessage?.seen ? "Mark unread" : "Mark read"
+                      }
+                      onClick={() =>
+                        void act(
+                          selectedMessage?.seen ? "mark_unread" : "mark_read",
+                        )
+                      }
+                    >
+                      {selectedMessage?.seen ? (
+                        <EyeOff size={17} />
+                      ) : (
+                        <Eye size={17} />
+                      )}
+                    </button>
+                    <button
+                      className="icon-button"
+                      title={selectedMessage?.flagged ? "Unflag" : "Flag"}
+                      aria-label={selectedMessage?.flagged ? "Unflag" : "Flag"}
+                      onClick={() =>
+                        void act(selectedMessage?.flagged ? "unflag" : "flag")
+                      }
+                    >
+                      <Star
+                        size={17}
+                        fill={
+                          selectedMessage?.flagged ? "currentColor" : "none"
+                        }
+                      />
+                    </button>
+                  </div>
+                  <h2>{detail.subject || "(No subject)"}</h2>
+                  <div className="reader-sender">
+                    <span className="sender-avatar">
+                      {senderName.charAt(0)}
+                    </span>
+                    <div className="reader-addresses">
+                      <strong>{senderName}</strong>
+                      <small>
+                        {sender?.name ? sender.address : address(detail.from)}
+                      </small>
+                    </div>
+                    <time
+                      className="reader-date"
+                      dateTime={detail.sentAt ?? detail.date}
+                    >
+                      {new Date(detail.sentAt ?? detail.date).toLocaleString()}
+                    </time>
+                  </div>
+                  <div className="reader-meta">
+                    To: {address(detail.to)}
+                    {detail.cc.length ? " · Cc: " + address(detail.cc) : ""}
+                  </div>
+                </header>
+                {detail.content.remoteContentBlocked ? (
+                  <div className="mail-privacy">
+                    <ShieldOff size={15} />
+                    Remote content blocked for your privacy
+                  </div>
+                ) : null}
+                <div className="mail-body">
+                  {detail.content.status === "ready" ? (
+                    detail.content.sanitizedHtml !== null ? (
+                      <iframe
+                        title="Email content"
+                        sandbox=""
+                        referrerPolicy="no-referrer"
+                        srcDoc={shell(detail.content.sanitizedHtml)}
+                      />
+                    ) : (
+                      <pre>{detail.content.plainText}</pre>
+                    )
+                  ) : detail.content.status === "failed" ? (
+                    <div className="mail-content-failure">
+                      <p className="error">
+                        <CircleAlert size={15} />{" "}
+                        {detail.content.error ?? "Content fetch failed."}
+                      </p>
+                      <button
+                        className="button secondary"
+                        onClick={() => void retryContent()}
+                        disabled={retrying}
+                      >
+                        Retry download
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="pane-empty">
+                      <div
+                        className="skeleton"
+                        style={{ width: 180, height: 11 }}
+                      />
+                      <p>Downloading message content…</p>
+                    </div>
+                  )}
+                </div>
+                {detail.attachments.length > 0 ? (
+                  <div className="mail-attachments">
+                    <h3>Attachments</h3>
+                    {detail.attachments.map((item, index) => (
+                      <span key={index} className="mail-attachment">
+                        <Paperclip size={13} />
+                        {item.filename ?? "Unnamed attachment"}
+                        {item.size
+                          ? " · " + Math.ceil(Number(item.size) / 1024) + " KB"
+                          : ""}{" "}
+                        · Not available yet
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </>
-        ) : null}
+        )}
       </section>
     </main>
   );

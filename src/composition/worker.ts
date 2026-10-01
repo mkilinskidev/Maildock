@@ -22,6 +22,17 @@ import {
   enqueueBackfill,
 } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
 import { MessageCommandService } from "../modules/mail/application/message-command-service.js";
+import { OutgoingMessageService } from "../modules/mail/application/outgoing-message-service.js";
+import { createOutgoingLock } from "../modules/mail/infrastructure/outgoing-lock.js";
+import { SentCopyService } from "../modules/mail/application/sent-copy-service.js";
+import {
+  enqueueSentCopy,
+  SentCopyPoller,
+} from "../modules/mail/infrastructure/sent-copy-jobs.js";
+import {
+  enqueueOutgoing,
+  OutgoingPoller,
+} from "../modules/mail/infrastructure/outgoing-jobs.js";
 import {
   MessageCommandPoller,
   enqueueMessageCommand,
@@ -69,6 +80,25 @@ export function createWorkerComposition() {
     },
   );
   const withMailboxLock = createMailboxLock(database.client);
+  const sentCopy = new SentCopyService(
+    database.db,
+    accounts,
+    provider,
+    createOutgoingLock(database.client),
+    (id) => enqueueSentCopy(jobs.boss, id),
+    async (accountId, mailboxId, initial) =>
+      initial
+        ? recentSyncScheduler.schedule(accountId, mailboxId)
+        : enqueueDelta(jobs.boss, accountId, mailboxId, "manual"),
+  );
+  const outgoing = new OutgoingMessageService(
+    database.db,
+    (id) => enqueueOutgoing(jobs.boss, id),
+    accounts,
+    provider,
+    createOutgoingLock(database.client),
+    (id) => enqueueSentCopy(jobs.boss, id),
+  );
   const commands = new MessageCommandService(
     database.db,
     (id) => enqueueMessageCommand(jobs.boss, id),
@@ -79,6 +109,10 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    outgoing,
+    sentCopy,
+    sentCopyPoller: new SentCopyPoller(sentCopy),
+    outgoingPoller: new OutgoingPoller(outgoing),
     config,
     logger,
     database,

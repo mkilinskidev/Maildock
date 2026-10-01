@@ -14,6 +14,98 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
+import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
+
+export const outgoingMessages = pgTable(
+  "outgoing_messages",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "restrict" }),
+    from: jsonb("from").$type<OutgoingAddress>().notNull(),
+    to: jsonb("to").$type<OutgoingAddress[]>().notNull(),
+    cc: jsonb("cc").$type<OutgoingAddress[]>().notNull(),
+    bcc: jsonb("bcc").$type<OutgoingAddress[]>().notNull(),
+    subject: text("subject").notNull(),
+    plainText: text("plain_text").notNull(),
+    messageId: text("message_id").notNull(),
+    mimeBase64: text("mime_base64").notNull(),
+    status: text("status").default("queued").notNull(),
+    sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
+    sentCopyStatus: text("sent_copy_status").default("not_required").notNull(),
+    sentCopyError: text("sent_copy_error"),
+    sentCopyMailboxId: uuid("sent_copy_mailbox_id").references(
+      () => mailboxes.id,
+      { onDelete: "set null" },
+    ),
+    sentCopyPath: text("sent_copy_path"),
+    sentCopyUidValidity: bigint("sent_copy_uid_validity", { mode: "bigint" }),
+    sentCopyUid: bigint("sent_copy_uid", { mode: "bigint" }),
+    sentCopyStartedAt: timestamp("sent_copy_started_at", {
+      withTimezone: true,
+    }),
+    sentCopySavedAt: timestamp("sent_copy_saved_at", { withTimezone: true }),
+    sentCopySyncPending: boolean("sent_copy_sync_pending")
+      .default(false)
+      .notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    error: text("error"),
+    acceptedCount: integer("accepted_count"),
+    rejectedCount: integer("rejected_count"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    smtpAcceptedAt: timestamp("smtp_accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "outgoing_messages_sent_copy_policy",
+      sql`${table.sentCopyPolicy} in ('server', 'maildock')`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_status",
+      sql`${table.sentCopyStatus} in ('not_required', 'pending', 'saving', 'saved', 'failed', 'uncertain')`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_delivery",
+      sql`${table.sentCopyStatus} = 'not_required' or (${table.status} = 'sent' and ${table.sentCopyPolicy} = 'maildock')`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_sync",
+      sql`not ${table.sentCopySyncPending} or ${table.sentCopyStatus} = 'saved'`,
+    ),
+    index("outgoing_messages_sent_copy_pending_idx").on(
+      table.sentCopyStatus,
+      table.sentCopySyncPending,
+    ),
+    check(
+      "outgoing_messages_status",
+      sql`${table.status} in ('queued', 'sending', 'sent', 'failed', 'uncertain')`,
+    ),
+    check("outgoing_messages_attempts", sql`${table.attempts} between 0 and 3`),
+    check(
+      "outgoing_messages_mime_size",
+      sql`octet_length(${table.mimeBase64}) <= 1333336`,
+    ),
+    check(
+      "outgoing_messages_recipients",
+      sql`jsonb_array_length(${table.to}) + jsonb_array_length(${table.cc}) + jsonb_array_length(${table.bcc}) between 1 and 100`,
+    ),
+    uniqueIndex("outgoing_messages_message_id_unique").on(table.messageId),
+    index("outgoing_messages_pending_idx").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+  ],
+);
 
 export const instanceState = pgTable(
   "instance_state",
@@ -160,6 +252,7 @@ export const mailAccounts = pgTable(
     displayName: text("display_name").notNull(),
     email: text("email").notNull(),
     enabled: boolean("enabled").default(true).notNull(),
+    sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
     providerType: text("provider_type").default("imap_smtp").notNull(),
     imapHost: text("imap_host").notNull(),
     imapPort: integer("imap_port").notNull(),
@@ -213,6 +306,10 @@ export const mailAccounts = pgTable(
     check(
       "mail_accounts_provider_type",
       sql`${table.providerType} = 'imap_smtp'`,
+    ),
+    check(
+      "mail_accounts_sent_copy_policy",
+      sql`${table.sentCopyPolicy} in ('server', 'maildock')`,
     ),
     check(
       "mail_accounts_imap_port",
@@ -651,6 +748,7 @@ export const mailboxMessageRelations = relations(
 );
 
 export const schema = {
+  outgoingMessages,
   instanceState,
   user,
   session,

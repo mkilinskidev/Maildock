@@ -5,6 +5,8 @@ import {
   accountCredentialContext,
   createAccountInputSchema,
   updateAccountInputSchema,
+  sentCopyPolicyUpdateSchema,
+  type SentCopyPolicy,
   type CreateAccountInput,
   type UpdateAccountInput,
 } from "../domain/account";
@@ -41,6 +43,7 @@ export type MailAccountView = Readonly<{
   displayName: string;
   email: string;
   enabled: boolean;
+  sentCopyPolicy: SentCopyPolicy;
   providerType: "imap_smtp";
   authMethod: "password" | "oauth2";
   oauthStatus: "connected" | "reconnect_required" | null;
@@ -87,6 +90,7 @@ function toView(row: AccountRow): MailAccountView {
     displayName: row.displayName,
     email: row.email,
     enabled: row.enabled,
+    sentCopyPolicy: row.sentCopyPolicy as SentCopyPolicy,
     providerType: "imap_smtp",
     authMethod: row.authMethod as "password" | "oauth2",
     oauthStatus: row.oauthStatus as MailAccountView["oauthStatus"],
@@ -163,6 +167,7 @@ export class AccountsService {
         displayName: parsed.displayName,
         email: parsed.email.toLowerCase(),
         enabled: parsed.enabled,
+        sentCopyPolicy: parsed.sentCopyPolicy ?? "server",
         providerType: "imap_smtp",
         imapHost: parsed.imap.host,
         imapPort: parsed.imap.port,
@@ -196,8 +201,20 @@ export class AccountsService {
 
   async update(
     id: string,
-    input: UpdateAccountInput,
+    input: UpdateAccountInput | { sentCopyPolicy: SentCopyPolicy },
   ): Promise<MailAccountView> {
+    const policyOnly = sentCopyPolicyUpdateSchema.safeParse(input);
+    if (policyOnly.success) {
+      await this.getRow(id);
+      await this.database
+        .update(mailAccounts)
+        .set({
+          sentCopyPolicy: policyOnly.data.sentCopyPolicy,
+          updatedAt: new Date(),
+        })
+        .where(eq(mailAccounts.id, id));
+      return this.get(id);
+    }
     const parsed = updateAccountInputSchema.parse(input);
     const current = await this.getRow(id);
     if (current.authMethod !== "password") throw new MailAccountNotFoundError();
@@ -224,6 +241,7 @@ export class AccountsService {
         displayName: parsed.displayName,
         email: parsed.email.toLowerCase(),
         enabled: parsed.enabled,
+        sentCopyPolicy: parsed.sentCopyPolicy ?? current.sentCopyPolicy,
         imapHost: parsed.imap.host,
         imapPort: parsed.imap.port,
         imapSecurity: parsed.imap.security,
@@ -333,6 +351,18 @@ export class AccountsService {
         credential: await this.resolveCredential(row),
       },
     };
+  }
+
+  async getProviderSmtpAccountForWork(id: string) {
+    const row = await this.getRow(id);
+    if (!row.enabled) throw new DisabledMailAccountError();
+    if (
+      !row.smtpHost ||
+      (row.authMethod === "oauth2" && row.oauthStatus !== "connected")
+    )
+      throw new Error("The sending account is not configured.");
+    const account = await this.providerInputFromRow(row);
+    return { accountId: account.accountId, smtp: account.smtp };
   }
 
   private async getRow(id: string): Promise<AccountRow> {

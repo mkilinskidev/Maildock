@@ -1,5 +1,109 @@
 @import "tailwindcss";
 
+.compose-action {
+  margin: 4px 16px 12px;
+}
+.mail-composer {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.composer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.composer-fields {
+  border: 0;
+  margin: 0;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+.composer-fields label {
+  display: grid;
+  grid-template-columns: 65px minmax(0, 1fr);
+  align-items: center;
+  color: var(--secondary);
+  font-size: 13px;
+}
+.composer-fields input,
+.composer-fields select,
+.composer-fields textarea {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+}
+.composer-fields textarea {
+  flex: 1;
+  min-height: 250px;
+  resize: vertical;
+  line-height: 1.6;
+}
+.composer-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+}
+.composer-footer .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.send-feedback {
+  display: flex;
+  min-height: 57px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  color: var(--secondary);
+  font-size: 13px;
+}
+.send-sent {
+  color: var(--success);
+}
+.send-failed {
+  color: var(--error);
+}
+.send-uncertain {
+  color: var(--warning);
+}
+.send-copy-warning {
+  color: var(--warning);
+}
+.sent-copy-settings {
+  margin: 16px 0;
+}
+.sent-copy-policy {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 10px;
+}
+.sent-copy-policy legend {
+  padding: 0 5px;
+  font-weight: 600;
+}
+.sent-copy-policy p {
+  margin: 0;
+}
+.sent-copy-policy input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
@@ -99,7 +203,7 @@ button {
 }
 button:disabled {
   opacity: 0.55;
-  cursor: wait;
+  cursor: default;
 }
 a {
   color: inherit;
@@ -531,7 +635,7 @@ a {
   cursor: not-allowed;
 }
 .mail-detail-header h2 {
-  margin: 0 0 16px;
+  margin: 0 0 /*16px*/;
   font-size: clamp(19px, 2vw, 24px);
   font-weight: 700;
   letter-spacing: -0.04em;

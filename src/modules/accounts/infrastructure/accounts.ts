@@ -14,8 +14,14 @@ import { PgBossContentScheduler } from "@/modules/mail/infrastructure/content-jo
 import { PgBossDeltaSyncScheduler } from "@/modules/mail/infrastructure/delta-sync-jobs";
 import { MessageCommandService } from "@/modules/mail/application/message-command-service";
 import { PgBossMessageCommandScheduler } from "@/modules/mail/infrastructure/message-command-jobs";
+import { OutgoingMessageService } from "@/modules/mail/application/outgoing-message-service";
+import { PgBossOutgoingScheduler } from "@/modules/mail/infrastructure/outgoing-jobs";
 
 const config = getConfig();
+const outgoingScheduler = new PgBossOutgoingScheduler(config);
+export const outgoingMessageService = new OutgoingMessageService(db, (id) =>
+  outgoingScheduler.enqueue(id),
+);
 const encryption = new AesGcmSecretEncryption(
   config.credentialsEncryption.activeKeyId,
   config.credentialsEncryption.keys,

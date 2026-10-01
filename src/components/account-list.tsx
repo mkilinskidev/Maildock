@@ -10,6 +10,7 @@ import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import { MessageList } from "@/components/message-list";
 import { SystemFolders } from "@/components/system-folders";
+import { SentCopySettings } from "@/components/sent-copy-settings";
 
 function count(value: string | null): string {
   return value === null ? "" : new Intl.NumberFormat().format(BigInt(value));
@@ -265,6 +266,13 @@ export function AccountList({
                 Delete
               </button>
             </div>
+            <SentCopySettings
+              accountId={account.id}
+              initialPolicy={account.sentCopyPolicy ?? "server"}
+              sentRole={rolesByAccount[account.id]?.find(
+                (role) => role.role === "sent",
+              )}
+            />
             <details className="details-panel">
               <summary>Connection and discovery details</summary>
               <p>

@@ -85,6 +85,20 @@
       "when": 1790845729667,
       "tag": "0011_bizarre_rhodey",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790847368210,
+      "tag": "0012_striped_luke_cage",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790865784874,
+      "tag": "0013_fuzzy_vanisher",
+      "breakpoints": true
     }
   ]
 }
