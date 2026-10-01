@@ -454,6 +454,7 @@ describe("Phase 1C metadata normalization", () => {
         uid: true,
         flags: true,
         envelope: true,
+        headers: ["references"],
         bodyStructure: true,
         internalDate: true,
         size: true,
@@ -461,7 +462,7 @@ describe("Phase 1C metadata normalization", () => {
     );
     for (const query of fetchQueries) {
       expect(query).not.toHaveProperty("source");
-      expect(query).not.toHaveProperty("headers");
+      expect(query).toHaveProperty("headers", ["references"]);
       expect(query).not.toHaveProperty("bodyParts");
     }
   });

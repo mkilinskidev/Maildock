@@ -1,3 +1,5 @@
+import { ComposePreparationService } from "@/modules/mail/application/compose-preparation-service";
+import { MessageContentService } from "@/modules/mail/application/message-content-service";
 import { randomUUID } from "node:crypto";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { eq } from "drizzle-orm";
@@ -32,6 +34,9 @@ import {
   mailboxes,
   mailboxRoles,
   outgoingMessages,
+  messages,
+  mailboxMessages,
+  messageContents,
 } from "@/shared/infrastructure/database/schema";
 
 describe("durable outgoing mail", () => {
@@ -202,6 +207,7 @@ describe("durable outgoing mail", () => {
   beforeEach(async () => {
     await database.db.delete(outgoingMessages);
     await database.db.delete(mailboxes);
+    await database.db.delete(messages);
     await database.db
       .update(mailAccounts)
       .set({
@@ -233,6 +239,186 @@ describe("durable outgoing mail", () => {
     await container?.stop();
   });
 
+  async function replyFixture(
+    status = "ready",
+    plainText: string | null = "Original body",
+    sanitizedHtml: string | null = null,
+  ) {
+    const mailbox = await destination();
+    const messageId = randomUUID();
+    await database.db.insert(messages).values({
+      id: messageId,
+      accountId,
+      internalDate: new Date(),
+      size: 42n,
+      from: [{ address: "alice@example.com" }],
+      to: [{ address: "owner@example.com" }],
+      subject: "Hello",
+      rfcMessageId: "<original@example.com>",
+      references: "<parent@example.com>",
+      hasAttachments: true,
+    });
+    await database.db.insert(mailboxMessages).values({
+      id: randomUUID(),
+      mailboxId: mailbox.id,
+      messageId,
+      uid: 1n,
+      uidValidity: 7n,
+      firstSynchronizedAt: new Date(),
+      lastSynchronizedAt: new Date(),
+    });
+    await database.db
+      .insert(messageContents)
+      .values({ messageId, status, plainText, sanitizedHtml });
+    return {
+      accountId,
+      mailboxId: mailbox.id,
+      messageId,
+      mode: "reply" as const,
+    };
+  }
+  it.each(["reply", "reply_all", "forward"] as const)(
+    "creates %s through existing delivery paths with re-derived immutable threading",
+    async (mode) => {
+      const source = { ...(await replyFixture()), mode };
+      const result = await new ComposePreparationService(
+        database.db,
+        new MessageContentService(database.db),
+      ).prepare(source);
+      expect(result.status).toBe("ready");
+      if (result.status !== "ready") throw Error();
+      expect(result.prefill.accountId).toBe(accountId);
+      expect(result.prefill.attachmentsOmitted).toBe(true);
+      if (mode === "forward") expect(result.prefill.to).toBe("");
+      await database.db
+        .update(messages)
+        .set({ rfcMessageId: "<updated@example.com>" })
+        .where(eq(messages.id, source.messageId));
+      await accounts.update(otherAccountId, { sentCopyPolicy: "maildock" });
+      const target = await destination("manual", otherAccountId, false);
+      await database.db.insert(mailboxRoles).values({
+        accountId: otherAccountId,
+        role: "sent",
+        source: "manual",
+        mailboxId: target.id,
+      });
+      const created = await service.create({
+        ...input(),
+        accountId: otherAccountId,
+        source,
+        subject: result.prefill.subject,
+        plainText: result.prefill.plainText,
+      });
+      const saved = await row(created.id);
+      expect(saved.from.address).toBe("other@example.com");
+      const mime = await simpleParser(Buffer.from(saved.mimeBase64, "base64"));
+      expect(mime.messageId).toBe(saved.messageId);
+      expect(saved.messageId).not.toBe("<updated@example.com>");
+      expect(saved.inReplyTo).toBe(
+        mode === "forward" ? null : "<updated@example.com>",
+      );
+      expect(mime.inReplyTo).toBe(
+        mode === "forward" ? undefined : "<updated@example.com>",
+      );
+      expect(saved.references).toEqual(
+        mode === "forward"
+          ? []
+          : ["<parent@example.com>", "<updated@example.com>"],
+      );
+      for (const mutation of [
+        { inReplyTo: "<evil@example.com>" },
+        { references: ["<evil@example.com>"] },
+      ])
+        await expect(
+          database.db
+            .update(outgoingMessages)
+            .set(mutation)
+            .where(eq(outgoingMessages.id, created.id)),
+        ).rejects.toThrow();
+      await service.run(created.id);
+      expect(deliver).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: otherAccountId }),
+        expect.objectContaining({
+          to: expect.arrayContaining(["hidden@example.com"]),
+        }),
+        Buffer.from(saved.mimeBase64, "base64"),
+      );
+      expect(mime.bcc).toBeUndefined();
+      expect(enqueueCopy).toHaveBeenCalledWith(created.id);
+      await copies().run(created.id);
+      expect(append).toHaveBeenCalled();
+    },
+  );
+  it("enforces source account and mailbox isolation at preparation and creation", async () => {
+    const source = await replyFixture();
+    const prepare = new ComposePreparationService(
+      database.db,
+      new MessageContentService(database.db),
+    );
+    await expect(
+      prepare.prepare({ ...source, accountId: otherAccountId }),
+    ).rejects.toThrow();
+    await expect(
+      service.create({
+        ...input(),
+        source: { ...source, accountId: otherAccountId },
+      }),
+    ).rejects.toThrow("source message");
+    await expect(
+      service.create({
+        ...input(),
+        source: { ...source, mailboxId: randomUUID() },
+      }),
+    ).rejects.toThrow("source message");
+    for (const field of ["inReplyTo", "references"])
+      await expect(
+        service.create({ ...input(), [field]: "<evil@example.com>" }),
+      ).rejects.toThrow();
+  });
+  it.each(["not_fetched", "pending", "fetching"])(
+    "handles %s via existing content scheduling without an empty quote",
+    async (status) => {
+      const source = await replyFixture(status, null);
+      const schedule = vi.fn(async () => true);
+      const content = new MessageContentService(database.db, { schedule });
+      const prepare = new ComposePreparationService(database.db, content);
+      expect(await prepare.prepare(source)).toEqual({ status: "pending" });
+      expect(schedule).toHaveBeenCalledTimes(status === "not_fetched" ? 1 : 0);
+      await database.db
+        .update(messageContents)
+        .set({ status: "ready", plainText: "Fetched" })
+        .where(eq(messageContents.messageId, source.messageId));
+      const result = await prepare.prepare(source);
+      expect(result.status === "ready" && result.prefill.plainText).toContain(
+        "> Fetched",
+      );
+    },
+  );
+  it("reports failed fetch and supports the existing retry", async () => {
+    const source = await replyFixture("failed", null);
+    const schedule = vi.fn(async () => true);
+    const content = new MessageContentService(database.db, { schedule });
+    await expect(
+      new ComposePreparationService(database.db, content).prepare(source),
+    ).rejects.toThrow("Content fetch failed");
+    await content.request(source.accountId, source.mailboxId, source.messageId);
+    expect(schedule).toHaveBeenCalledOnce();
+  });
+  it("converts local sanitized HTML into plain text", async () => {
+    const source = await replyFixture(
+      "ready",
+      null,
+      "<p>Hello &amp; world</p><p>Next<br>Line</p>",
+    );
+    const result = await new ComposePreparationService(
+      database.db,
+      new MessageContentService(database.db),
+    ).prepare(source);
+    if (result.status !== "ready") throw Error();
+    expect(result.prefill.plainText).toContain("Hello & world");
+    expect(result.prefill.plainText).toContain("> Line");
+    expect(result.prefill.plainText).not.toContain("<p>");
+  });
   it("persists authoritative From, recipients, stable ID and immutable MIME without performing SMTP", async () => {
     const created = await service.create(input());
     const saved = await row(created.id);

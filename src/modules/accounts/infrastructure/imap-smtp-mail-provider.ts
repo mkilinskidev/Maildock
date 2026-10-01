@@ -115,6 +115,7 @@ type ImapClient = {
       uid: true;
       flags: true;
       envelope?: true;
+      headers?: string[];
       bodyStructure?: true;
       internalDate?: true;
       size?: true;
@@ -450,7 +451,18 @@ export function normalizeMessage(
     internalDate: internalDate.toISOString(),
     size: message.size.toString(10),
     flags: [...(message.flags ?? [])].sort(),
-    envelope: normalizeEnvelope(message.envelope),
+    envelope: {
+      ...normalizeEnvelope(message.envelope),
+      ...(message.headers
+        ? {
+            references: message.headers
+              .toString("utf8")
+              .replace(/\r?\n[ \t]+/g, " ")
+              .match(/^references:[ \t]*([^\r\n]*)/im)?.[1]
+              ?.slice(-65536),
+          }
+        : {}),
+    },
     ...(mimeStructure ? { mimeStructure } : {}),
     hasAttachments: mimeHasAttachments(mimeStructure),
   };
@@ -467,7 +479,9 @@ export class ImapSmtpMailProvider implements MailProvider {
     try {
       client = this.factories.createImap(imapOptions(account.imap));
       await client.connect();
-      await client.mailboxOpen(request.remotePath, { readOnly: true });
+      // ImapFlow filters APPEND flags against the selected mailbox's
+      // PERMANENTFLAGS. EXAMINE may report none, silently dropping \Seen.
+      await client.mailboxOpen(request.remotePath, { readOnly: false });
       if (!client.append) return { outcome: "failed" };
       appendStarted = true;
       const result = await client.append(
@@ -810,6 +824,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         uid: true,
         flags: true,
         envelope: true,
+        headers: ["references"] as string[],
         bodyStructure: true,
         internalDate: true,
         size: true,
@@ -901,6 +916,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         uid: true,
         flags: true,
         envelope: true,
+        headers: ["references"] as string[],
         bodyStructure: true,
         internalDate: true,
         size: true,
@@ -991,6 +1007,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           uid: true,
           flags: true,
           envelope: true,
+          headers: ["references"] as string[],
           bodyStructure: true,
           internalDate: true,
           size: true,
@@ -1038,6 +1055,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           uid: true,
           flags: true,
           envelope: true,
+          headers: ["references"] as string[],
           bodyStructure: true,
           internalDate: true,
           size: true,

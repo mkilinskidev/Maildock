@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import {
+  Reply,
+  ReplyAll,
+  Forward,
   Archive,
   CircleAlert,
   Inbox,
@@ -32,6 +35,11 @@ import {
   sendStatusText,
   sendingAccountAvailable,
 } from "@/components/mail-composer";
+
+import type {
+  ComposeMode,
+  ComposePrefill,
+} from "@/modules/mail/domain/compose-source";
 
 type Address = { name?: string; address?: string };
 type SendFeedback = {
@@ -98,6 +106,11 @@ export function MailClient({
   rolesByAccount: Record<string, MailboxRoleView[]>;
 }) {
   const first = accounts[0];
+  const [prefill, setPrefill] = useState<ComposePrefill | undefined>();
+  const [preparingState, setPreparing] = useState(false);
+  const [prepareErrorState, setPrepareError] = useState("");
+  const preparationGeneration = useRef(0);
+  const [prepareLocation, setPrepareLocation] = useState("");
   const [composing, setComposing] = useState(false);
   const [outgoing, setOutgoing] = useState<Record<string, SendFeedback>>({});
   const sentFeedbackTimers = useRef(
@@ -220,7 +233,59 @@ export function MailClient({
     [],
   );
   const folder = folders.find((item) => item.id === mailboxId);
+  const preparationKey = `${accountId}:${mailboxId}:${selectedId}`;
+  const preparing = preparingState && prepareLocation === preparationKey;
+  const prepareError =
+    prepareLocation === preparationKey ? prepareErrorState : "";
   const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+  useEffect(() => {
+    const generation = preparationGeneration;
+    generation.current++;
+    return () => {
+      generation.current++;
+    };
+  }, [accountId, mailboxId, selectedId]);
+  async function prepare(mode: ComposeMode) {
+    if (!selectedId || preparing) return;
+    const generation = ++preparationGeneration.current;
+    setPrepareLocation(preparationKey);
+    setPreparing(true);
+    setPrepareError("");
+    try {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const response = await fetch(
+          `${base}/${selectedId}/prepare?mode=${mode}`,
+          { method: "POST" },
+        );
+        const result = (await response.json()) as {
+          status?: string;
+          prefill?: ComposePrefill;
+          error?: string;
+        };
+        if (generation !== preparationGeneration.current) return;
+        if (!response.ok)
+          throw Error(result.error ?? "Message could not be prepared.");
+        if (result.status === "ready" && result.prefill) {
+          setPrefill(result.prefill);
+          setComposing(true);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (generation !== preparationGeneration.current) return;
+      }
+      throw Error("Content is still loading. Please try again shortly.");
+    } catch (error) {
+      if (generation === preparationGeneration.current)
+        setPrepareError(
+          error instanceof Error
+            ? error.message
+            : "Message could not be prepared.",
+        );
+    } finally {
+      if (generation === preparationGeneration.current) setPreparing(false);
+    }
+  }
+
   const selectedMessage = messages.find((item) => item.id === selectedId);
   const moveAvailable = (action: "archive" | "trash") => {
     const mapping = liveRolesByAccount[accountId]?.find(
@@ -717,8 +782,13 @@ export function MailClient({
             <div className="sidebar-label">Mailboxes</div>
             <button
               className="button compose-action"
-              disabled={!accounts.some(sendingAccountAvailable)}
-              onClick={() => setComposing(true)}
+              disabled={composing || !accounts.some(sendingAccountAvailable)}
+              onClick={() => {
+                preparationGeneration.current++;
+                setPreparing(false);
+                setPrefill(undefined);
+                setComposing(true);
+              }}
             >
               <Plus size={15} />
               Compose
@@ -971,7 +1041,8 @@ export function MailClient({
         {composing ? (
           <MailComposer
             accounts={accounts}
-            accountId={accountId}
+            accountId={prefill?.accountId ?? accountId}
+            prefill={prefill}
             onClose={() => setComposing(false)}
             onQueued={(id) => {
               setOutgoing((current) => ({
@@ -1010,6 +1081,28 @@ export function MailClient({
                     role="toolbar"
                     aria-label="Message actions"
                   >
+                    {(
+                      [
+                        { mode: "reply", label: "Reply", Icon: Reply },
+                        {
+                          mode: "reply_all",
+                          label: "Reply All",
+                          Icon: ReplyAll,
+                        },
+                        { mode: "forward", label: "Forward", Icon: Forward },
+                      ] as const
+                    ).map(({ mode, label, Icon }) => (
+                      <button
+                        key={mode}
+                        className="icon-button"
+                        title={label}
+                        aria-label={label}
+                        disabled={preparing}
+                        onClick={() => void prepare(mode)}
+                      >
+                        <Icon size={17} />
+                      </button>
+                    ))}
                     <button
                       className="icon-button"
                       title="Archive"
@@ -1064,6 +1157,12 @@ export function MailClient({
                       />
                     </button>
                   </div>
+                  {preparing ? <p role="status">Preparing message…</p> : null}
+                  {prepareError ? (
+                    <p role="alert" className="error">
+                      {prepareError}
+                    </p>
+                  ) : null}
                   <h2>{detail.subject || "(No subject)"}</h2>
                   <div className="reader-sender">
                     <span className="sender-avatar">

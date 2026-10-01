@@ -41,12 +41,37 @@ it("forward migration preserves old accounts and outgoing mail as server / not_r
     expect((await db.db.select().from(mailAccounts))[0].sentCopyPolicy).toBe(
       "server",
     );
-    expect((await db.db.select().from(outgoingMessages))[0]).toMatchObject({
+    expect(
+      (
+        await db.db
+          .select({
+            status: outgoingMessages.status,
+            sentCopyPolicy: outgoingMessages.sentCopyPolicy,
+            sentCopyStatus: outgoingMessages.sentCopyStatus,
+            sentCopySyncPending: outgoingMessages.sentCopySyncPending,
+          })
+          .from(outgoingMessages)
+      )[0],
+    ).toMatchObject({
       status: "sent",
       sentCopyPolicy: "server",
       sentCopyStatus: "not_required",
       sentCopySyncPending: false,
     });
+    await apply(migrations[14].sql);
+    const [upgraded] = await db.db.select().from(outgoingMessages);
+    expect(upgraded).toMatchObject({
+      inReplyTo: null,
+      references: [],
+      status: "sent",
+      mimeBase64: "b2xk",
+      messageId: "<old@maildock.invalid>",
+    });
+    await expect(
+      db.db
+        .update(outgoingMessages)
+        .set({ inReplyTo: "<changed@example.com>" }),
+    ).rejects.toThrow();
   } finally {
     await db.client.end();
     await container.stop();

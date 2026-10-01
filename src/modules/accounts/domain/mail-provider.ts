@@ -102,6 +102,7 @@ export type RemoteEnvelope = Readonly<{
   subject?: string;
   messageId?: string;
   inReplyTo?: string;
+  references?: string;
   from: readonly RemoteAddress[];
   sender: readonly RemoteAddress[];
   replyTo: readonly RemoteAddress[];

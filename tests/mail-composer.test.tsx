@@ -1,3 +1,4 @@
+import type { ComposePrefill } from "@/modules/mail/domain/compose-source";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -49,7 +50,7 @@ describe("compose UI", () => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
-  async function render(onQueued = vi.fn()) {
+  async function render(onQueued = vi.fn(), prefill?: ComposePrefill) {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     host = document.createElement("div");
     document.body.append(host);
@@ -58,6 +59,7 @@ describe("compose UI", () => {
       root!.render(
         <MailComposer
           accounts={accounts}
+          prefill={prefill}
           accountId="second"
           onQueued={onQueued}
           onClose={vi.fn()}
@@ -122,6 +124,64 @@ describe("compose UI", () => {
     expect(body).not.toHaveProperty("from");
     expect(onQueued).toHaveBeenCalledExactlyOnceWith("durable-id");
   });
+
+  it.each(["reply", "reply_all", "forward"] as const)(
+    "edits prepared %s defaults and sends only source context through the usual endpoint",
+    async (mode) => {
+      const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+        Response.json({ id: "queued" }, { status: 202 }),
+      );
+      vi.stubGlobal("fetch", fetch);
+      const source = {
+        accountId: "second",
+        mailboxId: "mailbox",
+        messageId: "message",
+        mode,
+      };
+      await render(vi.fn(), {
+        accountId: "second",
+        to: mode === "forward" ? "" : "alice@example.com",
+        cc: "",
+        subject: "Prepared",
+        plainText: "\n\nQuoted",
+        source,
+        attachmentsOmitted: true,
+      });
+      expect(host.querySelector<HTMLSelectElement>("select")!.value).toBe(
+        "second",
+      );
+      expect(
+        host.querySelector<HTMLInputElement>('[aria-label="To"]')!.value,
+      ).toBe(mode === "forward" ? "" : "alice@example.com");
+      expect(
+        host.querySelector<HTMLTextAreaElement>("textarea")!.selectionStart,
+      ).toBe(0);
+      expect(host.textContent).toContain(
+        "Original attachments are not included",
+      );
+      await input("To", "edited@example.com");
+      await input("Cc", "cc@example.com");
+      await input("Bcc", "private@example.com");
+      await input("Subject", "Edited");
+      await input("Message body", "Edited body");
+      await act(async () => {
+        const select = host.querySelector<HTMLSelectElement>("select")!;
+        select.value = "first";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await submit();
+      expect(fetch.mock.calls[0][0]).toBe("/api/outgoing");
+      expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual({
+        accountId: "first",
+        to: "edited@example.com",
+        cc: "cc@example.com",
+        bcc: "private@example.com",
+        subject: "Edited",
+        plainText: "Edited body",
+        source,
+      });
+    },
+  );
   it("retains compose state on API failure and requires at least one recipient", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json({ error: "Invalid recipient address." }, { status: 400 }),

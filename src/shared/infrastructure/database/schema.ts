@@ -30,6 +30,8 @@ export const outgoingMessages = pgTable(
     subject: text("subject").notNull(),
     plainText: text("plain_text").notNull(),
     messageId: text("message_id").notNull(),
+    inReplyTo: text("in_reply_to"),
+    references: jsonb("references").$type<string[]>().default([]).notNull(),
     mimeBase64: text("mime_base64").notNull(),
     status: text("status").default("queued").notNull(),
     sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
@@ -551,6 +553,7 @@ export const messages = pgTable(
     cc: jsonb("cc").$type<readonly MailAddress[]>().default([]).notNull(),
     bcc: jsonb("bcc").$type<readonly MailAddress[]>().default([]).notNull(),
     inReplyTo: text("in_reply_to"),
+    references: text("references"),
     mimeStructure: jsonb("mime_structure").$type<MimePart>(),
     hasAttachments: boolean("has_attachments").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })

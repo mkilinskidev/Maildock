@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import type { ComposePrefill } from "@/modules/mail/domain/compose-source";
+import { useEffect, useRef, useState } from "react";
 import { Send, X } from "lucide-react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 
@@ -28,25 +29,32 @@ export function sendStatusText(status: string, sentCopyStatus?: string) {
 export function MailComposer({
   accounts,
   accountId,
+  prefill,
   onQueued,
   onClose,
 }: {
+  prefill?: ComposePrefill;
   accounts: MailAccountView[];
   accountId: string;
   onQueued: (id: string) => void;
   onClose: () => void;
 }) {
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    bodyRef.current?.focus();
+    bodyRef.current?.setSelectionRange(0, 0);
+  }, []);
   const usable = accounts.filter(sendingAccountAvailable);
   const [from, setFrom] = useState(
     usable.find((account) => account.id === accountId)?.id ??
       usable[0]?.id ??
       "",
   );
-  const [to, setTo] = useState("");
-  const [cc, setCc] = useState("");
+  const [to, setTo] = useState(prefill?.to ?? "");
+  const [cc, setCc] = useState(prefill?.cc ?? "");
   const [bcc, setBcc] = useState("");
-  const [subject, setSubject] = useState("");
-  const [plainText, setPlainText] = useState("");
+  const [subject, setSubject] = useState(prefill?.subject ?? "");
+  const [plainText, setPlainText] = useState(prefill?.plainText ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   async function send(event: React.SubmitEvent<HTMLFormElement>) {
@@ -70,6 +78,7 @@ export function MailComposer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId: from,
+          ...(prefill ? { source: prefill.source } : {}),
           to,
           cc,
           bcc,
@@ -93,7 +102,13 @@ export function MailComposer({
   return (
     <form className="mail-composer" onSubmit={(event) => void send(event)}>
       <div className="mail-detail-header composer-heading">
-        <h2>New message</h2>
+        <h2>
+          {prefill
+            ? { reply: "Reply", reply_all: "Reply all", forward: "Forward" }[
+                prefill.source.mode
+              ]
+            : "New message"}
+        </h2>
         <button
           className="icon-button"
           type="button"
@@ -104,6 +119,9 @@ export function MailComposer({
           <X size={18} />
         </button>
       </div>
+      {prefill?.attachmentsOmitted ? (
+        <p role="note">Original attachments are not included.</p>
+      ) : null}
       <fieldset disabled={submitting} className="composer-fields">
         <label>
           From
@@ -162,6 +180,7 @@ export function MailComposer({
           />
         </label>
         <textarea
+          ref={bodyRef}
           aria-label="Message body"
           value={plainText}
           onChange={(event) => setPlainText(event.target.value)}

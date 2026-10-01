@@ -83,6 +83,7 @@ function messageValues(
     cc: envelope.cc,
     bcc: envelope.bcc,
     inReplyTo: envelope.inReplyTo ?? null,
+    references: envelope.references ?? null,
     mimeStructure: remote.mimeStructure ?? null,
     hasAttachments: remote.hasAttachments,
     updatedAt: now,

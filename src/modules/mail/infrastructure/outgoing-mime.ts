@@ -1,3 +1,4 @@
+import { validMessageId } from "../domain/reply-forward";
 import MailComposer from "nodemailer/lib/mail-composer";
 import type { OutgoingAddress } from "../domain/outgoing-message";
 
@@ -9,7 +10,17 @@ export async function buildOutgoingMime(message: {
   plainText: string;
   messageId: string;
   createdAt: Date;
+  inReplyTo?: string | null;
+  references?: string[];
 }): Promise<Buffer> {
+  if (
+    (message.inReplyTo && !validMessageId(message.inReplyTo)) ||
+    (message.references &&
+      (message.references.length > 30 ||
+        message.references.join(" ").length > 4000 ||
+        message.references.some((id) => !validMessageId(id))))
+  )
+    throw new Error("Invalid threading headers.");
   const mime = await new MailComposer({
     from: message.from,
     to: message.to,
@@ -21,6 +32,8 @@ export async function buildOutgoingMime(message: {
     },
     date: message.createdAt,
     messageId: message.messageId,
+    inReplyTo: message.inReplyTo ?? undefined,
+    references: message.references?.length ? message.references : undefined,
     textEncoding: "base64",
     newline: "windows",
     disableFileAccess: true,

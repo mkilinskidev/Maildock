@@ -1,3 +1,4 @@
+import { ComposePreparationService } from "@/modules/mail/application/compose-preparation-service";
 import { AccountsService } from "@/modules/accounts/application/accounts-service";
 import { ImapSmtpMailProvider } from "@/modules/accounts/infrastructure/imap-smtp-mail-provider";
 import { getConfig } from "@/shared/infrastructure/config/config";
@@ -58,4 +59,9 @@ export const messageCommandService = new MessageCommandService(
   async (accountId, mailboxId) => {
     await deltaScheduler.schedule(accountId, mailboxId, "manual");
   },
+);
+
+export const composePreparationService = new ComposePreparationService(
+  db,
+  messageContentService,
 );

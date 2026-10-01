@@ -1,3 +1,4 @@
+import { sourceContext } from "./compose-source";
 import { z } from "zod";
 import addressparser from "nodemailer/lib/addressparser";
 
@@ -8,6 +9,7 @@ const header = z.string().refine((value) => !/[\x00-\x1f\x7f]/.test(value));
 export const composeInput = z
   .object({
     accountId: z.uuid(),
+    source: sourceContext.optional(),
     to: header.max(8000),
     cc: header.max(8000).default(""),
     bcc: header.max(8000).default(""),

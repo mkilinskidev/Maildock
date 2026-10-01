@@ -1,9 +1,13 @@
+import { threading } from "../domain/reply-forward";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailAccounts,
   outgoingMessages,
+  messages,
+  mailboxMessages,
+  mailboxes,
 } from "../../../shared/infrastructure/database/schema";
 import type { AccountsService } from "../../accounts/application/accounts-service";
 import type {
@@ -63,6 +67,35 @@ export class OutgoingMessageService {
         throw new OutgoingValidationError(
           "Select an enabled, configured sending account.",
         );
+      const { source, ...snapshot } = values;
+      let thread = {
+        inReplyTo: null as string | null,
+        references: [] as string[],
+      };
+      if (source) {
+        const [original] = await tx
+          .select({ message: messages })
+          .from(messages)
+          .innerJoin(
+            mailboxMessages,
+            eq(mailboxMessages.messageId, messages.id),
+          )
+          .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+          .where(
+            and(
+              eq(messages.id, source.messageId),
+              eq(messages.accountId, source.accountId),
+              eq(mailboxes.accountId, source.accountId),
+              eq(mailboxes.id, source.mailboxId),
+            ),
+          )
+          .for("share");
+        if (!original)
+          throw new OutgoingValidationError(
+            "The source message is unavailable in this account and mailbox.",
+          );
+        thread = threading(original.message, source.mode);
+      }
       let from;
       let mime: Buffer;
       try {
@@ -75,7 +108,8 @@ export class OutgoingMessageService {
           throw Error();
         from = { address: addresses[0].address, name: account.displayName };
         mime = await buildOutgoingMime({
-          ...values,
+          ...snapshot,
+          ...thread,
           from,
           messageId,
           createdAt,
@@ -86,7 +120,8 @@ export class OutgoingMessageService {
         );
       }
       await tx.insert(outgoingMessages).values({
-        ...values,
+        ...snapshot,
+        ...thread,
         id,
         from,
         messageId,
