@@ -1,11 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import {
+  Archive,
+  CircleAlert,
+  Inbox,
+  Mail,
+  MailOpen,
+  Paperclip,
+  Plus,
+  RefreshCw,
+  Settings2,
+  ShieldOff,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
-import type { MessageListItem } from "@/modules/mail/application/message-service";
+import type {
+  MessageListItem,
+  MessagePage,
+} from "@/modules/mail/application/message-service";
 import { LogoutButton } from "@/components/logout-button";
+import { ThemeControl } from "@/components/theme-control";
 
 type Address = { name?: string; address?: string };
 type Detail = {
@@ -62,14 +78,37 @@ export function MailClient({
       "",
   );
   const [messages, setMessages] = useState<MessageListItem[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(Boolean(first));
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationError, setPaginationError] = useState("");
+  const [pageRequestVersion, setPageRequestVersion] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const loadingPageRef = useRef(false);
+  const pageRequestIdRef = useRef(0);
+  const loadedMoreRef = useRef(false);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const folder = folders.find((item) => item.id === mailboxId);
   const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+
+  const applyFirstPage = useCallback((page: MessagePage) => {
+    setMessages((current) => {
+      if (!loadedMoreRef.current) return [...page.items];
+      const firstPageIds = new Set(page.items.map((item) => item.id));
+      return [
+        ...page.items,
+        ...current.filter((item) => !firstPageIds.has(item.id)),
+      ];
+    });
+    if (!loadedMoreRef.current) setNextCursor(page.nextCursor);
+  }, []);
 
   useEffect(() => {
     if (!accountId) return;
@@ -117,16 +156,20 @@ export function MailClient({
       fetch(`${base}?pageSize=50`, { cache: "no-store" })
         .then(async (response) => {
           if (!response.ok) throw new Error("Messages could not be loaded.");
-          return response.json() as Promise<{ items: MessageListItem[] }>;
+          return response.json() as Promise<MessagePage>;
         })
         .then((result) => {
-          if (!cancelled) setMessages(result.items);
+          if (!cancelled) {
+            applyFirstPage(result);
+            setError("");
+          }
         })
         .catch(() => {
           if (!cancelled) setError("Messages could not be loaded.");
         })
         .finally(() => {
           busy = false;
+          if (!cancelled) setLoadingMessages(false);
         });
     };
     load();
@@ -137,7 +180,60 @@ export function MailClient({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", load);
     };
-  }, [accountId, mailboxId, base]);
+  }, [accountId, mailboxId, base, applyFirstPage]);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    const root = listRef.current;
+    if (!target || !root || !nextCursor || loadingMessages || paginationError)
+      return;
+    let cancelled = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || loadingPageRef.current) return;
+        loadingPageRef.current = true;
+        const requestId = ++pageRequestIdRef.current;
+        setLoadingMore(true);
+        fetch(`${base}?pageSize=50&cursor=${encodeURIComponent(nextCursor)}`, {
+          cache: "no-store",
+        })
+          .then(async (response) => {
+            if (!response.ok)
+              throw new Error("Older messages could not be loaded.");
+            return response.json() as Promise<MessagePage>;
+          })
+          .then((page) => {
+            if (cancelled || pageRequestIdRef.current !== requestId) return;
+            loadedMoreRef.current = true;
+            setMessages((current) => {
+              const existingIds = new Set(current.map((item) => item.id));
+              return [
+                ...current,
+                ...page.items.filter((item) => !existingIds.has(item.id)),
+              ];
+            });
+            setNextCursor(page.nextCursor);
+          })
+          .catch(() => {
+            if (!cancelled && pageRequestIdRef.current === requestId)
+              setPaginationError("Older messages could not be loaded.");
+          })
+          .finally(() => {
+            if (pageRequestIdRef.current === requestId) {
+              loadingPageRef.current = false;
+              setLoadingMore(false);
+              setPageRequestVersion((value) => value + 1);
+            }
+          });
+      },
+      { root, rootMargin: "0px 0px 240px 0px" },
+    );
+    observer.observe(target);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [base, nextCursor, loadingMessages, paginationError, pageRequestVersion]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -150,6 +246,7 @@ export function MailClient({
       const value = (await response.json()) as Detail;
       if (cancelled) return;
       setDetail(value);
+      setLoadingDetail(false);
       if (value.content.status === "not_fetched") {
         const queued = await fetch(`${url}/content`, { method: "POST" });
         if (!queued.ok) {
@@ -165,12 +262,14 @@ export function MailClient({
       }
     }
     function handleError(failure: unknown) {
-      if (!cancelled)
+      if (!cancelled) {
+        setLoadingDetail(false);
         setError(
           failure instanceof Error
             ? failure.message
             : "Message could not be loaded.",
         );
+      }
     }
     void load().catch(handleError);
     return () => {
@@ -221,10 +320,7 @@ export function MailClient({
         throw new Error("Synchronization could not be requested.");
       window.setTimeout(async () => {
         const result = await fetch(`${base}?pageSize=50`);
-        if (result.ok)
-          setMessages(
-            ((await result.json()) as { items: MessageListItem[] }).items,
-          );
+        if (result.ok) applyFirstPage((await result.json()) as MessagePage);
         setFolderReloadNonce((value) => value + 1);
         setRefreshing(false);
       }, 2500);
@@ -234,60 +330,135 @@ export function MailClient({
     }
   }
 
+  const activeAccount = accounts.find((account) => account.id === accountId);
+  const visibleFolders = folders.filter(
+    (item) => item.selectable && item.lifecycleStatus === "active",
+  );
+  const sender = detail?.from[0];
+  const senderName = sender?.name || sender?.address || "Unknown sender";
+
   return (
     <main className="mail-app">
+      <header className="app-bar">
+        <div className="app-brand">
+          <span className="brand-mark">
+            <Mail size={16} strokeWidth={2} />
+          </span>
+          Maildock
+        </div>
+        <div className="app-bar-right">
+          <span>Personal mail</span>
+          <ThemeControl />
+        </div>
+      </header>
       <aside className="mail-sidebar">
-        <div className="mail-brand">Maildock</div>
-        <select
-          aria-label="Account"
-          value={accountId}
-          onChange={(event) => {
-            const id = event.target.value;
-            setMessages([]);
-            setSelectedId("");
-            setDetail(null);
-            setError("");
-            setAccountId(id);
-            const next = liveMailboxesByAccount[id] ?? [];
-            setMailboxId(
-              next.find((item) => item.remotePath.toUpperCase() === "INBOX")
-                ?.id ??
-                next.find((item) => item.selectable)?.id ??
-                "",
-            );
-          }}
-        >
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.displayName}
-            </option>
-          ))}
-        </select>
-        <nav className="mail-folders" aria-label="Mailboxes">
-          {folders
-            .filter(
-              (item) => item.selectable && item.lifecycleStatus === "active",
-            )
-            .map((item) => (
-              <button
-                key={item.id}
-                className={item.id === mailboxId ? "active" : ""}
-                onClick={() => {
+        {accounts.length > 0 ? (
+          <>
+            <div className="account-identity">
+              <span className="account-avatar">
+                {activeAccount?.displayName?.charAt(0) || "M"}
+              </span>
+              <select
+                aria-label="Account"
+                value={accountId}
+                onChange={(event) => {
+                  const id = event.target.value;
                   setMessages([]);
+                  setNextCursor(null);
+                  setPaginationError("");
+                  setLoadingMore(false);
+                  pageRequestIdRef.current += 1;
+                  loadingPageRef.current = false;
+                  loadedMoreRef.current = false;
+                  listRef.current?.scrollTo({ top: 0 });
                   setSelectedId("");
                   setDetail(null);
                   setError("");
-                  setMailboxId(item.id);
+                  setLoadingMessages(true);
+                  setAccountId(id);
+                  const next = liveMailboxesByAccount[id] ?? [];
+                  setMailboxId(
+                    next.find(
+                      (item) => item.remotePath.toUpperCase() === "INBOX",
+                    )?.id ??
+                      next.find((item) => item.selectable)?.id ??
+                      "",
+                  );
                 }}
               >
-                <span>{item.name}</span>
-                <small>{formatCount(item.synchronizedMessageCount)}</small>
-              </button>
-            ))}
-        </nav>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="account-email" title={activeAccount?.email}>
+              {activeAccount?.email}
+            </div>
+            <div className="sidebar-label">Mailboxes</div>
+            <nav className="mail-folders" aria-label="Mailboxes">
+              {visibleFolders.map((item) => {
+                const inbox = item.remotePath.toUpperCase() === "INBOX";
+                const Icon = inbox ? Inbox : Archive;
+                const unread =
+                  item.unseenCount && item.unseenCount !== "0"
+                    ? item.unseenCount
+                    : null;
+                return (
+                  <button
+                    key={item.id}
+                    className={item.id === mailboxId ? "active" : ""}
+                    title={item.remotePath}
+                    aria-current={item.id === mailboxId ? "page" : undefined}
+                    onClick={() => {
+                      if (item.id === mailboxId) return;
+                      setMessages([]);
+                      setNextCursor(null);
+                      setPaginationError("");
+                      setLoadingMore(false);
+                      pageRequestIdRef.current += 1;
+                      loadingPageRef.current = false;
+                      loadedMoreRef.current = false;
+                      listRef.current?.scrollTo({ top: 0 });
+                      setSelectedId("");
+                      setDetail(null);
+                      setError("");
+                      setLoadingMessages(true);
+                      setMailboxId(item.id);
+                    }}
+                  >
+                    <Icon size={16} strokeWidth={1.8} />
+                    <span className="folder-name">{item.name}</span>
+                    {unread ? (
+                      <span
+                        className="folder-count unread"
+                        title="Unread messages"
+                      >
+                        {formatCount(unread)}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </nav>
+          </>
+        ) : (
+          <div className="pane-empty">
+            <Mail size={25} />
+            <strong>No accounts yet</strong>
+            <p>Add an account to see your mailboxes.</p>
+          </div>
+        )}
         <div className="mail-sidebar-footer">
-          <Link href="/accounts">Accounts & settings</Link>
-          <Link href="/accounts/new">Add account</Link>
+          <Link href="/accounts">
+            <Settings2 size={15} />
+            Accounts & settings
+          </Link>
+          <Link href="/accounts/new">
+            <Plus size={15} />
+            Add account
+          </Link>
           <LogoutButton />
         </div>
       </aside>
@@ -296,81 +467,182 @@ export function MailClient({
           <div>
             <h1>{folder?.name ?? "Mail"}</h1>
             <small>
-              Showing {messages.length} of{" "}
-              {formatCount(folder?.synchronizedMessageCount ?? "0")}{" "}
-              synchronized messages
+              {folder
+                ? formatCount(folder.synchronizedMessageCount) +
+                  " synchronized messages"
+                : "Select a mailbox"}
             </small>
           </div>
-          <button onClick={() => void refresh()} disabled={refreshing}>
-            ↻ <span>Sync</span>
+          <button
+            className="icon-button"
+            onClick={() => void refresh()}
+            disabled={refreshing || !mailboxId}
+            title="Sync mailbox"
+            aria-label="Sync mailbox"
+          >
+            <RefreshCw size={17} className={refreshing ? "animate-spin" : ""} />
           </button>
         </header>
-        {error && <p className="error mail-error">{error}</p>}
-        <div className="mail-rows">
-          {messages.map((message) => (
-            <button
-              key={message.id}
-              className={`mail-list-row ${selectedId === message.id ? "selected" : ""} ${message.seen ? "" : "unread"}`}
-              onClick={() => {
-                if (selectedId === message.id) return;
-                setDetail(null);
-                setError("");
-                setSelectedId(message.id);
-              }}
-            >
-              <span className="mail-row-top">
-                <strong>
-                  <i>{message.seen ? "" : "●"}</i>
-                  {message.from[0]?.name ||
-                    message.from[0]?.address ||
-                    "Unknown sender"}
-                </strong>
-                <time>{new Date(message.date).toLocaleDateString()}</time>
-              </span>
-              <span className="mail-row-subject">
-                {message.subject || "(No subject)"}
-              </span>
-              <span className="mail-row-bottom">
-                {message.hasAttachments ? "📎 Attachment" : ""}
-              </span>
-            </button>
-          ))}
-        </div>
-        {!messages.length && (
-          <p className="mail-placeholder">
-            No synchronized messages in this mailbox.
+        {error ? (
+          <p className="mail-error error" role="alert">
+            {error}
           </p>
-        )}
+        ) : null}
+        <div className="mail-rows" ref={listRef}>
+          {loadingMessages && mailboxId
+            ? Array.from({ length: 5 }, (_, index) => (
+                <div className="skeleton-row" key={index}>
+                  <div
+                    className="skeleton"
+                    style={{ width: "55%", height: 12 }}
+                  />
+                  <div
+                    className="skeleton"
+                    style={{ width: "80%", height: 10 }}
+                  />
+                  <div
+                    className="skeleton"
+                    style={{ width: "35%", height: 9 }}
+                  />
+                </div>
+              ))
+            : messages.map((message) => (
+                <button
+                  key={message.id}
+                  className={
+                    "mail-list-row " +
+                    (selectedId === message.id ? "selected " : "") +
+                    (!message.seen ? "unread" : "")
+                  }
+                  aria-current={selectedId === message.id ? "true" : undefined}
+                  onClick={() => {
+                    if (selectedId === message.id) return;
+                    setDetail(null);
+                    setLoadingDetail(true);
+                    setError("");
+                    setSelectedId(message.id);
+                  }}
+                >
+                  <span className="mail-row-top">
+                    <span className="mail-row-marker">
+                      {!message.seen ? (
+                        <span className="unread-dot" aria-label="Unread" />
+                      ) : null}
+                    </span>
+                    <strong>
+                      {message.from[0]?.name ||
+                        message.from[0]?.address ||
+                        "Unknown sender"}
+                    </strong>
+                    <time dateTime={message.date}>
+                      {new Date(message.date).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        year:
+                          new Date(message.date).getFullYear() ===
+                          new Date().getFullYear()
+                            ? undefined
+                            : "numeric",
+                      })}
+                    </time>
+                  </span>
+                  <span className="mail-row-subject">
+                    {message.subject || "(No subject)"}
+                  </span>
+                  <span className="mail-row-bottom">
+                    {message.hasAttachments ? (
+                      <>
+                        <Paperclip size={12} /> Attachment
+                      </>
+                    ) : null}
+                  </span>
+                </button>
+              ))}
+          {!loadingMessages && nextCursor ? (
+            <div
+              className="mail-load-more"
+              ref={loadMoreRef}
+              aria-live="polite"
+            >
+              {paginationError ? (
+                <>
+                  <span>{paginationError}</span>
+                  <button
+                    className="button secondary"
+                    onClick={() => setPaginationError("")}
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : loadingMore ? (
+                <span>Loading older messages…</span>
+              ) : (
+                <span>Scroll for older messages</span>
+              )}
+            </div>
+          ) : null}
+          {!loadingMessages && !messages.length && !error ? (
+            <div className="pane-empty">
+              <MailOpen size={26} strokeWidth={1.5} />
+              <strong>
+                {mailboxId ? "Nothing here yet" : "No mailbox selected"}
+              </strong>
+              <p>
+                {mailboxId
+                  ? "Messages will appear here when synchronized."
+                  : "Choose a mailbox from the sidebar."}
+              </p>
+            </div>
+          ) : null}
+        </div>
       </section>
       <section className="mail-detail-pane" aria-label="Message detail">
-        {!selectedId && (
-          <div className="mail-empty-detail">Select a message to read it.</div>
-        )}
-        {selectedId && !detail && (
-          <p className="mail-placeholder">Loading local message…</p>
-        )}
-        {detail && (
+        {!selectedId ? (
+          <div className="pane-empty reader-empty">
+            <MailOpen size={30} strokeWidth={1.4} />
+            <strong>Select a message</strong>
+            <p>Choose a message from the list to read it here.</p>
+          </div>
+        ) : null}
+        {selectedId && loadingDetail && !detail ? (
+          <div className="mail-detail-header">
+            <div className="skeleton" style={{ width: "60%", height: 22 }} />
+            <div
+              className="skeleton"
+              style={{ width: "40%", height: 13, marginTop: 24 }}
+            />
+          </div>
+        ) : null}
+        {detail ? (
           <>
             <header className="mail-detail-header">
               <h2>{detail.subject || "(No subject)"}</h2>
-              <div>
-                <strong>From:</strong> {address(detail.from)}
-              </div>
-              <div>
-                <strong>To:</strong> {address(detail.to)}
-              </div>
-              {detail.cc.length > 0 && (
-                <div>
-                  <strong>Cc:</strong> {address(detail.cc)}
+              <div className="reader-sender">
+                <span className="sender-avatar">{senderName.charAt(0)}</span>
+                <div className="reader-addresses">
+                  <strong>{senderName}</strong>
+                  <small>
+                    {sender?.name ? sender.address : address(detail.from)}
+                  </small>
                 </div>
-              )}
-              <time>
-                {new Date(detail.sentAt ?? detail.date).toLocaleString()}
-              </time>
+                <time
+                  className="reader-date"
+                  dateTime={detail.sentAt ?? detail.date}
+                >
+                  {new Date(detail.sentAt ?? detail.date).toLocaleString()}
+                </time>
+              </div>
+              <div className="reader-meta">
+                To: {address(detail.to)}
+                {detail.cc.length ? " · Cc: " + address(detail.cc) : ""}
+              </div>
             </header>
-            {detail.content.remoteContentBlocked && (
-              <div className="mail-privacy">Remote content blocked</div>
-            )}
+            {detail.content.remoteContentBlocked ? (
+              <div className="mail-privacy">
+                <ShieldOff size={15} />
+                Remote content blocked for your privacy
+              </div>
+            ) : null}
             <div className="mail-body">
               {detail.content.status === "ready" ? (
                 detail.content.sanitizedHtml !== null ? (
@@ -386,9 +658,11 @@ export function MailClient({
               ) : detail.content.status === "failed" ? (
                 <div className="mail-content-failure">
                   <p className="error">
+                    <CircleAlert size={15} />{" "}
                     {detail.content.error ?? "Content fetch failed."}
                   </p>
                   <button
+                    className="button secondary"
                     onClick={() => void retryContent()}
                     disabled={retrying}
                   >
@@ -396,25 +670,32 @@ export function MailClient({
                   </button>
                 </div>
               ) : (
-                <p className="muted">Downloading message content…</p>
+                <div className="pane-empty">
+                  <div
+                    className="skeleton"
+                    style={{ width: 180, height: 11 }}
+                  />
+                  <p>Downloading message content…</p>
+                </div>
               )}
             </div>
-            {detail.attachments.length > 0 && (
+            {detail.attachments.length > 0 ? (
               <div className="mail-attachments">
                 <h3>Attachments</h3>
                 {detail.attachments.map((item, index) => (
                   <span key={index} className="mail-attachment">
-                    {item.filename ?? "Unnamed attachment"} · {item.type}
+                    <Paperclip size={13} />
+                    {item.filename ?? "Unnamed attachment"}
                     {item.size
-                      ? ` · ${Math.ceil(Number(item.size) / 1024)} KB`
+                      ? " · " + Math.ceil(Number(item.size) / 1024) + " KB"
                       : ""}{" "}
                     · Not available yet
                   </span>
                 ))}
               </div>
-            )}
+            ) : null}
           </>
-        )}
+        ) : null}
       </section>
     </main>
   );

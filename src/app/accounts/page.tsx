@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { ThemeControl } from "@/components/theme-control";
 import { getCurrentSession } from "@/modules/auth/application/session";
 import { AccountList } from "@/components/account-list";
 import { microsoftOAuth } from "@/modules/accounts/infrastructure/accounts";
@@ -24,12 +25,18 @@ export default async function AccountsPage({
   );
   return (
     <main className="page-shell">
-      <section className="wide">
+      <section className="page-content">
         <header className="page-header">
-          <h1>Accounts</h1>
-          <Link className="button-link" href="/">
-            Back to mail
-          </Link>
+          <div>
+            <h1>Accounts</h1>
+            <p>Manage your mail connections and preferences.</p>
+          </div>
+          <div className="page-header-actions">
+            <ThemeControl />
+            <Link className="button-link secondary" href="/">
+              Back to mail
+            </Link>
+          </div>
         </header>
         <AccountList
           accounts={accounts}

@@ -32,7 +32,12 @@ export function SetupForm() {
   }
 
   return (
-    <form method="post" action="/api/setup" onSubmit={submit} className="card">
+    <form
+      method="post"
+      action="/api/setup"
+      onSubmit={submit}
+      className="auth-card"
+    >
       <label>
         Username
         <input
@@ -55,7 +60,7 @@ export function SetupForm() {
         />
       </label>
       {error ? <p className="error">{error}</p> : null}
-      <button disabled={pending}>
+      <button className="button" disabled={pending}>
         {pending ? "Creating owner…" : "Create owner"}
       </button>
     </form>

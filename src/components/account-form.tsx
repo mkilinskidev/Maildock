@@ -264,13 +264,13 @@ export function AccountForm({
       <div className="actions">
         <button
           type="button"
-          className="secondary"
+          className="button secondary"
           disabled={!!pending}
           onClick={(event) => void request(event.currentTarget.form!, "test")}
         >
           {pending === "test" ? "Testing…" : "Test connection"}
         </button>
-        <button type="submit" disabled={!!pending}>
+        <button type="submit" className="button" disabled={!!pending}>
           {pending === "save" ? "Saving…" : "Save"}
         </button>
         <Link className="button-link secondary" href="/">
