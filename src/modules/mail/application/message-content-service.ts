@@ -23,6 +23,7 @@ import {
   sanitizeEmailHtml,
 } from "../infrastructure/sanitize-email-html";
 import type { ContentScheduler } from "./content-scheduler";
+import { searchBodyText } from "../infrastructure/search-body-text";
 
 export class MessagePlacementNotFoundError extends Error {
   constructor() {
@@ -236,6 +237,7 @@ export class MessageContentService {
         .set({
           status: "ready",
           plainText: result.plainText,
+          searchText: searchBodyText(result.plainText, html),
           sanitizedHtml: html,
           remoteContentBlocked: blocked,
           policyVersion: EMAIL_HTML_POLICY,

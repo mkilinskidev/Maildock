@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   uuid,
   foreignKey,
+  customType,
 } from "drizzle-orm/pg-core";
 import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
 import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
@@ -661,6 +662,12 @@ export const messages = pgTable(
     providerMessageId: text("provider_message_id"),
     rfcMessageId: text("rfc_message_id"),
     subject: text("subject"),
+    searchBody: text("search_body").default("").notNull(),
+    searchVector: customType<{ data: string }>({ dataType: () => "tsvector" })(
+      "search_vector",
+    ).generatedAlwaysAs(
+      sql`maildock_search_vector(subject, "from", sender, "to", cc, search_body)`,
+    ),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     internalDate: timestamp("internal_date", { withTimezone: true }).notNull(),
     size: bigint("size", { mode: "bigint" }).notNull(),
@@ -688,6 +695,7 @@ export const messages = pgTable(
       .notNull(),
   },
   (table) => [
+    index("messages_search_gin_idx").using("gin", table.searchVector),
     index("messages_account_internal_date_idx").on(
       table.accountId,
       table.internalDate,
@@ -816,6 +824,7 @@ export const messageContents = pgTable(
       .references(() => messages.id, { onDelete: "cascade" }),
     status: text("status").default("not_fetched").notNull(),
     plainText: text("plain_text"),
+    searchText: text("search_text"),
     sanitizedHtml: text("sanitized_html"),
     remoteContentBlocked: boolean("remote_content_blocked")
       .default(false)

@@ -1,5 +1,7 @@
 "use client";
 import { DraftList } from "./draft-list";
+import { GlobalSearchResults } from "./global-search-results";
+import type { SearchResult } from "@/modules/mail/application/search-service";
 import {
   contentPollDelay,
   DEFAULT_CONTENT_POLL_INTERVAL_MS,
@@ -18,6 +20,8 @@ import {
   Plus,
   RefreshCw,
   Settings2,
+  Search,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
@@ -194,7 +198,14 @@ export function MailClient({
   const loadingPageRef = useRef(false);
   const pageRequestIdRef = useRef(0);
   const loadedMoreRef = useRef(false);
-  const [selectedId, setSelectedId] = useState("");
+  const [normalSelectedId, setSelectedId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchSelection, setSearchSelection] = useState<SearchResult>();
+  const [searchRefresh, setSearchRefresh] = useState(0);
+  const searchActive = Boolean(searchQuery.trim());
+  const selectedId = searchActive
+    ? (searchSelection?.id ?? "")
+    : normalSelectedId;
   const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
@@ -238,9 +249,14 @@ export function MailClient({
     setLoadingDetail(true);
     setError("");
   }
-  const actionMailboxId = selectedMember?.mailboxId ?? mailboxId;
-  const messageBase = `/api/accounts/${accountId}/mailboxes/${actionMailboxId}/messages`;
-  const preparationKey = `${accountId}:${actionMailboxId}:${selectedId}`;
+  const actionAccountId = searchActive
+    ? (searchSelection?.accountId ?? accountId)
+    : accountId;
+  const actionMailboxId = searchActive
+    ? (searchSelection?.mailboxId ?? mailboxId)
+    : (selectedMember?.mailboxId ?? mailboxId);
+  const messageBase = `/api/accounts/${actionAccountId}/mailboxes/${actionMailboxId}/messages`;
+  const preparationKey = `${actionAccountId}:${actionMailboxId}:${selectedId}`;
   const preparing = preparingState && prepareLocation === preparationKey;
   const prepareError =
     prepareLocation === preparationKey ? prepareErrorState : "";
@@ -251,7 +267,7 @@ export function MailClient({
     return () => {
       generation.current++;
     };
-  }, [accountId, mailboxId, actionMailboxId, selectedId]);
+  }, [accountId, mailboxId, actionAccountId, actionMailboxId, selectedId]);
   async function prepare(mode: ComposeMode) {
     if (!selectedId || preparing) return;
     const generation = ++preparationGeneration.current;
@@ -294,17 +310,18 @@ export function MailClient({
     }
   }
 
-  const selectedMessage =
-    conversationView && detail?.id === selectedId
+  const selectedMessage = searchActive
+    ? searchSelection
+    : conversationView && detail?.id === selectedId
       ? detail
       : (selectedMember ?? messages.find((item) => item.id === selectedId));
   const moveAvailable = (action: "archive" | "trash") => {
-    const mapping = liveRolesByAccount[accountId]?.find(
+    const mapping = liveRolesByAccount[actionAccountId]?.find(
       (item) => item.role === action,
     );
     return Boolean(
-      activeAccount?.enabled &&
-      activeAccount.mailboxDiscovery.capabilities.includes("MOVE") &&
+      readerAccount?.enabled &&
+      readerAccount.mailboxDiscovery.capabilities.includes("MOVE") &&
       mapping?.available &&
       mapping.mailboxId !== actionMailboxId,
     );
@@ -335,14 +352,18 @@ export function MailClient({
         },
       ]);
     setError("");
-    if (!conversationView && (action === "archive" || action === "trash")) {
+    if (
+      !searchActive &&
+      !conversationView &&
+      (action === "archive" || action === "trash")
+    ) {
       const index = messages.findIndex((item) => item.id === targetId);
       const next = messages[index + 1] ?? messages[index - 1];
       setMessages((current) => current.filter((item) => item.id !== targetId));
       setSelectedId(next?.id ?? "");
       setDetail(null);
       setLoadingDetail(Boolean(next));
-    } else if (!conversationView) {
+    } else if (!searchActive && !conversationView) {
       setMessages((current) =>
         current.map((item) =>
           item.id === targetId
@@ -376,16 +397,51 @@ export function MailClient({
         throw new Error(result.error ?? "Message action could not be queued.");
       setPendingCommands((current) => ({
         ...current,
-        [result.id!]: { accountId, mailboxId: actionMailboxId, adjustmentKey },
+        [result.id!]: {
+          accountId: actionAccountId,
+          mailboxId: actionMailboxId,
+          adjustmentKey,
+        },
       }));
+      if (searchActive) {
+        setSearchRefresh((n) => n + 1);
+        if (action === "archive" || action === "trash") {
+          setSearchSelection((current) =>
+            current?.id === targetId ? undefined : current,
+          );
+          setDetail((current) => (current?.id === targetId ? null : current));
+        } else {
+          setSearchSelection((current) =>
+            current?.id === targetId
+              ? {
+                  ...current,
+                  seen:
+                    action === "mark_read"
+                      ? true
+                      : action === "mark_unread"
+                        ? false
+                        : current.seen,
+                  flagged:
+                    action === "flag"
+                      ? true
+                      : action === "unflag"
+                        ? false
+                        : current.flagged,
+                }
+              : current,
+          );
+        }
+      }
     } catch (failure) {
       if (adjustmentKey)
         setCountAdjustments((current) =>
           current.filter((item) => item.key !== adjustmentKey),
         );
       if (activeLocationRef.current === `${accountId}:${mailboxId}`) {
-        setMessages(previous);
-        setSelectedId(targetId);
+        if (!searchActive) {
+          setMessages(previous);
+          setSelectedId(targetId);
+        }
         setError(
           failure instanceof Error
             ? failure.message
@@ -455,7 +511,7 @@ export function MailClient({
             const failure = finished.find((item) => item.status === "failed");
             if (failure) {
               const source = pendingCommands[failure.id];
-              if (source?.accountId === accountId) {
+              if (source && (source.accountId === accountId || searchActive)) {
                 setError(failure.error ?? "Message action failed.");
                 if (source.mailboxId === mailboxId)
                   void fetch(`${base}?pageSize=50`, { cache: "no-store" }).then(
@@ -477,7 +533,15 @@ export function MailClient({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [accountId, mailboxId, base, pendingCommands, conversationView]);
+  }, [
+    accountId,
+    mailboxId,
+    base,
+    pendingCommands,
+    conversationView,
+    searchActive,
+    actionAccountId,
+  ]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
     setMessages((current) => {
@@ -725,7 +789,13 @@ export function MailClient({
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [messageBase, selectedId, retryNonce, contentPollIntervalMs]);
+  }, [
+    messageBase,
+    selectedId,
+    retryNonce,
+    contentPollIntervalMs,
+    searchActive,
+  ]);
 
   async function retryContent() {
     if (!selectedId) return;
@@ -780,6 +850,9 @@ export function MailClient({
   }
 
   const activeAccount = accounts.find((account) => account.id === accountId);
+  const readerAccount = accounts.find(
+    (account) => account.id === actionAccountId,
+  );
   const visibleFolders = folders.filter(
     (item) => item.selectable && item.lifecycleStatus === "active",
   );
@@ -792,6 +865,41 @@ export function MailClient({
             <Mail size={16} strokeWidth={2} />
           </span>
           Maildock
+        </div>
+        <div className="global-search-input">
+          <Search size={16} aria-hidden="true" />
+          <input
+            aria-label="Search all mail"
+            placeholder="Search all mail..."
+            maxLength={256}
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setSearchSelection(undefined);
+              if (searchActive || event.target.value.trim()) setDetail(null);
+              setError("");
+              setLoadingDetail(
+                searchActive &&
+                  !event.target.value.trim() &&
+                  Boolean(normalSelectedId),
+              );
+            }}
+          />
+          {searchQuery ? (
+            <button
+              className="icon-button"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchQuery("");
+                setSearchSelection(undefined);
+                if (searchActive) setDetail(null);
+                setError("");
+                setLoadingDetail(searchActive && Boolean(normalSelectedId));
+              }}
+            >
+              <X size={15} />
+            </button>
+          ) : null}
         </div>
         <div className="app-bar-right">
           <span>Personal mail</span>
@@ -810,6 +918,8 @@ export function MailClient({
                 value={accountId}
                 onChange={(event) => {
                   const id = event.target.value;
+                  setSearchQuery("");
+                  setSearchSelection(undefined);
                   setMessages([]);
                   setNextCursor(null);
                   setPaginationError("");
@@ -864,6 +974,8 @@ export function MailClient({
                 className={showDrafts ? "active" : ""}
                 aria-current={showDrafts ? "page" : undefined}
                 onClick={() => {
+                  setSearchQuery("");
+                  setSearchSelection(undefined);
                   setShowDrafts(true);
                   setDraftListGeneration((n) => n + 1);
                 }}
@@ -903,6 +1015,8 @@ export function MailClient({
                       !showDrafts && item.id === mailboxId ? "page" : undefined
                     }
                     onClick={() => {
+                      setSearchQuery("");
+                      setSearchSelection(undefined);
                       setShowDrafts(false);
                       if (item.id === mailboxId) return;
                       setMessages([]);
@@ -958,20 +1072,28 @@ export function MailClient({
       <section className="mail-list-pane" aria-label="Messages">
         <header className="mail-pane-header">
           <div>
-            <h1>{showDrafts ? "Local drafts" : (folder?.name ?? "Mail")}</h1>
+            <h1>
+              {searchActive
+                ? "Search results"
+                : showDrafts
+                  ? "Local drafts"
+                  : (folder?.name ?? "Mail")}
+            </h1>
             <small>
-              {showDrafts
-                ? "Stored in Maildock only"
-                : folder
-                  ? formatCount(folder.synchronizedMessageCount) +
-                    " synchronized messages"
-                  : "Select a mailbox"}
+              {searchActive
+                ? "All accounts · All mailboxes"
+                : showDrafts
+                  ? "Stored in Maildock only"
+                  : folder
+                    ? formatCount(folder.synchronizedMessageCount) +
+                      " synchronized messages"
+                    : "Select a mailbox"}
             </small>
           </div>
           <button
             className="icon-button"
             onClick={() => void refresh()}
-            disabled={showDrafts || refreshing || !mailboxId}
+            disabled={searchActive || showDrafts || refreshing || !mailboxId}
             title="Sync mailbox"
             aria-label="Sync mailbox"
           >
@@ -983,7 +1105,26 @@ export function MailClient({
             {error}
           </p>
         ) : null}
-        {showDrafts ? (
+        {searchActive ? (
+          <GlobalSearchResults
+            key={searchQuery}
+            query={searchQuery}
+            selectedId={selectedId}
+            refreshKey={searchRefresh + folderReloadNonce}
+            onSelect={(item) => {
+              if (
+                searchSelection?.id === item.id &&
+                searchSelection.accountId === item.accountId &&
+                searchSelection.mailboxId === item.mailboxId
+              )
+                return;
+              setSearchSelection(item);
+              setDetail(null);
+              setLoadingDetail(true);
+              setError("");
+            }}
+          />
+        ) : showDrafts ? (
           <DraftList
             disabled={composing}
             refreshKey={draftListGeneration}

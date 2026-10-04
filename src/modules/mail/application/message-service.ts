@@ -474,7 +474,17 @@ export class MessageService {
     const limit = Math.min(Math.max(pageSize, 1), 100);
     const cursorValue = cursor ? decodeCursor(cursor) : undefined;
     const rows = await this.database
-      .select({ message: messages, placement: mailboxMessages })
+      .select({
+        message: {
+          id: messages.id,
+          subject: messages.subject,
+          from: messages.from,
+          internalDate: messages.internalDate,
+          size: messages.size,
+          hasAttachments: messages.hasAttachments,
+        },
+        placement: mailboxMessages,
+      })
       .from(mailboxMessages)
       .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
       .where(

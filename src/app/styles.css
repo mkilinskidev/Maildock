@@ -511,6 +511,45 @@ a {
   color: var(--muted);
   font-size: 12px;
 }
+.global-search-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(480px, 42vw);
+  margin: 0 20px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 10px;
+}
+.app-bar .global-search-input input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 0;
+  outline: none;
+}
+.global-search-input:focus-within {
+  border-color: var(--accent);
+}
+.search-count {
+  padding: 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.search-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 5px 0;
+}
 .mail-sidebar {
   display: flex;
   flex-direction: column;
