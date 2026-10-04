@@ -10,6 +10,8 @@ import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import { MessageList } from "@/components/message-list";
 import { SystemFolders } from "@/components/system-folders";
+import { AccountSignatureSettings } from "@/components/signature-settings";
+import type { SignatureCatalog } from "@/modules/mail/domain/signature";
 import { SentCopySettings } from "@/components/sent-copy-settings";
 
 function count(value: string | null): string {
@@ -53,12 +55,14 @@ export function AccountList({
   rolesByAccount,
   oauthConfigured,
   oauthResult,
+  signatureCatalog,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
   rolesByAccount: Record<string, MailboxRoleView[]>;
   oauthConfigured: boolean;
   oauthResult: { oauth?: string; oauth_error?: string };
+  signatureCatalog?: SignatureCatalog;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<string>();
@@ -266,6 +270,11 @@ export function AccountList({
                 Delete
               </button>
             </div>
+            <AccountSignatureSettings
+              key={JSON.stringify(signatureCatalog)}
+              accountId={account.id}
+              initialCatalog={signatureCatalog}
+            />
             <SentCopySettings
               accountId={account.id}
               initialPolicy={account.sentCopyPolicy ?? "server"}

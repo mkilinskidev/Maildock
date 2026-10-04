@@ -56,9 +56,11 @@ import {
   Link,
   Minus,
   ImagePlus,
+  Signature,
 } from "lucide-react";
 import {
   defineExtension,
+  ElementNode,
   configExtension,
   $createParagraphNode,
   $createTextNode,
@@ -90,8 +92,10 @@ import {
   REDO_COMMAND,
   UNDO_COMMAND,
   type LexicalEditor,
+  type LexicalNode,
   type NodeKey,
   type SerializedLexicalNode,
+  type SerializedElementNode,
   type TextFormatType,
 } from "lexical";
 import DOMPurify from "dompurify";
@@ -103,6 +107,367 @@ import {
   type RichDocument,
 } from "@/modules/mail/domain/rich-document";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
+import {
+  automaticSignature,
+  signatureContent,
+  signatureFingerprint,
+  type SignatureCatalog,
+} from "@/modules/mail/domain/signature";
+import type { RichNode } from "@/modules/mail/domain/rich-document";
+
+type SignatureJson = SerializedElementNode & {
+  signatureId: string;
+  fingerprint: string;
+};
+export class AutomaticSignatureNode extends ElementNode {
+  __signatureId: string;
+  __fingerprint: string;
+  static getType() {
+    return "maildock-signature";
+  }
+  static clone(node: AutomaticSignatureNode) {
+    return new AutomaticSignatureNode(
+      node.__signatureId,
+      node.__fingerprint,
+      node.__key,
+    );
+  }
+  constructor(id: string, fingerprint: string, key?: NodeKey) {
+    super(key);
+    this.__signatureId = id;
+    this.__fingerprint = fingerprint;
+  }
+  static importJSON(value: SignatureJson) {
+    return new AutomaticSignatureNode(
+      value.signatureId,
+      value.fingerprint,
+    ).updateFromJSON(value);
+  }
+  exportJSON(): SignatureJson {
+    return {
+      ...super.exportJSON(),
+      type: "maildock-signature",
+      version: 1,
+      signatureId: this.getLatest().__signatureId,
+      fingerprint: this.getLatest().__fingerprint,
+    };
+  }
+  createDOM() {
+    return document.createElement("div");
+  }
+  updateDOM() {
+    return false;
+  }
+  canBeEmpty() {
+    return true;
+  }
+}
+function $signatureTree(node: LexicalNode): RichNode {
+  const json = node.exportJSON() as RichNode;
+  if ($isElementNode(node))
+    json.children = node.getChildren().map($signatureTree);
+  return json;
+}
+export type ComposeSignatureOptions = {
+  accountId: string;
+  mode: "new" | "reply" | "forward";
+  initialize: boolean;
+  onResources: (resources: (AttachmentView & { kind: "staged" })[]) => void;
+  onReady: (ready: boolean) => void;
+};
+
+function SignatureInsertion({
+  options,
+  draftId,
+  disabled,
+  onError,
+}: {
+  options: ComposeSignatureOptions;
+  draftId: string;
+  disabled: boolean;
+  onError: (message: string) => void;
+}) {
+  const [editor] = useLexicalComposerContext();
+  const [catalog, setCatalog] = useState<SignatureCatalog>();
+  const [catalogAccount, setCatalogAccount] = useState<string>();
+  const [loadError, setLoadError] = useState("");
+  const loadFailed = Boolean(loadError);
+  const [retryLoad, setRetryLoad] = useState(0);
+  const [menu, setMenu] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const previous = useRef<string | undefined>(undefined);
+  const managedEmpty = useRef(false);
+  const selection = useRef<ReturnType<typeof $getSelection>>(null);
+  const sourceBoundary = useRef<NodeKey[]>([]);
+  useEffect(() => {
+    editor.getEditorState().read(() => {
+      sourceBoundary.current =
+        options.mode === "new"
+          ? []
+          : $getRoot()
+              .getChildren()
+              .slice(1)
+              .map((n) => n.getKey());
+    });
+  }, [editor, options.mode]);
+  const latestAccount = useRef(options.accountId);
+  useEffect(() => {
+    latestAccount.current = options.accountId;
+  }, [options.accountId]);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const { accountId, mode, initialize, onResources, onReady } = options;
+  useEffect(() => {
+    let cancelled = false;
+    onReady(false);
+    void fetch("/api/signatures")
+      .then(async (response) => {
+        if (!response.ok)
+          throw Error(
+            "Signatures could not be loaded. Retry before saving or sending.",
+          );
+        const result = (await response.json()) as SignatureCatalog;
+        if (
+          !Array.isArray(result.signatures) ||
+          !result.defaults ||
+          typeof result.defaults !== "object"
+        )
+          throw Error("Invalid signature catalog. Retry loading signatures.");
+        if (!cancelled) {
+          setBusy(true);
+          setLoadError("");
+          setCatalog(result);
+          setCatalogAccount(accountId);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setLoadError(e.message);
+          setBusy(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onError, onReady, accountId, retryLoad]);
+  async function snapshot(id: string) {
+    const response = await fetch(`/api/signatures/${id}/snapshot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId }),
+    });
+    const result = (await response.json()) as {
+      richDocument: RichDocument;
+      attachments: (AttachmentView & { kind: "staged" })[];
+      error?: string;
+    };
+    if (!response.ok)
+      throw Error(result.error ?? "Signature could not be inserted.");
+    return result;
+  }
+  useEffect(() => {
+    if (!catalog || catalogAccount !== accountId) return;
+    let cancelled = false;
+    let failed = false;
+    const first = previous.current === undefined;
+    onReady(false);
+    const id = catalog.defaults[accountId]?.[mode] ?? null;
+    void (async () => {
+      if (previous.current === accountId) return;
+      let current: RichNode | undefined;
+      let key: NodeKey | undefined;
+      editor.getEditorState().read(() => {
+        const candidates = $getRoot()
+          .getChildren()
+          .filter((n) => n instanceof AutomaticSignatureNode);
+        if (candidates.length === 1) {
+          key = candidates[0].getKey();
+          current = validateRichDocument({
+            version: 1,
+            editor: editor.getEditorState().toJSON(),
+          }).editor.root.children!.find((n) => n.type === "maildock-signature");
+        }
+      });
+      const canInsert = first ? initialize : managedEmpty.current;
+      const untouched =
+        current &&
+        (await signatureFingerprint(current)) === current.fingerprint;
+      if ((first && !initialize) || (!untouched && !canInsert)) {
+        previous.current = accountId;
+        return;
+      }
+      const result = id ? await snapshot(id) : null;
+      const node =
+        result && id ? await automaticSignature(id, result.richDocument) : null;
+      if (cancelled) return;
+      editor.update(
+        () => {
+          const existing = key ? $getNodeByKey(key) : null;
+          // Recheck exact content after asynchronous work. User edits always win.
+          if (
+            current &&
+            (!existing ||
+              signatureContent($signatureTree(existing)) !==
+                signatureContent(current))
+          )
+            return;
+          if (
+            !current &&
+            $getRoot()
+              .getChildren()
+              .some((n) => n instanceof AutomaticSignatureNode)
+          )
+            return;
+          if (result) onResources(result.attachments);
+          if (existing) {
+            if (node)
+              existing.replace(
+                $parseSerializedNode(node as SerializedLexicalNode),
+              );
+            else existing.remove();
+          } else if (node) {
+            const root = $getRoot();
+            const parsed = $parseSerializedNode(node as SerializedLexicalNode);
+            const boundary = sourceBoundary.current
+              .map((key) => $getNodeByKey(key))
+              .find((n) => n?.getParent()?.getKey() === root.getKey());
+            if (boundary) boundary.insertBefore(parsed);
+            else root.append(parsed);
+          }
+          managedEmpty.current = !node;
+        },
+        { discrete: true },
+      );
+      previous.current = accountId;
+    })()
+      .catch((e) => {
+        failed = true;
+        if (!cancelled) {
+          setLoadError(e.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          onReady(!failed);
+          setBusy(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // snapshot only uses the stable draft ID; changes to account cancel in-flight work.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    catalog,
+    catalogAccount,
+    accountId,
+    mode,
+    initialize,
+    editor,
+    onResources,
+    onReady,
+  ]);
+  async function insert(id: string) {
+    const capturedAccount = accountId;
+    setBusy(true);
+    onReady(false);
+    setMenu(false);
+    try {
+      const result = await snapshot(id);
+      if (!mounted.current || latestAccount.current !== capturedAccount) return;
+      editor.update(
+        () => {
+          if (selection.current) $setSelection(selection.current);
+          else $getRoot().selectEnd();
+          onResources(result.attachments);
+          $insertNodes(
+            result.richDocument.editor.root.children!.map((n) =>
+              $parseSerializedNode(n as SerializedLexicalNode),
+            ),
+          );
+        },
+        { discrete: true },
+      );
+    } catch (e) {
+      if (mounted.current)
+        onError(e instanceof Error ? e.message : "Signature insertion failed.");
+    } finally {
+      if (mounted.current) {
+        setBusy(false);
+        onReady(true);
+      }
+    }
+  }
+  return (
+    <>
+      {loadError ? (
+        <span className="error" role="alert">
+          {loadError}
+        </span>
+      ) : null}
+      {loadFailed ? (
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={() => {
+            setLoadError("");
+            setBusy(true);
+            setRetryLoad((n) => n + 1);
+          }}
+        >
+          Retry signatures
+        </button>
+      ) : null}
+      <button
+        type="button"
+        aria-label="Insert signature"
+        title="Insert signature"
+        disabled={
+          disabled ||
+          busy ||
+          loadFailed ||
+          !catalog ||
+          catalogAccount !== accountId
+        }
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => {
+          editor.getEditorState().read(() => {
+            selection.current = $getSelection()?.clone() ?? null;
+          });
+          if (catalog?.signatures.length === 1)
+            void insert(catalog.signatures[0].id);
+          else setMenu((v) => !v);
+        }}
+      >
+        <Signature size={16} aria-hidden="true" />
+      </button>
+      {menu ? (
+        <span role="group" aria-label="Choose signature">
+          {catalog?.signatures.length ? (
+            catalog.signatures.map((s) => (
+              <button
+                type="button"
+                key={s.id}
+                disabled={busy || disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void insert(s.id)}
+              >
+                {s.name}
+              </button>
+            ))
+          ) : (
+            <span>No signatures yet. Add one in Settings.</span>
+          )}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 const PreviewContext = createContext({ draftId: "", revision: 0 });
 type ImageJson = SerializedLexicalNode & {
@@ -298,9 +663,13 @@ function editLink(
 function Toolbar({
   disabled,
   onError,
+  signatureOptions,
+  draftId,
 }: {
   disabled: boolean;
   onError: (message: string) => void;
+  signatureOptions?: ComposeSignatureOptions;
+  draftId: string;
 }) {
   const [editor] = useLexicalComposerContext();
   const [undo, setUndo] = useState(false),
@@ -518,6 +887,14 @@ function Toolbar({
       {command("Horizontal rule", () =>
         editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined),
       )}
+      {signatureOptions ? (
+        <SignatureInsertion
+          options={signatureOptions}
+          draftId={draftId}
+          disabled={disabled}
+          onError={onError}
+        />
+      ) : null}
       {command("Image from URL", () => {
         const input = window.prompt(
           "Image URL (HTTP/HTTPS; preview stays blocked)",
@@ -766,6 +1143,7 @@ export function RichComposer({
   disabled,
   draftId,
   revision,
+  signatureOptions,
 }: {
   initialDocument: RichDocument;
   onChange: (doc: RichDocument) => void;
@@ -775,6 +1153,7 @@ export function RichComposer({
   disabled: boolean;
   draftId: string;
   revision: number;
+  signatureOptions?: ComposeSignatureOptions;
 }) {
   const editorRef = useRef<LexicalEditor | null>(null);
   const mounted = useRef(true);
@@ -790,7 +1169,7 @@ export function RichComposer({
     defineExtension({
       name: "MaildockComposeV1",
       namespace: "MaildockComposeV1",
-      nodes: () => [ComposeImageNode],
+      nodes: () => [ComposeImageNode, AutomaticSignatureNode],
       dependencies: [
         RichTextExtension,
         configExtension(HistoryExtension, { delay: 1000 }),
@@ -833,7 +1212,12 @@ export function RichComposer({
   return (
     <PreviewContext.Provider value={{ draftId, revision }}>
       <LexicalExtensionComposer extension={extension} contentEditable={null}>
-        <Toolbar disabled={disabled} onError={onError} />
+        <Toolbar
+          disabled={disabled}
+          onError={onError}
+          signatureOptions={signatureOptions}
+          draftId={draftId}
+        />
         <div
           className="rich-editor-container"
           onDragOver={(e) => {

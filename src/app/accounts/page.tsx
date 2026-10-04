@@ -1,4 +1,5 @@
 import { RemoteContentSettings } from "@/components/remote-content-settings";
+import { SignatureSettings } from "@/components/signature-settings";
 import { RemoteContentSenderService } from "@/modules/mail/application/remote-content-sender-service";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -13,6 +14,7 @@ import {
   accountsService,
   mailboxService,
   mailboxRoleService,
+  signatureService,
 } from "@/modules/accounts/infrastructure/accounts";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +25,7 @@ export default async function AccountsPage({
 }) {
   if (!(await getCurrentSession())) redirect("/login");
   const accounts = await accountsService.list();
+  const signatureCatalog = await signatureService.catalog();
   const entries = await Promise.all(
     accounts.map(
       async (account) =>
@@ -56,7 +59,9 @@ export default async function AccountsPage({
         <RemoteContentSettings
           initialSenders={await new RemoteContentSenderService(db).list()}
         />
+        <SignatureSettings />
         <AccountList
+          signatureCatalog={signatureCatalog}
           accounts={accounts}
           mailboxesByAccount={Object.fromEntries(entries)}
           rolesByAccount={Object.fromEntries(roleEntries)}

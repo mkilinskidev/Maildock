@@ -51,6 +51,7 @@ const accounts = [
   },
 ] as MailAccountView[];
 function savedDraftResponse(url: unknown, init?: RequestInit) {
+  if (String(url) === "/api/signatures") return Response.json({signatures: [], defaults: {}});
   if (String(url).startsWith("/api/drafts") && !String(url).endsWith("/send")) {
     const body = JSON.parse(init?.body as string);
     return Response.json({
@@ -89,6 +90,12 @@ describe("compose UI", () => {
         configurable: true,
         value: () => [],
       });
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", (url: RequestInfo | URL, init?: RequestInit) =>
+      String(url) === "/api/signatures"
+        ? Promise.resolve(Response.json({ signatures: [], defaults: {} }))
+        : originalFetch(url, init),
+    );
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     host = document.createElement("div");
     document.body.append(host);

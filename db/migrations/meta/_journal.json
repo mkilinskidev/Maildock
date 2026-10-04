@@ -148,6 +148,13 @@
       "when": 1791114247555,
       "tag": "0020_mighty_slayback",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791120191636,
+      "tag": "0021_graceful_wallop",
+      "breakpoints": true
     }
   ]
 }

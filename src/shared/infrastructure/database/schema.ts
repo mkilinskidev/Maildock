@@ -1073,3 +1073,42 @@ export const remoteContentSenders = pgTable("remote_content_senders", {
     .defaultNow()
     .notNull(),
 });
+
+export const signatures = pgTable("signatures", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  richDocument: jsonb("rich_document").$type<RichDocument>().notNull(),
+  revision: integer("revision").default(1).notNull(),
+});
+export const signatureResources = pgTable(
+  "signature_resources",
+  {
+    signatureId: uuid("signature_id")
+      .notNull()
+      .references(() => signatures.id, { onDelete: "cascade" }),
+    id: uuid("id").notNull(),
+    blobId: uuid("blob_id")
+      .notNull()
+      .references(() => blobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.signatureId, t.id] }),
+    index("signature_resources_blob_idx").on(t.blobId),
+  ],
+);
+export const accountSignatureDefaults = pgTable("account_signature_defaults", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => mailAccounts.id, { onDelete: "cascade" }),
+  new: uuid("new_signature_id").references(() => signatures.id, {
+    onDelete: "set null",
+  }),
+  reply: uuid("reply_signature_id").references(() => signatures.id, {
+    onDelete: "set null",
+  }),
+  forward: uuid("forward_signature_id").references(() => signatures.id, {
+    onDelete: "set null",
+  }),
+});

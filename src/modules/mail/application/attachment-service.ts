@@ -15,6 +15,7 @@ import {
   messages,
   messageAttachments,
   stagedAttachments,
+  signatureResources,
 } from "../../../shared/infrastructure/database/schema";
 import {
   BlobLimitError,
@@ -239,6 +240,16 @@ export class AttachmentService {
     };
   }
   async composeResource(draftId: string, attachmentId: string) {
+    const [signature] = await this.db
+      .select({ a: signatureResources, blob: blobs })
+      .from(signatureResources)
+      .innerJoin(blobs, eq(blobs.id, signatureResources.blobId))
+      .where(
+        and(
+          eq(signatureResources.signatureId, draftId),
+          eq(signatureResources.id, attachmentId),
+        ),
+      );
     const [saved] = await this.db
       .select({ a: draftAttachments, blob: blobs })
       .from(draftAttachments)
@@ -263,7 +274,7 @@ export class AttachmentService {
               eq(stagedAttachments.status, "ready"),
             ),
           );
-    const row = saved ?? staged;
+    const row = saved ?? signature ?? staged;
     if (!row || (staged && staged.a.expiresAt <= new Date()))
       throw new AttachmentUnavailableError("Inline resource is unavailable.");
     const bytes = await readVerifiedBlob(

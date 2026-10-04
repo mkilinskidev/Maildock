@@ -1452,14 +1452,14 @@ label.checkbox input {
   background: var(--accent);
   color: white;
 }
-.composer-fields .rich-toolbar label {
+.rich-toolbar label {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 12px;
   height: 32px;
 }
-.composer-fields .rich-toolbar select {
+.rich-toolbar select {
   width: auto;
   height: 32px;
   min-height: 32px;
@@ -1484,7 +1484,7 @@ label.checkbox input {
 .rich-table-scroll {
   overflow-x: auto;
 }
-.composer-fields .rich-toolbar input[type="color"] {
+.rich-toolbar input[type="color"] {
   display: block;
   width: 28px;
   height: 32px;
@@ -1510,6 +1510,103 @@ label.checkbox input {
 }
 .rich-editor:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.signature-settings {
+  margin-bottom: 20px;
+}
+.signature-section-header,
+.signature-row,
+.signature-row-actions,
+.signature-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.signature-section-header,
+.signature-row {
+  justify-content: space-between;
+}
+.signature-section-header {
+  margin-bottom: 16px;
+}
+.signature-list {
+  display: grid;
+  gap: 8px;
+}
+.signature-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--elevated);
+}
+.signature-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.signature-row-actions {
+  flex-shrink: 0;
+}
+.signature-row-actions .button {
+  min-height: 32px;
+  font-size: 12px;
+}
+.signature-row-actions .signature-delete {
+  color: var(--error);
+}
+.signature-editor {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+.signature-editor-frame {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.signature-editor-frame .rich-toolbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  background: var(--elevated);
+}
+.signature-editor-frame .rich-toolbar > * {
+  flex-shrink: 0;
+}
+.signature-editor-frame .rich-editor-container {
+  min-height: 160px;
+  max-height: 360px;
+}
+.signature-editor-frame .rich-editor {
+  min-height: 160px;
+  padding: 16px;
+}
+.signature-editor-actions {
+  justify-content: flex-end;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--elevated);
+}
+.account-signature-settings {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.account-signature-settings h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.account-signature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .account-signature-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .rich-paragraph {
   margin: 0 0 8px;

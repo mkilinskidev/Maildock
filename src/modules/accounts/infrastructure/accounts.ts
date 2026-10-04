@@ -1,4 +1,5 @@
 import { DraftService } from "@/modules/mail/application/draft-service";
+import { SignatureService } from "@/modules/mail/application/signature-service";
 import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
 import { AttachmentService } from "@/modules/mail/application/attachment-service";
 import { PgBossAttachmentScheduler } from "@/modules/mail/infrastructure/attachment-jobs";
@@ -87,3 +88,4 @@ export const composePreparationService = new ComposePreparationService(
 );
 
 export const draftService = new DraftService(db);
+export const signatureService = new SignatureService(db, attachmentService);

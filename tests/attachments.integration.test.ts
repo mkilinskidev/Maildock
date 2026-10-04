@@ -6,6 +6,8 @@ import {
 } from "@/modules/mail/infrastructure/sanitize-email-html";
 import { JSDOM } from "jsdom";
 import { DraftService } from "@/modules/mail/application/draft-service";
+import { SignatureService } from "@/modules/mail/application/signature-service";
+import { automaticSignature } from "@/modules/mail/domain/signature";
 import { DraftConflictError } from "@/modules/mail/domain/draft";
 import {
   plainTextDocument,
@@ -69,6 +71,8 @@ import {
   stagedAttachments,
   outgoingMessages,
   outgoingMessageAttachments,
+  signatures,
+  signatureResources,
 } from "@/shared/infrastructure/database/schema";
 
 const limits = DEFAULT_ATTACHMENT_LIMITS;
@@ -190,6 +194,7 @@ describe("durable attachment and MIME lifecycle", () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
   beforeEach(async () => {
+    await database.db.delete(signatures);
     await database.db.delete(remoteContentSenders);
     await database.db.delete(drafts);
     await database.db.delete(outgoingMessageAttachments);
@@ -1127,6 +1132,216 @@ describe("durable attachment and MIME lifecycle", () => {
     attachments: [],
   });
   const draftService = () => new DraftService(database.db);
+  it("signature CRUD, account defaults, image snapshots and real MIME reuse the rich draft pipeline", async () => {
+    const service = new SignatureService(database.db, attachments);
+    const id = randomUUID();
+    const image = await attachments.upload(
+      Readable.from([png]),
+      "signature.png",
+      "image/png",
+      id,
+      true,
+    );
+    const template = plainTextDocument("NMI signature");
+    template.editor.root.children![0].children!.push({
+      type: "maildock-image",
+      version: 1,
+      resourceId: image.id,
+      alt: "NMI logo",
+      width: 160,
+    });
+    const created = await service.save(id, {
+      name: "NMI",
+      richDocument: template,
+    });
+    expect((await service.get(id)).name).toBe("NMI");
+    await service.setDefaults(accountId, { new: id, reply: id, forward: id });
+    expect((await service.catalog()).defaults[accountId]).toEqual({
+      new: id,
+      reply: id,
+      forward: id,
+    });
+    await expect(
+      service.setDefaults(randomUUID(), {
+        new: id,
+        reply: null,
+        forward: null,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      service.setDefaults(accountId, {
+        new: randomUUID(),
+        reply: null,
+        forward: null,
+      }),
+    ).rejects.toThrow();
+    const blobCount = (await database.db.select().from(blobs)).length;
+    const draftId = randomUUID();
+    const snapshot = await service.snapshot(id, draftId);
+    const otherDraftId = randomUUID();
+    const another = await service.snapshot(id, otherDraftId);
+    expect(snapshot.attachments[0].id).not.toBe(image.id);
+    expect(another.attachments[0].id).not.toBe(snapshot.attachments[0].id);
+    expect((await database.db.select().from(blobs)).length).toBe(blobCount);
+    await expect(
+      draftService().create({
+        ...draftInput(),
+        richDocument: snapshot.richDocument,
+        attachments: snapshot.attachments.map(({ id, kind, inline }) => ({
+          id,
+          kind,
+          inline,
+        })),
+      }),
+    ).rejects.toThrow();
+    const document = plainTextDocument("Editable content");
+    document.editor.root.children!.push(
+      await automaticSignature(id, snapshot.richDocument),
+    );
+    const row = await draftService().create({
+      ...draftInput(),
+      id: draftId,
+      richDocument: document,
+      attachments: snapshot.attachments.map(({ id, kind, inline }) => ({
+        id,
+        kind,
+        inline,
+      })),
+    });
+    const changed = await service.save(
+      id,
+      { name: "Renamed", richDocument: plainTextDocument("Changed template") },
+      created.revision,
+    );
+    await expect(
+      service.save(
+        id,
+        { name: "stale", richDocument: template },
+        created.revision,
+      ),
+    ).rejects.toThrow();
+    await expect(service.delete(id, created.revision)).rejects.toThrow();
+    await service.delete(id, changed.revision);
+    expect((await service.catalog()).signatures).toEqual([]);
+    expect((await service.catalog()).defaults[accountId]).toEqual({
+      new: null,
+      reply: null,
+      forward: null,
+    });
+    expect(await database.db.select().from(signatureResources)).toEqual([]);
+    const savedAfterDeletion = await draftService().create({
+      ...draftInput(),
+      id: otherDraftId,
+      richDocument: another.richDocument,
+      attachments: another.attachments.map(({ id, kind, inline }) => ({
+        id,
+        kind,
+        inline,
+      })),
+    });
+    expect(savedAfterDeletion.plainText).toContain("NMI signature");
+    expect(
+      (
+        await attachments.composeResource(
+          otherDraftId,
+          another.attachments[0].id,
+        )
+      ).bytes,
+    ).toEqual(png);
+    const reopened = await draftService().get(draftId);
+    expect(reopened.richDocument).toEqual(row.richDocument);
+    expect(reopened.plainText).toContain("NMI signature");
+    expect(reopened.plainText).not.toContain("Changed template");
+    expect(
+      (await attachments.composeResource(draftId, snapshot.attachments[0].id))
+        .bytes,
+    ).toEqual(png);
+    await expect(
+      attachments.composeResource(randomUUID(), snapshot.attachments[0].id),
+    ).rejects.toThrow();
+    const sent = await outgoing.create(undefined, {
+      id: draftId,
+      expectedRevision: reopened.revision,
+    });
+    const [message] = await database.db
+      .select()
+      .from(outgoingMessages)
+      .where(eq(outgoingMessages.id, sent.id));
+    const mime = await loadOutgoingMime(
+      database.db,
+      storage,
+      message,
+      limits.maxOutgoingMimeBytes,
+    );
+    const parsed = await simpleParser(mime, { skipImageLinks: true });
+    expect(parsed.text).toContain("NMI signature");
+    expect(parsed.html).toContain("NMI signature");
+    expect(parsed.html).not.toContain("maildock-signature");
+    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.attachments[0].content).toEqual(png);
+    expect(parsed.attachments[0].contentDisposition).toBe("inline");
+    expect(parsed.html).toContain(
+      `cid:${parsed.attachments[0].contentId!.replace(/^<|>$/g, "")}`,
+    );
+  });
+  it("signature resources reject foreign bindings, arbitrary resources, unsafe documents and replay", async () => {
+    const service = new SignatureService(database.db, attachments);
+    const id = randomUUID(),
+      other = randomUUID();
+    const image = await attachments.upload(
+      Readable.from([png]),
+      "logo.png",
+      "image/png",
+      id,
+      true,
+    );
+    const document = plainTextDocument("Signature");
+    document.editor.root.children![0].children!.push({
+      type: "maildock-image",
+      version: 1,
+      resourceId: image.id,
+      alt: "Logo",
+      width: 480,
+    });
+    await expect(
+      service.save(other, { name: "Foreign", richDocument: document }),
+    ).rejects.toThrow();
+    const created = await service.save(id, {
+      name: "Owner",
+      richDocument: document,
+    });
+    await expect(
+      service.save(other, { name: "Replay", richDocument: document }),
+    ).rejects.toThrow();
+    await expect(
+      attachments.composeResource(other, image.id),
+    ).rejects.toThrow();
+    const arbitrary = structuredClone(document);
+    arbitrary.editor.root.children![0].children![1].resourceId = randomUUID();
+    await expect(
+      service.save(
+        id,
+        { name: "Arbitrary", richDocument: arbitrary },
+        created.revision,
+      ),
+    ).rejects.toThrow();
+    const unsafe = structuredClone(document);
+    unsafe.editor.root.children![0].children![1] = {
+      type: "maildock-image",
+      version: 1,
+      url: "data:image/png;base64,AAAA",
+      alt: "bad",
+      width: 480,
+    };
+    await expect(
+      service.save(
+        id,
+        { name: "Unsafe", richDocument: unsafe },
+        created.revision,
+      ),
+    ).rejects.toThrow();
+    expect((await service.get(id)).richDocument).toEqual(created.richDocument);
+  });
   it("forward migration preserves active legacy line breaks and leaves consumed drafts alone", async () => {
     const migration = await readFile(
       "db/migrations/0020_mighty_slayback.sql",
@@ -1387,14 +1602,12 @@ describe("durable attachment and MIME lifecycle", () => {
       await database.db
         .insert(mailAccounts)
         .values({ ...owner, id: otherAccountId, email: "other@example.com" });
-      await database.db
-        .insert(messages)
-        .values({
-          id: otherMessageId,
-          accountId: otherAccountId,
-          internalDate: new Date(),
-          size: 100n,
-        });
+      await database.db.insert(messages).values({
+        id: otherMessageId,
+        accountId: otherAccountId,
+        internalDate: new Date(),
+        size: 100n,
+      });
       const foreign = await attachments.upload(
         Readable.from([png]),
         "foreign.png",
@@ -1404,21 +1617,19 @@ describe("durable attachment and MIME lifecycle", () => {
         .select()
         .from(stagedAttachments)
         .where(eq(stagedAttachments.id, foreign.id));
-      await database.db
-        .insert(messageAttachments)
-        .values({
-          id: otherAttachmentId,
-          messageId: otherMessageId,
-          sourceUidValidity: 7n,
-          sourceUid: 42n,
-          partId: "3",
-          contentType: "image/png",
-          contentId: "<foreign>",
-          inline: true,
-          visible: false,
-          blobId: foreignStage.blobId,
-          status: "ready",
-        });
+      await database.db.insert(messageAttachments).values({
+        id: otherAttachmentId,
+        messageId: otherMessageId,
+        sourceUidValidity: 7n,
+        sourceUid: 42n,
+        partId: "3",
+        contentType: "image/png",
+        contentId: "<foreign>",
+        inline: true,
+        visible: false,
+        blobId: foreignStage.blobId,
+        status: "ready",
+      });
       await richHtml(
         '<h2>Title</h2><p><b>Rich</b> <a href="https://example.com/">link</a></p><table><tr><td>Table</td></tr></table><img src="cid:logo"><img src="cid:foreign"><img src="https://tracker.invalid/pixel">',
       );

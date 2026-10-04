@@ -41,6 +41,8 @@ export type RichNode = {
   verticalAlign?: string;
   height?: number;
   colWidths?: number[];
+  signatureId?: string;
+  fingerprint?: string;
 };
 export type RichDocument = { version: 1; editor: { root: RichNode } };
 export function safeRichUrl(value: string, image = false): string | null {
@@ -113,6 +115,14 @@ const node: z.ZodType<RichNode> = z.lazy(() =>
       })
       .strict(),
     z.object({ ...element, type: z.literal("quote") }).strict(),
+    z
+      .object({
+        ...element,
+        type: z.literal("maildock-signature"),
+        signatureId: z.uuid(),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
     z
       .object({
         ...element,
@@ -250,6 +260,13 @@ export function validateRichDocument(input: unknown): RichDocument {
       throw new SyntaxError("Rich document exceeds structural limits.");
     if ((n.type === "root") !== (parent === undefined))
       throw new SyntaxError("Invalid rich document root.");
+    if (n.type === "maildock-signature" && parent !== "root")
+      throw new SyntaxError("Automatic signatures must be root blocks.");
+    if (
+      parent === "maildock-signature" &&
+      ["text", "linebreak", "link", "maildock-image"].includes(n.type)
+    )
+      throw new SyntaxError("Invalid signature block.");
     if (
       parent === "root" &&
       [
@@ -406,6 +423,7 @@ export function serializeRichDocument(
         paragraph: "p",
         heading: n.tag,
         quote: "blockquote",
+        "maildock-signature": "div",
         list: n.tag,
         listitem: "li",
         link: "a",
@@ -445,7 +463,11 @@ export function serializeRichDocument(
     if (n.type === "tablerow") return children.map(text).join("\t");
     const body = children
       .map(text)
-      .join(["quote", "tablecell"].includes(n.type) ? "\n" : "");
+      .join(
+        ["quote", "tablecell", "maildock-signature"].includes(n.type)
+          ? "\n"
+          : "",
+      );
     if (n.type === "quote")
       return body
         .split("\n")

@@ -9,11 +9,13 @@ import { sanitizeEmailHtml } from "../../src/modules/mail/infrastructure/sanitiz
 import { importRichDom } from "../../src/modules/mail/domain/rich-import";
 import {
   richElement,
+  plainTextDocument,
   serializeRichDocument,
   validateRichDocument,
   type RichDocument,
 } from "../../src/modules/mail/domain/rich-document";
 import { png } from "./fixtures";
+import type { SignatureCatalog } from "../../src/modules/mail/domain/signature";
 
 /** Mount the actual MailComposer in a local harness; no mocked editor or reader iframe. */
 export async function verifyComposeBrowser(
@@ -22,6 +24,10 @@ export async function verifyComposeBrowser(
 ) {
   const accountId = "00000000-0000-4000-8000-000000000001",
     draftId = "00000000-0000-4000-8000-000000000002";
+  const otherAccountId = "00000000-0000-4000-8000-000000000003",
+    signatureId = "00000000-0000-4000-8000-000000000004",
+    otherSignatureId = "00000000-0000-4000-8000-000000000005";
+  let signatureCatalog: SignatureCatalog = { signatures: [], defaults: {} };
   const clean = sanitizeEmailHtml(
     `<p><b>Original formatting</b></p><img src="${trapOrigin}/compose-tracker" srcset="${trapOrigin}/compose-srcset 2x"><div style="background:url(${trapOrigin}/compose-bg)">Quoted</div><style>@import '${trapOrigin}/compose-import';@font-face{font-family:x;src:url(${trapOrigin}/compose-font)}</style><iframe src="${trapOrigin}/compose-frame"></iframe><link rel="preload" href="${trapOrigin}/compose-hint">`,
   );
@@ -51,9 +57,9 @@ export async function verifyComposeBrowser(
   const bundle = await build({
     stdin: {
       contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {MailComposer} from './src/components/mail-composer';
-    const accounts=[{id:${JSON.stringify(accountId)},displayName:'Owner',email:'owner@example.com',enabled:true,smtp:{host:'smtp.example.com'}}];
+    const accounts=[{id:${JSON.stringify(accountId)},displayName:'Owner',email:'owner@example.com',enabled:true,smtp:{host:'smtp.example.com'}}, {id:${JSON.stringify(otherAccountId)},displayName:'Private',email:'private@example.com',enabled:true,smtp:{host:'smtp.example.com'}}];
     const root=createRoot(document.getElementById('app'));
-    window.renderCompose=(draft)=>root.render(<MailComposer key={window.mountCount=(window.mountCount||0)+1} accounts={accounts} accountId={accounts[0].id} draft={draft} onQueued={()=>{}} onClose={()=>{}}/>);
+    window.renderCompose=(draft,prefill)=>root.render(<MailComposer key={window.mountCount=(window.mountCount||0)+1} accounts={accounts} accountId={accounts[0].id} draft={draft} prefill={prefill} onQueued={()=>{}} onClose={()=>{}}/>);
     window.renderCompose(window.initialDraft);`,
       resolveDir: process.cwd(),
       sourcefile: "compose-security.tsx",
@@ -117,10 +123,62 @@ export async function verifyComposeBrowser(
       res.end("{}");
       return;
     }
+    if (req.url === "/api/signatures") {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(signatureCatalog));
+      return;
+    }
     if (req.url?.startsWith("/api/")) {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       res.setHeader("Content-Type", "application/json");
+      if (
+        req.url?.startsWith("/api/signatures/") &&
+        req.url.endsWith("/snapshot")
+      ) {
+        const richDocument = plainTextDocument(
+          req.url.includes(otherSignatureId)
+            ? "Private signature"
+            : "NMI signature",
+        );
+        const id = `00000000-0000-4000-8000-${String(resourceCount++).padStart(12, "0")}`;
+        resources.set(id, png);
+        richDocument.editor.root.children![0].children!.push(
+          {
+            type: "maildock-image",
+            version: 1,
+            resourceId: id,
+            alt: "Signature logo",
+            width: 160,
+          },
+          {
+            type: "maildock-image",
+            version: 1,
+            url: `${trapOrigin}/signature-tracker`,
+            alt: "Signature remote",
+            width: 160,
+          },
+        );
+        res.end(
+          JSON.stringify({
+            richDocument,
+            attachments: [
+              {
+                id,
+                kind: "staged",
+                inline: true,
+                visible: false,
+                filename: "signature.png",
+                type: "image/png",
+                size: String(png.length),
+                status: "ready",
+                error: null,
+              },
+            ],
+          }),
+        );
+        return;
+      }
       if (req.url === "/api/attachments/staged") {
         const filename = decodeURIComponent(
           String(req.headers["x-attachment-filename"]),
@@ -435,6 +493,153 @@ export async function verifyComposeBrowser(
       (saved.attachments as unknown[]).length,
       associations.length - 1,
     );
+    signatureCatalog = {
+      signatures: [
+        { id: signatureId, name: "NMI" },
+        { id: otherSignatureId, name: "Private" },
+      ],
+      defaults: {
+        [accountId]: {
+          new: signatureId,
+          reply: signatureId,
+          forward: signatureId,
+        },
+        [otherAccountId]: {
+          new: otherSignatureId,
+          reply: otherSignatureId,
+          forward: otherSignatureId,
+        },
+      },
+    };
+    await page.evaluate(() =>
+      (window as unknown as { renderCompose: () => void }).renderCompose(),
+    );
+    await waitSaved(() => String(saved.plainText).includes("NMI signature"));
+    assert.deepEqual(
+      (saved.richDocument as RichDocument).editor.root.children!.map(
+        (n) => n.type,
+      ),
+      ["paragraph", "maildock-signature"],
+    );
+    assert.equal(await page.locator(".compose-image img").count(), 1);
+    assert(
+      (await body.textContent())!.includes(
+        "Remote image (preview blocked): Signature remote",
+      ),
+    );
+    await page.getByLabel("From", { exact: true }).selectOption(otherAccountId);
+    await waitSaved(() =>
+      String(saved.plainText).includes("Private signature"),
+    );
+    assert(!String(saved.plainText).includes("NMI signature"));
+    await page.getByLabel("From", { exact: true }).selectOption(accountId);
+    await waitSaved(() => String(saved.plainText).includes("NMI signature"));
+    await body.getByText("NMI signature", { exact: true }).click();
+    await page.keyboard.press("Home");
+    await page.keyboard.insertText("Edited ");
+    await waitSaved(() =>
+      String(saved.plainText).includes("Edited NMI signature"),
+    );
+    await page.getByLabel("From", { exact: true }).selectOption(otherAccountId);
+    await waitSaved(() => saved.accountId === otherAccountId);
+    assert(String(saved.plainText).includes("Edited NMI signature"));
+    assert(!String(saved.plainText).includes("Private signature"));
+    await body.locator("p").first().click();
+    await page
+      .getByRole("button", { name: "Insert signature", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Private", exact: true }).click();
+    await waitSaved(() =>
+      String(saved.plainText).includes("Private signature"),
+    );
+    assert.equal(
+      (saved.richDocument as RichDocument).editor.root.children!.filter(
+        (n) => n.type === "maildock-signature",
+      ).length,
+      1,
+    );
+    await page.getByLabel("From", { exact: true }).selectOption(accountId);
+    await waitSaved(() => saved.accountId === accountId);
+    assert(String(saved.plainText).includes("Private signature"));
+    assert(String(saved.plainText).includes("Edited NMI signature"));
+    const signatureDraft = saved;
+    signatureCatalog.signatures = [];
+    signatureCatalog.defaults = {};
+    await page.reload();
+    await body.waitFor();
+    await page.waitForTimeout(1200);
+    assert.deepEqual(saved.richDocument, signatureDraft.richDocument);
+    assert.equal(await page.locator(".compose-image img").count(), 2);
+    // A deleted template never participates in reopening its durable copies.
+    await page
+      .getByRole("button", { name: "Insert signature", exact: true })
+      .click();
+    assert(
+      (await page
+        .getByRole("group", { name: "Choose signature" })
+        .textContent())!.includes("No signatures yet"),
+    );
+    signatureCatalog = {
+      signatures: [{ id: signatureId, name: "NMI" }],
+      defaults: {
+        [accountId]: {
+          new: signatureId,
+          reply: signatureId,
+          forward: signatureId,
+        },
+      },
+    };
+    for (const mode of ["reply", "reply_all", "forward"] as const) {
+      const doc: RichDocument = {
+        version: 1,
+        editor: {
+          root: richElement("root", [
+            richElement("paragraph", []),
+            ...plainTextDocument("Original header").editor.root.children!,
+            richElement(
+              "quote",
+              plainTextDocument("Original body").editor.root.children!,
+            ),
+          ]),
+        },
+      };
+      await page.evaluate(
+        ({ mode, doc, accountId, draftId, otherAccountId }) => {
+          (
+            window as unknown as {
+              renderCompose: (draft: undefined, prefill: unknown) => void;
+            }
+          ).renderCompose(undefined, {
+            accountId,
+            to: "to@example.com",
+            cc: "",
+            subject: mode,
+            plainText: "",
+            richDocument: doc,
+            source: {
+              mode,
+              accountId,
+              mailboxId: draftId,
+              messageId: otherAccountId,
+            },
+            attachments: [],
+            attachmentsOmitted: false,
+          });
+        },
+        { mode, doc, accountId, draftId, otherAccountId },
+      );
+      await waitSaved(
+        () =>
+          (saved.source as { mode?: string })?.mode === mode &&
+          String(saved.plainText).includes("NMI signature"),
+      );
+      assert.deepEqual(
+        (saved.richDocument as RichDocument).editor.root.children!.map(
+          (n) => n.type,
+        ),
+        ["paragraph", "maildock-signature", "paragraph", "quote"],
+      );
+    }
     assert.deepEqual(requests, []);
     assert.deepEqual(errors, []);
     await mkdir(".security-results", { recursive: true });
@@ -460,6 +665,12 @@ export async function verifyComposeBrowser(
         "remote image URL without preview",
         "inline image removal",
         "failed image upload",
+        "signature New/Reply/Reply All/Forward placement",
+        "signature CID and blocked remote preview",
+        "automatic signature account replacement",
+        "edited/manual signature preservation",
+        "signature draft reopen after template deletion",
+        "signature selector and empty indication",
       ],
     };
   } finally {

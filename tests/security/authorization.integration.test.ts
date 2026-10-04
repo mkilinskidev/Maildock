@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { SignatureService } from "../../src/modules/mail/application/signature-service";
+import { plainTextDocument } from "../../src/modules/mail/domain/rich-document";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -42,6 +44,7 @@ import {
   messageAttachments,
   blobs,
   remoteContentSenders,
+  signatures,
 } from "../../src/shared/infrastructure/database/schema";
 import type { RemoteMimePart } from "../../src/modules/accounts/domain/mail-provider";
 import { hostileMime, png, type MimeResource } from "./fixtures";
@@ -52,6 +55,7 @@ const runtime = vi.hoisted(() => ({
   db: undefined as unknown,
   content: undefined as unknown,
   attachments: undefined as unknown,
+  signatures: undefined as unknown,
   guard: undefined as unknown,
 }));
 vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
@@ -65,6 +69,9 @@ vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
   },
   get attachmentService() {
     return runtime.attachments;
+  },
+  get signatureService() {
+    return runtime.signatures;
   },
 }));
 vi.mock("@/modules/auth/application/api-access", () => ({
@@ -80,6 +87,17 @@ import {
   DELETE,
 } from "../../src/app/api/settings/remote-content-senders/route";
 import { GET as download } from "../../src/app/api/attachments/[attachmentId]/download/route";
+import {
+  GET as signatureList,
+  POST as signatureCreate,
+} from "../../src/app/api/signatures/route";
+import {
+  GET as signatureRead,
+  PATCH as signatureUpdate,
+  DELETE as signatureDelete,
+} from "../../src/app/api/signatures/[id]/route";
+import { POST as signatureSnapshot } from "../../src/app/api/signatures/[id]/snapshot/route";
+import { PUT as signatureDefaults } from "../../src/app/api/accounts/[id]/signatures/route";
 
 describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", () => {
   let container: StartedTestContainer;
@@ -141,6 +159,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     runtime.db = database.db;
     runtime.content = content;
     runtime.attachments = attachments;
+    runtime.signatures = new SignatureService(database.db, attachments);
     runtime.guard = (r: Request, mutation: boolean) =>
       checkOwnerApiAccess(auth, config, r, mutation);
   });
@@ -150,6 +169,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     if (root) await rm(root, { recursive: true, force: true });
   });
   beforeEach(async () => {
+    await database.db.delete(signatures);
     await database.db.delete(remoteContentSenders);
     await database.db.delete(mailAccounts);
     await database.db.delete(blobs);
@@ -281,6 +301,87 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       .where(eq(messageAttachments.id, part.id));
     return blobId;
   }
+  it("protects all signature APIs with real owner auth and mutation Origin checks", async () => {
+    const id = randomUUID(),
+      draftId = randomUUID();
+    const context = { params: Promise.resolve({ id }) };
+    const body = JSON.stringify({
+      id,
+      name: "NMI",
+      richDocument: plainTextDocument("Owner signature"),
+    });
+    expect((await signatureList(req("GET", "", false))).status).toBe(401);
+    expect((await signatureRead(req("GET", "", false), context)).status).toBe(
+      401,
+    );
+    for (const auth of [false, true]) {
+      const originValue = auth ? "http://evil.test" : origin;
+      expect([401, 403]).toContain(
+        (await signatureCreate(req("POST", body, auth, originValue))).status,
+      );
+      expect([401, 403]).toContain(
+        (await signatureUpdate(req("PATCH", "{}", auth, originValue), context))
+          .status,
+      );
+      expect([401, 403]).toContain(
+        (await signatureDelete(req("DELETE", "{}", auth, originValue), context))
+          .status,
+      );
+      expect([401, 403]).toContain(
+        (
+          await signatureSnapshot(
+            req("POST", JSON.stringify({ draftId }), auth, originValue),
+            context,
+          )
+        ).status,
+      );
+      expect([401, 403]).toContain(
+        (await signatureDefaults(req("PUT", "{}", auth, originValue), context))
+          .status,
+      );
+    }
+    expect(await database.db.select().from(signatures)).toEqual([]);
+    const created = await signatureCreate(req("POST", body));
+    expect(created.status).toBe(201);
+    const definition = await (await signatureRead(req("GET"), context)).json();
+    expect(definition.name).toBe("NMI");
+    expect(
+      (
+        await signatureSnapshot(
+          req("POST", JSON.stringify({ draftId })),
+          context,
+        )
+      ).status,
+    ).toBe(200);
+    const malicious = JSON.stringify({
+      id: randomUUID(),
+      name: "Unsafe",
+      richDocument: {
+        version: 1,
+        editor: { root: { type: "script", version: 1, text: "x" } },
+      },
+    });
+    expect((await signatureCreate(req("POST", malicious))).status).toBe(400);
+    expect(
+      (
+        await signatureSnapshot(
+          req("POST", JSON.stringify({ draftId, blobId: randomUUID() })),
+          context,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await signatureDelete(
+          req(
+            "DELETE",
+            JSON.stringify({ expectedRevision: definition.revision }),
+          ),
+          context,
+        )
+      ).status,
+    ).toBe(204);
+  });
   it("rejects missing/forged sessions and absent/null/foreign Origin before CID preparation or sender trust", async () => {
     const s = await seed('<img src="cid:logo">', [
       { cid: "<logo>", type: "image/png", bytes: png },

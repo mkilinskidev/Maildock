@@ -7,6 +7,7 @@ import { Send, X, Paperclip } from "lucide-react";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
 import { attachmentSize } from "./attachment-list";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
+import { uploadComposeFile } from "./compose-upload";
 import { RichComposer } from "./rich-composer";
 import {
   plainTextDocument,
@@ -86,6 +87,7 @@ export function MailComposer({
     new Map([...referenced].map((id) => [id, `${id}@maildock.invalid`])),
   ).plainText;
   const [editorValid, setEditorValid] = useState(true);
+  const [signatureReady, setSignatureReady] = useState(false);
   const editorValidRef = useRef(true);
   editorValidRef.current = editorValid;
   const [submitting, setSubmitting] = useState(false);
@@ -99,6 +101,11 @@ export function MailComposer({
       (prefill?.attachments ?? []).map((a) => ({ ...a, kind: "incoming" })),
   );
   const source = draft?.source ?? prefill?.source;
+  const addSignatureResources = useCallback(
+    (resources: (AttachmentView & { kind: "staged" })[]) =>
+      setAttachments((current) => [...current, ...resources]),
+    [],
+  );
   const draftId = useRef(draft?.id ?? crypto.randomUUID());
   const revision = useRef(draft?.revision ?? 0);
   const [saveState, setSaveState] = useState(draft?.revision ? "Saved" : "");
@@ -188,6 +195,10 @@ export function MailComposer({
     }
   }
   async function save() {
+    if (!signatureReady)
+      throw Error(
+        "Wait for signatures to finish loading before saving or sending.",
+      );
     if (!editorValidRef.current)
       throw Error("Undo unsupported formatting before saving or sending.");
     if (saving.current) return saving.current;
@@ -277,7 +288,7 @@ export function MailComposer({
       void saveRef.current().catch(() => undefined);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [snapshot]);
+  }, [snapshot, signatureReady]);
   useEffect(() => {
     const flush = () => {
       backupRef.current();
@@ -393,21 +404,7 @@ export function MailComposer({
         },
       ]);
       try {
-        const response = await fetch("/api/attachments/staged", {
-          method: "POST",
-          headers: {
-            "Content-Type": file.type || "application/octet-stream",
-            "X-Attachment-Filename": encodeURIComponent(file.name),
-            "X-Draft-Id": draftId.current,
-            "X-Attachment-Disposition": inline ? "inline" : "attachment",
-          },
-          body: file,
-        });
-        const result = (await response.json()) as AttachmentView & {
-          error: string | null;
-        };
-        if (!response.ok)
-          throw Error(result.error ?? "Attachment upload failed.");
+        const result = await uploadComposeFile(file, inline, draftId.current);
         setAttachments((current) =>
           current.map((a) =>
             a.id === temporaryId
@@ -557,6 +554,7 @@ export function MailComposer({
           From
           <select
             aria-label="From"
+            disabled={!signatureReady}
             value={from}
             onChange={(event) => setFrom(event.target.value)}
             required
@@ -618,6 +616,14 @@ export function MailComposer({
           disabled={submitting}
           draftId={draftId.current}
           revision={revision.current}
+          signatureOptions={{
+            accountId: from,
+            mode:
+              source?.mode === "forward" ? "forward" : source ? "reply" : "new",
+            initialize: !draft,
+            onResources: addSignatureResources,
+            onReady: setSignatureReady,
+          }}
         />
       </fieldset>
       <div className="composer-attachments">
@@ -707,7 +713,13 @@ export function MailComposer({
           <button
             className="button"
             type="submit"
-            disabled={submitting || !from || attachmentsBlocked || !editorValid}
+            disabled={
+              submitting ||
+              !from ||
+              attachmentsBlocked ||
+              !editorValid ||
+              !signatureReady
+            }
           >
             <Send size={15} />
             {submitting ? "Queueing…" : "Send"}
