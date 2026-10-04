@@ -51,7 +51,8 @@ const accounts = [
   },
 ] as MailAccountView[];
 function savedDraftResponse(url: unknown, init?: RequestInit) {
-  if (String(url) === "/api/signatures") return Response.json({signatures: [], defaults: {}});
+  if (String(url) === "/api/signatures")
+    return Response.json({ signatures: [], defaults: {} });
   if (String(url).startsWith("/api/drafts") && !String(url).endsWith("/send")) {
     const body = JSON.parse(init?.body as string);
     return Response.json({
@@ -934,7 +935,7 @@ describe("compose UI", () => {
       );
       await act(async () => {
         const button = [...host.querySelectorAll("button")].find(
-          (item) => item.textContent === "Compose",
+          (item) => item.textContent === "New message",
         )!;
         button.click();
       });

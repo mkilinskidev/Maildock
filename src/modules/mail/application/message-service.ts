@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ConversationService } from "./conversation-service";
 import { persistAttachmentMetadata } from "./attachment-metadata";
 
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 
 import type { AccountsService } from "../../accounts/application/accounts-service";
 import {
@@ -17,6 +17,7 @@ import {
   mailAccounts,
   mailboxes,
   messages,
+  messageContents,
 } from "../../../shared/infrastructure/database/schema";
 import type { RecentSyncScheduler } from "./recent-sync-scheduler";
 import type { DeltaReason } from "./delta-sync-service";
@@ -44,6 +45,10 @@ export type MessageListItem = Readonly<{
   flagged: boolean;
   size: string;
   hasAttachments: boolean;
+  accountId?: string;
+  accountName?: string;
+  mailboxId?: string | null;
+  snippet?: string | null;
   conversationId?: string;
   messageCount?: number;
   conversationMessageCount?: number;
@@ -482,11 +487,19 @@ export class MessageService {
           internalDate: messages.internalDate,
           size: messages.size,
           hasAttachments: messages.hasAttachments,
+          snippet: sql<string | null>`left(${messageContents.plainText}, 160)`,
         },
         placement: mailboxMessages,
       })
       .from(mailboxMessages)
       .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
+      .leftJoin(
+        messageContents,
+        and(
+          eq(messageContents.messageId, messages.id),
+          eq(messageContents.status, "ready"),
+        ),
+      )
       .where(
         and(
           eq(mailboxMessages.mailboxId, mailboxId),
@@ -517,10 +530,60 @@ export class MessageService {
         flagged: placement.flags.includes("\\Flagged"),
         size: message.size.toString(),
         hasAttachments: message.hasAttachments,
+        snippet: message.snippet,
       })),
       nextCursor:
         rows.length > limit && last
           ? encodeCursor(last.message.internalDate, last.message.id)
+          : null,
+    };
+  }
+
+  async listAllInboxes(pageSize = 50, cursor?: string): Promise<MessagePage> {
+    const conversations = new ConversationService(this.database);
+    if (await conversations.enabled())
+      return conversations.list("", "", pageSize, cursor, true);
+    const limit = Math.min(Math.max(pageSize, 1), 100);
+    let after: [Date, string] | undefined;
+    try {
+      after = cursor ? decodeCursor(cursor) : undefined;
+      if (after && !/^[0-9a-f-]{36}$/i.test(after[1])) throw Error();
+    } catch {
+      throw Error("Invalid cursor.");
+    }
+    const rows = await this.database.execute(sql`
+      SELECT m.*, a.display_name AS account_name, p.mailbox_id, p.flags, left(c.plain_text, 160) AS snippet
+      FROM messages m JOIN mailbox_messages p ON p.message_id = m.id
+      JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
+      JOIN mail_accounts a ON a.id = m.account_id
+      LEFT JOIN message_contents c ON c.message_id = m.id AND c.status = 'ready'
+      WHERE a.enabled AND b.selectable AND b.lifecycle_status = 'active'
+        AND upper(b.remote_path) = 'INBOX' AND NOT p.action_hidden
+        ${after ? sql`AND (m.internal_date, m.id) < (${after[0].toISOString()}::timestamptz, ${after[1]}::uuid)` : sql``}
+      ORDER BY m.internal_date DESC, m.id DESC LIMIT ${limit + 1}`);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((r) => ({
+        id: String(r.id),
+        accountId: String(r.account_id),
+        accountName: String(r.account_name),
+        mailboxId: String(r.mailbox_id),
+        subject: r.subject as string | null,
+        from: r.from as MessageListItem["from"],
+        date: new Date(r.internal_date as string).toISOString(),
+        seen: (r.flags as string[]).includes("\\Seen"),
+        flagged: (r.flags as string[]).includes("\\Flagged"),
+        size: String(r.size),
+        hasAttachments: Boolean(r.has_attachments),
+        snippet: r.snippet as string | null,
+      })),
+      nextCursor:
+        rows.length > limit && last
+          ? encodeCursor(
+              new Date(last.internal_date as string),
+              String(last.id),
+            )
           : null,
     };
   }

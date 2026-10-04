@@ -472,7 +472,10 @@ a {
 
 .mail-app {
   display: grid;
-  grid-template-columns: 228px minmax(300px, 370px) minmax(0, 1fr);
+  grid-template-columns: clamp(190px, 18vw, 260px) minmax(280px, 0.85fr) minmax(
+      320px,
+      1.6fr
+    );
   grid-template-rows: 52px minmax(0, 1fr);
   height: 100dvh;
   min-height: 500px;
@@ -1318,70 +1321,7 @@ label.checkbox input {
     grid-template-columns: 190px minmax(275px, 340px) minmax(0, 1fr);
   }
 }
-@media (max-width: 760px) {
-  .mail-app {
-    grid-template-columns: 180px minmax(0, 1fr);
-    overflow-y: auto;
-    height: auto;
-    min-height: 100dvh;
-  }
-  .mail-sidebar {
-    grid-row: 2/4;
-  }
-  .mail-list-pane {
-    min-height: 420px;
-    border-right: 0;
-  }
-  .mail-detail-pane {
-    grid-column: 2;
-    min-height: 400px;
-    border-top: 1px solid var(--border);
-  }
-  .mail-detail-pane.mail-reader {
-    height: calc(100dvh - 52px);
-  }
-}
 @media (max-width: 520px) {
-  .mail-app {
-    display: block;
-  }
-  .app-bar {
-    min-height: 52px;
-  }
-  .mail-sidebar {
-    display: block;
-    padding: 12px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .mail-folders {
-    display: flex;
-    overflow-x: auto;
-  }
-  .mail-folders button {
-    width: auto;
-    flex: none;
-  }
-  .sidebar-label,
-  .sidebar-theme {
-    display: none;
-  }
-  .mail-sidebar-footer {
-    display: flex;
-    flex-wrap: wrap;
-    padding-top: 8px;
-  }
-  .mail-sidebar-footer a,
-  .mail-sidebar-footer button {
-    width: auto;
-  }
-  .mail-list-pane {
-    min-height: 300px;
-    max-height: 430px;
-  }
-  .mail-detail-pane {
-    min-height: 380px;
-  }
   .page-shell {
     padding: 22px 14px 50px;
   }
@@ -1677,4 +1617,110 @@ label.checkbox input {
   flex-wrap: wrap;
   gap: 6px;
   font-size: 12px;
+}
+
+/* Desktop mail shell: retain three panes on narrow windows with horizontal overflow. */
+.mail-app {
+  min-width: 880px;
+}
+.app-bar {
+  gap: 16px;
+}
+.app-bar .compose-action {
+  margin: 0;
+  flex-shrink: 0;
+  width: auto;
+}
+.global-search-input {
+  flex: 1;
+  max-width: 620px;
+  margin: 0 auto;
+}
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px 12px;
+  font-weight: 700;
+}
+.tree-account {
+  margin-top: 12px;
+}
+.mail-folders .tree-disclosure {
+  font-weight: 650;
+}
+.mail-folders .contains-selection {
+  color: var(--accent);
+}
+.tree-account-email {
+  padding: 2px 10px 8px 26px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-account-folders {
+  padding-left: 8px;
+}
+.tree-nested,
+.tree-other {
+  padding-left: 12px;
+}
+.tree-parent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mail-list-row.selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  box-shadow: inset 3px 0 var(--accent);
+}
+.mail-row-top strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.mail-list-row.unread .mail-row-top strong {
+  font-weight: 750;
+}
+.mail-row-subject {
+  color: var(--text);
+}
+.mail-row-snippet {
+  display: block;
+  padding-left: 13px;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mail-sidebar {
+  overflow: hidden;
+}
+.mail-folders {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.mail-sidebar-footer {
+  flex-shrink: 0;
+}
+.sidebar-brand {
+  flex-shrink: 0;
+}
+.conversation-account {
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
 }

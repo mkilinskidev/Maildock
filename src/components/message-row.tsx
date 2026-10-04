@@ -1,6 +1,7 @@
 "use client";
 
-import { Paperclip } from "lucide-react";
+import { messageDate } from "@/shared/application/message-date";
+import { Flag, Paperclip } from "lucide-react";
 import type { MessageListItem } from "@/modules/mail/application/message-service";
 
 export function MessageRow({
@@ -34,30 +35,23 @@ export function MessageRow({
             message.from[0]?.address ||
             "Unknown sender"}
         </strong>
-        <time dateTime={message.date}>
-          {compact
-            ? new Date(message.date).toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-            : new Date(message.date).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-                year:
-                  new Date(message.date).getFullYear() ===
-                  new Date().getFullYear()
-                    ? undefined
-                    : "numeric",
-              })}
+        <time dateTime={message.date} title={messageDate(message.date).title}>
+          {messageDate(message.date).text}
         </time>
       </span>
       <span className="mail-row-subject">
         {message.subject || "(No subject)"}
       </span>
-      {!compact || message.hasAttachments ? (
+      {message.snippet ? (
+        <span className="mail-row-snippet">{message.snippet}</span>
+      ) : null}
+      {!compact ||
+      message.hasAttachments ||
+      message.flagged ||
+      message.accountName ? (
         <span className="mail-row-bottom">
+          {message.accountName ? <span>{message.accountName}</span> : null}
+          {message.flagged ? <Flag size={12} aria-label="Flagged" /> : null}
           {message.hasAttachments ? (
             <>
               <Paperclip size={12} /> Attachment

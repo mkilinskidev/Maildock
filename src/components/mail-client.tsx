@@ -1,4 +1,5 @@
 "use client";
+import { MailboxTree } from "./mailbox-tree";
 import { DraftList } from "./draft-list";
 import { GlobalSearchResults } from "./global-search-results";
 import type { SearchResult } from "@/modules/mail/application/search-service";
@@ -13,8 +14,6 @@ import type { DraftView } from "@/modules/mail/domain/draft";
 
 import Link from "next/link";
 import {
-  Inbox,
-  Archive,
   Mail,
   MailOpen,
   Plus,
@@ -174,6 +173,7 @@ export function MailClient({
       clearInterval(timer);
     };
   }, [outgoing]);
+  const [allInboxes, setAllInboxes] = useState(false);
   const [accountId, setAccountId] = useState(first?.id ?? "");
   const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
     useState(mailboxesByAccount);
@@ -226,10 +226,12 @@ export function MailClient({
     [],
   );
   const folder = folders.find((item) => item.id === mailboxId);
-  const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
-  const location = `${accountId}:${mailboxId}`;
+  const base = allInboxes
+    ? "/api/mail/all-inboxes"
+    : `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+  const location = allInboxes ? "all-inboxes" : `${accountId}:${mailboxId}`;
   const selectedMember =
-    conversationView &&
+    (conversationView || allInboxes) &&
     memberSelection?.location === location &&
     memberSelection.message.id === selectedId
       ? memberSelection.message
@@ -249,12 +251,15 @@ export function MailClient({
     setLoadingDetail(true);
     setError("");
   }
+  const inboxSelection = allInboxes
+    ? (selectedMember ?? messages.find((item) => item.id === selectedId))
+    : undefined;
   const actionAccountId = searchActive
     ? (searchSelection?.accountId ?? accountId)
-    : accountId;
+    : (inboxSelection?.accountId ?? accountId);
   const actionMailboxId = searchActive
     ? (searchSelection?.mailboxId ?? mailboxId)
-    : (selectedMember?.mailboxId ?? mailboxId);
+    : (inboxSelection?.mailboxId ?? selectedMember?.mailboxId ?? mailboxId);
   const messageBase = `/api/accounts/${actionAccountId}/mailboxes/${actionMailboxId}/messages`;
   const preparationKey = `${actionAccountId}:${actionMailboxId}:${selectedId}`;
   const preparing = preparingState && prepareLocation === preparationKey;
@@ -314,7 +319,8 @@ export function MailClient({
     ? searchSelection
     : conversationView && detail?.id === selectedId
       ? detail
-      : (selectedMember ?? messages.find((item) => item.id === selectedId));
+      : ((conversationView ? selectedMember : undefined) ??
+        messages.find((item) => item.id === selectedId));
   const moveAvailable = (action: "archive" | "trash") => {
     const mapping = liveRolesByAccount[actionAccountId]?.find(
       (item) => item.role === action,
@@ -511,9 +517,12 @@ export function MailClient({
             const failure = finished.find((item) => item.status === "failed");
             if (failure) {
               const source = pendingCommands[failure.id];
-              if (source && (source.accountId === accountId || searchActive)) {
+              if (
+                source &&
+                (source.accountId === accountId || searchActive || allInboxes)
+              ) {
                 setError(failure.error ?? "Message action failed.");
-                if (source.mailboxId === mailboxId)
+                if (source.mailboxId === mailboxId || allInboxes)
                   void fetch(`${base}?pageSize=50`, { cache: "no-store" }).then(
                     async (response) => {
                       if (response.ok && !cancelled)
@@ -541,6 +550,7 @@ export function MailClient({
     conversationView,
     searchActive,
     actionAccountId,
+    allInboxes,
   ]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
@@ -569,46 +579,52 @@ export function MailClient({
     const load = () => {
       if (document.visibilityState !== "visible" || busy) return;
       busy = true;
-      fetch(`/api/accounts/${accountId}/mailboxes`, { cache: "no-store" })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Mailboxes could not be loaded.");
-          return response.json() as Promise<{
-            mailboxes: MailboxView[];
-            roles: MailboxRoleView[];
-          }>;
-        })
-        .then((result) => {
-          if (!cancelled) {
-            setLiveMailboxesByAccount((current) => ({
-              ...current,
-              [accountId]: result.mailboxes,
-            }));
-            setLiveRolesByAccount((current) => ({
-              ...current,
-              [accountId]: result.roles,
-            }));
-            setCountAdjustments((current) =>
-              current.filter((adjustment) => {
-                if (!adjustment.completedAt) return true;
-                const mailbox = result.mailboxes.find(
-                  (item) => item.id === adjustment.mailboxId,
+      void Promise.allSettled(
+        accounts.map(async ({ id: pollAccountId }) => {
+          return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
+            cache: "no-store",
+          })
+            .then(async (response) => {
+              if (!response.ok)
+                throw new Error("Mailboxes could not be loaded.");
+              return response.json() as Promise<{
+                mailboxes: MailboxView[];
+                roles: MailboxRoleView[];
+              }>;
+            })
+            .then((result) => {
+              if (!cancelled) {
+                setLiveMailboxesByAccount((current) => ({
+                  ...current,
+                  [pollAccountId]: result.mailboxes,
+                }));
+                setLiveRolesByAccount((current) => ({
+                  ...current,
+                  [pollAccountId]: result.roles,
+                }));
+                setCountAdjustments((current) =>
+                  current.filter((adjustment) => {
+                    if (!adjustment.completedAt) return true;
+                    const mailbox = result.mailboxes.find(
+                      (item) => item.id === adjustment.mailboxId,
+                    );
+                    const synchronizedAt = mailbox?.deltaSync.lastSuccessfulAt;
+                    return (
+                      !synchronizedAt ||
+                      new Date(synchronizedAt).getTime() <
+                        new Date(adjustment.completedAt).getTime()
+                    );
+                  }),
                 );
-                const synchronizedAt = mailbox?.deltaSync.lastSuccessfulAt;
-                return (
-                  !synchronizedAt ||
-                  new Date(synchronizedAt).getTime() <
-                    new Date(adjustment.completedAt).getTime()
-                );
-              }),
-            );
-          }
-        })
-        .catch(() => {
-          // Keep the last known counts; the next poll retries.
-        })
-        .finally(() => {
-          busy = false;
-        });
+              }
+            })
+            .catch(() => {
+              // Keep the last known counts; the next poll retries.
+            });
+        }),
+      ).finally(() => {
+        busy = false;
+      });
     };
     load();
     const timer = setInterval(load, 20_000);
@@ -618,10 +634,10 @@ export function MailClient({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", load);
     };
-  }, [accountId, folderReloadNonce]);
+  }, [accounts, accountId, folderReloadNonce]);
 
   useEffect(() => {
-    if (!accountId || !mailboxId) return;
+    if (!allInboxes && (!accountId || !mailboxId)) return;
     let cancelled = false;
     let busy = false;
     const load = () => {
@@ -671,6 +687,7 @@ export function MailClient({
     mailboxId,
     base,
     applyFirstPage,
+    allInboxes,
     conversationView,
     listReloadNonce,
   ]);
@@ -849,23 +866,67 @@ export function MailClient({
     }
   }
 
-  const activeAccount = accounts.find((account) => account.id === accountId);
   const readerAccount = accounts.find(
     (account) => account.id === actionAccountId,
   );
-  const visibleFolders = folders.filter(
-    (item) => item.selectable && item.lifecycleStatus === "active",
-  );
+  function navigate(nextAccountId: string, nextMailboxId: string, all = false) {
+    setSearchQuery("");
+    setSearchSelection(undefined);
+    setShowDrafts(false);
+    if (
+      all === allInboxes &&
+      nextAccountId === accountId &&
+      nextMailboxId === mailboxId
+    )
+      return;
+    setMessages([]);
+    setNextCursor(null);
+    setPaginationError("");
+    setLoadingMore(false);
+    pageRequestIdRef.current++;
+    loadingPageRef.current = false;
+    loadedMoreRef.current = false;
+    listRef.current?.scrollTo({ top: 0 });
+    setSelectedId("");
+    setMemberSelection(undefined);
+    setDetail(null);
+    setError("");
+    setLoadingDetail(false);
+    setLoadingMessages(all || Boolean(nextMailboxId));
+    activeLocationRef.current = `${nextAccountId}:${nextMailboxId}`;
+    setAccountId(nextAccountId);
+    setMailboxId(nextMailboxId);
+    setAllInboxes(all);
+  }
+  function unread(item: MailboxView) {
+    if (item.unseenCount === null) return null;
+    const projected =
+      BigInt(item.unseenCount) +
+      BigInt(
+        countAdjustments
+          .filter((a) => a.mailboxId === item.id)
+          .reduce((sum, a) => sum + a.delta, 0),
+      );
+    return projected > 0n ? projected.toString() : null;
+  }
 
   return (
     <main className="mail-app">
       <header className="app-bar">
-        <div className="app-brand">
-          <span className="brand-mark">
-            <Mail size={16} strokeWidth={2} />
-          </span>
-          Maildock
-        </div>
+        <button
+          className="button compose-action"
+          disabled={composing || !accounts.some(sendingAccountAvailable)}
+          onClick={() => {
+            preparationGeneration.current++;
+            setPreparing(false);
+            setDraft(undefined);
+            setPrefill(undefined);
+            setComposing(true);
+          }}
+        >
+          <Plus size={15} />
+          New message
+        </button>
         <div className="global-search-input">
           <Search size={16} aria-hidden="true" />
           <input
@@ -907,156 +968,34 @@ export function MailClient({
         </div>
       </header>
       <aside className="mail-sidebar">
-        {accounts.length > 0 ? (
-          <>
-            <div className="account-identity">
-              <span className="account-avatar">
-                {activeAccount?.displayName?.charAt(0) || "M"}
-              </span>
-              <select
-                aria-label="Account"
-                value={accountId}
-                onChange={(event) => {
-                  const id = event.target.value;
-                  setSearchQuery("");
-                  setSearchSelection(undefined);
-                  setMessages([]);
-                  setNextCursor(null);
-                  setPaginationError("");
-                  setLoadingMore(false);
-                  pageRequestIdRef.current += 1;
-                  loadingPageRef.current = false;
-                  loadedMoreRef.current = false;
-                  listRef.current?.scrollTo({ top: 0 });
-                  setSelectedId("");
-                  setDetail(null);
-                  setError("");
-                  setLoadingMessages(true);
-                  setAccountId(id);
-                  const next = liveMailboxesByAccount[id] ?? [];
-                  const nextMailboxId =
-                    next.find(
-                      (item) => item.remotePath.toUpperCase() === "INBOX",
-                    )?.id ??
-                    next.find((item) => item.selectable)?.id ??
-                    "";
-                  activeLocationRef.current = `${id}:${nextMailboxId}`;
-                  setMailboxId(nextMailboxId);
-                }}
-              >
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.displayName}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="account-email" title={activeAccount?.email}>
-              {activeAccount?.email}
-            </div>
-            <div className="sidebar-label">Mailboxes</div>
-            <button
-              className="button compose-action"
-              disabled={composing || !accounts.some(sendingAccountAvailable)}
-              onClick={() => {
-                preparationGeneration.current++;
-                setPreparing(false);
-                setDraft(undefined);
-                setPrefill(undefined);
-                setComposing(true);
-              }}
-            >
-              <Plus size={15} />
-              Compose
-            </button>
-            <nav className="mail-folders" aria-label="Mailboxes">
-              <button
-                className={showDrafts ? "active" : ""}
-                aria-current={showDrafts ? "page" : undefined}
-                onClick={() => {
-                  setSearchQuery("");
-                  setSearchSelection(undefined);
-                  setShowDrafts(true);
-                  setDraftListGeneration((n) => n + 1);
-                }}
-              >
-                <Mail size={16} />
-                <span className="folder-name">Local drafts</span>
-              </button>
-              {visibleFolders.map((item) => {
-                const inbox = item.remotePath.toUpperCase() === "INBOX";
-                const Icon = inbox ? Inbox : Archive;
-                const projected =
-                  item.unseenCount === null
-                    ? null
-                    : BigInt(item.unseenCount) +
-                      BigInt(
-                        countAdjustments
-                          .filter(
-                            (adjustment) => adjustment.mailboxId === item.id,
-                          )
-                          .reduce(
-                            (sum, adjustment) => sum + adjustment.delta,
-                            0,
-                          ),
-                      );
-                const unread =
-                  projected !== null && projected > 0n
-                    ? projected.toString()
-                    : null;
-                return (
-                  <button
-                    key={item.id}
-                    className={
-                      !showDrafts && item.id === mailboxId ? "active" : ""
-                    }
-                    title={item.remotePath}
-                    aria-current={
-                      !showDrafts && item.id === mailboxId ? "page" : undefined
-                    }
-                    onClick={() => {
-                      setSearchQuery("");
-                      setSearchSelection(undefined);
-                      setShowDrafts(false);
-                      if (item.id === mailboxId) return;
-                      setMessages([]);
-                      setNextCursor(null);
-                      setPaginationError("");
-                      setLoadingMore(false);
-                      pageRequestIdRef.current += 1;
-                      loadingPageRef.current = false;
-                      loadedMoreRef.current = false;
-                      listRef.current?.scrollTo({ top: 0 });
-                      setSelectedId("");
-                      setDetail(null);
-                      setError("");
-                      setLoadingMessages(true);
-                      activeLocationRef.current = `${accountId}:${item.id}`;
-                      setMailboxId(item.id);
-                    }}
-                  >
-                    <Icon size={16} strokeWidth={1.8} />
-                    <span className="folder-name">{item.name}</span>
-                    {unread ? (
-                      <span
-                        className="folder-count unread"
-                        title="Unread messages"
-                      >
-                        {formatCount(unread)}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </nav>
-          </>
-        ) : (
+        <div className="sidebar-brand">
+          <Mail size={18} />
+          Maildock
+        </div>
+        <MailboxTree
+          accounts={accounts}
+          boxes={liveMailboxesByAccount}
+          roles={liveRolesByAccount}
+          accountId={accountId}
+          mailboxId={mailboxId}
+          allInboxes={allInboxes}
+          showDrafts={showDrafts}
+          searchActive={searchActive}
+          unread={unread}
+          onSelect={navigate}
+          onDrafts={() => {
+            setSearchQuery("");
+            setSearchSelection(undefined);
+            setShowDrafts(true);
+            setDraftListGeneration((n) => n + 1);
+          }}
+        />
+        {!accounts.length ? (
           <div className="pane-empty">
-            <Mail size={25} />
             <strong>No accounts yet</strong>
             <p>Add an account to see your mailboxes.</p>
           </div>
-        )}
+        ) : null}
         <div className="mail-sidebar-footer">
           <Link href="/accounts">
             <Settings2 size={15} />
@@ -1077,23 +1016,33 @@ export function MailClient({
                 ? "Search results"
                 : showDrafts
                   ? "Local drafts"
-                  : (folder?.name ?? "Mail")}
+                  : allInboxes
+                    ? "All Inboxes"
+                    : (folder?.name ?? "Mail")}
             </h1>
             <small>
               {searchActive
                 ? "All accounts · All mailboxes"
                 : showDrafts
                   ? "Stored in Maildock only"
-                  : folder
-                    ? formatCount(folder.synchronizedMessageCount) +
-                      " synchronized messages"
-                    : "Select a mailbox"}
+                  : allInboxes
+                    ? "Enabled accounts · Inbox mailboxes"
+                    : folder
+                      ? formatCount(folder.synchronizedMessageCount) +
+                        " synchronized messages"
+                      : "Select a mailbox"}
             </small>
           </div>
           <button
             className="icon-button"
             onClick={() => void refresh()}
-            disabled={searchActive || showDrafts || refreshing || !mailboxId}
+            disabled={
+              searchActive ||
+              showDrafts ||
+              refreshing ||
+              !mailboxId ||
+              allInboxes
+            }
             title="Sync mailbox"
             aria-label="Sync mailbox"
           >
@@ -1137,7 +1086,7 @@ export function MailClient({
           />
         ) : (
           <div className="mail-rows" ref={listRef}>
-            {loadingMessages && mailboxId ? (
+            {loadingMessages && (mailboxId || allInboxes) ? (
               Array.from({ length: 5 }, (_, index) => (
                 <div className="skeleton-row" key={index}>
                   <div
@@ -1170,7 +1119,9 @@ export function MailClient({
               <FlatMessageList
                 messages={messages}
                 selectedId={selectedId}
-                onSelect={(message) => selectMessage(message, mailboxId)}
+                onSelect={(message) =>
+                  selectMessage(message, message.mailboxId ?? mailboxId)
+                }
               />
             )}
 
@@ -1201,10 +1152,12 @@ export function MailClient({
               <div className="pane-empty">
                 <MailOpen size={26} strokeWidth={1.5} />
                 <strong>
-                  {mailboxId ? "Nothing here yet" : "No mailbox selected"}
+                  {mailboxId || allInboxes
+                    ? "Nothing here yet"
+                    : "No mailbox selected"}
                 </strong>
                 <p>
-                  {mailboxId
+                  {mailboxId || allInboxes
                     ? "Messages will appear here when synchronized."
                     : "Choose a mailbox from the sidebar."}
                 </p>

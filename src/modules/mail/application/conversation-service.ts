@@ -38,6 +38,7 @@ export class ConversationService {
     mailboxId: string,
     pageSize: number,
     cursor?: string,
+    allInboxes = false,
   ): Promise<MessagePage> {
     let after: [string, string] | undefined;
     if (cursor) {
@@ -62,15 +63,17 @@ export class ConversationService {
     const limit = Math.min(Math.max(pageSize, 1), 100);
     const rows = await this.database.execute(sql`
       WITH relevant AS (
-        SELECT m.*, cm.conversation_id, p.flags,
-          row_number() OVER (PARTITION BY cm.conversation_id ORDER BY m.internal_date DESC, m.id DESC) AS rank,
-          count(*) OVER (PARTITION BY cm.conversation_id)::int AS message_count,
-          bool_and(p.flags @> ARRAY['\\Seen']::text[]) OVER (PARTITION BY cm.conversation_id) AS seen
+        SELECT m.*, a.display_name AS account_name, cm.conversation_id, p.flags, p.mailbox_id,
+          row_number() OVER (PARTITION BY m.account_id, cm.conversation_id ORDER BY m.internal_date DESC, m.id DESC) AS rank,
+          count(*) OVER (PARTITION BY m.account_id, cm.conversation_id)::int AS message_count,
+          bool_and(p.flags @> ARRAY['\\Seen']::text[]) OVER (PARTITION BY m.account_id, cm.conversation_id) AS seen
         FROM mailbox_messages p JOIN messages m ON m.id = p.message_id
         JOIN conversation_members cm ON cm.message_id = m.id AND cm.account_id = m.account_id
-        WHERE p.mailbox_id = ${mailboxId}::uuid AND m.account_id = ${accountId}::uuid AND NOT p.action_hidden
+        JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
+        JOIN mail_accounts a ON a.id = m.account_id
+        WHERE ${allInboxes ? sql`a.enabled AND b.selectable AND b.lifecycle_status = 'active' AND upper(b.remote_path) = 'INBOX'` : sql`p.mailbox_id = ${mailboxId}::uuid AND m.account_id = ${accountId}::uuid`} AND NOT p.action_hidden
       ) SELECT relevant.*, (SELECT count(*)::int FROM conversation_members members
-        WHERE members.account_id = ${accountId}::uuid AND members.conversation_id = relevant.conversation_id) AS conversation_message_count
+        WHERE members.account_id = relevant.account_id AND members.conversation_id = relevant.conversation_id) AS conversation_message_count
         FROM relevant WHERE rank = 1
         ${after ? sql`AND (internal_date, id) < (${after[0]}::timestamptz, ${after[1]}::uuid)` : sql``}
       ORDER BY internal_date DESC, id DESC LIMIT ${limit + 1}`);
@@ -79,6 +82,9 @@ export class ConversationService {
     return {
       items: page.map((r) => ({
         id: String(r.id),
+        accountId: String(r.account_id),
+        ...(allInboxes ? { accountName: String(r.account_name) } : {}),
+        mailboxId: String(r.mailbox_id),
         conversationId: String(r.conversation_id),
         messageCount: Number(r.message_count),
         conversationMessageCount: Number(r.conversation_message_count),

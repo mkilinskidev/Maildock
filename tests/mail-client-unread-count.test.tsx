@@ -137,6 +137,12 @@ describe("sidebar unread count", () => {
       host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
     ).toBe("4");
     await act(async () => {
+      const disclosure = [...host.querySelectorAll("button")].find(
+        (b) => b.textContent === "Other folders",
+      )!;
+      disclosure.click();
+    });
+    await act(async () => {
       (host.querySelector('[title="Other"]') as HTMLButtonElement).click();
     });
     expect(

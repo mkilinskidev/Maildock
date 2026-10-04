@@ -97,6 +97,14 @@ function ConversationGroup({
         <span className="conversation-subject">
           {normalizedSubject(representative.subject)}
         </span>
+        {representative.accountName ? (
+          <span
+            className="conversation-account"
+            title={representative.accountName}
+          >
+            {representative.accountName}
+          </span>
+        ) : null}
         {!representative.seen ? (
           <span
             className="unread-dot"
@@ -130,11 +138,11 @@ function ConversationGroup({
           {items.map((message) => (
             <MessageRow
               key={message.id}
-              message={message}
+              message={{ ...message, accountName: representative.accountName }}
               compact
               selected={selectedId === message.id}
               disabled={!message.mailboxId}
-              onSelect={() => onSelect(message)}
+              onSelect={() => onSelect({ ...message, accountId })}
             />
           ))}
         </div>
@@ -163,8 +171,8 @@ export function ConversationMessageList({
       {messages.map((message) => (
         <ConversationGroup
           key={message.conversationId ?? message.id}
-          accountId={accountId}
-          mailboxId={mailboxId}
+          accountId={message.accountId ?? accountId}
+          mailboxId={message.mailboxId ?? mailboxId}
           representative={message}
           selectedId={selectedId}
           refreshKey={refreshKey}

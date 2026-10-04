@@ -179,6 +179,70 @@ describe("Phase 2G conversation graph and queries", () => {
     await container?.stop();
   });
 
+  it.each([false, true])(
+    "All Inboxes uses enabled source placements and account isolation (conversation=%s)",
+    async (enabled) => {
+      const other = await addAccount();
+      const disabled = await addAccount();
+      await database.db
+        .update(mailAccounts)
+        .set({ enabled: true })
+        .where(eq(mailAccounts.id, account));
+      await database.db
+        .update(mailAccounts)
+        .set({ enabled: true })
+        .where(eq(mailAccounts.id, other.id));
+      await service.setEnabled(enabled);
+      const first = await add("<first@all>", undefined, undefined, {
+        date: "2026-01-01T00:00:00Z",
+      });
+      const second = await add("<second@all>", "<first@all>", undefined, {
+        account: other.id,
+        mailbox: other.inbox,
+        date: "2026-01-02T00:00:00Z",
+      });
+      await add("<sent@all>", undefined, undefined, { mailbox: sent });
+      await add("<disabled@all>", undefined, undefined, {
+        account: disabled.id,
+        mailbox: disabled.inbox,
+      });
+      const hidden = await add("<hidden@all>");
+      await database.db
+        .update(mailboxMessages)
+        .set({ actionHidden: true })
+        .where(eq(mailboxMessages.messageId, hidden));
+      const page = await messageService.listAllInboxes(1);
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({
+        id: second,
+        accountId: other.id,
+        mailboxId: other.inbox,
+      });
+      expect(page.nextCursor).not.toBeNull();
+      const next = await messageService.listAllInboxes(1, page.nextCursor!);
+      expect(next.items).toHaveLength(1);
+      expect(next.items[0]).toMatchObject({
+        id: first,
+        accountId: account,
+        mailboxId: inbox,
+      });
+      expect(next.nextCursor).toBeNull();
+      if (enabled) {
+        const members = await service.open(
+          other.id,
+          page.items[0].conversationId!,
+          true,
+          other.inbox,
+        );
+        expect(members.map((m) => m.id)).toEqual([second]);
+        expect(members[0].mailboxId).toBe(other.inbox);
+      }
+      await expect(
+        messageService.listAllInboxes(50, "invalid"),
+      ).rejects.toThrow("Invalid cursor.");
+    },
+  );
+
   it("connects A -> B -> C across Sent and Inbox using external headers and existing outgoing threading", async () => {
     await add("<maildock.a@example.test>", undefined, undefined, {
       mailbox: sent,

@@ -293,6 +293,11 @@ describe("reader reply and forward actions", () => {
     ).toBe(true);
     await act(async () =>
       [...host.querySelectorAll<HTMLButtonElement>(".mail-folders button")]
+        .find((button) => button.textContent === "Other folders")!
+        .click(),
+    );
+    await act(async () =>
+      [...host.querySelectorAll<HTMLButtonElement>(".mail-folders button")]
         .find(
           (button) =>
             button.querySelector(".folder-name")?.textContent === "Sent",
@@ -463,7 +468,7 @@ describe("reader reply and forward actions", () => {
       expect(host.querySelector(".mail-composer")).not.toBeNull();
       expect(host.querySelector(".mail-body")).toBeNull();
       const compose = [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === "Compose",
+        (button) => button.textContent === "New message",
       )!;
       expect(compose.disabled).toBe(true);
 

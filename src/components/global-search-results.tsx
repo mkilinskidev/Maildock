@@ -1,4 +1,5 @@
 "use client";
+import { messageDate } from "@/shared/application/message-date";
 import { useEffect, useState } from "react";
 import { Search, LoaderCircle } from "lucide-react";
 import type {
@@ -89,11 +90,8 @@ export function GlobalSearchResults({
                     item.from[0]?.address ||
                     "Unknown sender"}
                 </strong>
-                <time dateTime={item.date}>
-                  {new Date(item.date).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                  })}
+                <time dateTime={item.date} title={messageDate(item.date).title}>
+                  {messageDate(item.date).text}
                 </time>
               </span>
               <span className="mail-row-subject">
