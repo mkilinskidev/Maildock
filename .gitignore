@@ -7,6 +7,7 @@ dist/
 dist-worker/
 build/
 coverage/
+.security-results/
 *.tsbuildinfo
 
 # Local configuration and secrets
