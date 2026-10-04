@@ -7,9 +7,17 @@ import {
 import { JSDOM } from "jsdom";
 import { DraftService } from "@/modules/mail/application/draft-service";
 import { DraftConflictError } from "@/modules/mail/domain/draft";
+import {
+  plainTextDocument,
+  richElement,
+  richText,
+  richResourceIds,
+  serializeRichDocument,
+  type RichDocument,
+} from "@/modules/mail/domain/rich-document";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { eq } from "drizzle-orm";
@@ -1119,6 +1127,392 @@ describe("durable attachment and MIME lifecycle", () => {
     attachments: [],
   });
   const draftService = () => new DraftService(database.db);
+  it("forward migration preserves active legacy line breaks and leaves consumed drafts alone", async () => {
+    const migration = await readFile(
+      "db/migrations/0020_mighty_slayback.sql",
+      "utf8",
+    );
+    await database.client.begin(async (sql) => {
+      for (const table of [
+        "drafts",
+        "draft_attachments",
+        "staged_attachments",
+        "outgoing_messages",
+        "outgoing_message_attachments",
+      ])
+        await sql.unsafe(
+          `CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING DEFAULTS) ON COMMIT DROP`,
+        );
+      await sql.unsafe(
+        "ALTER TABLE drafts DROP COLUMN rich_document; ALTER TABLE draft_attachments DROP COLUMN inline, DROP COLUMN content_id; ALTER TABLE staged_attachments DROP COLUMN draft_id; ALTER TABLE outgoing_messages DROP COLUMN rich_document, DROP COLUMN html; ALTER TABLE outgoing_message_attachments DROP COLUMN inline, DROP COLUMN content_id, DROP COLUMN resource_id",
+      );
+      const active = randomUUID(),
+        consumed = randomUUID();
+      const text = "\nZażółć\r\n\r\nlast\n";
+      await sql`INSERT INTO drafts(id,account_id,compose_mode,plain_text,status) VALUES (${active},${accountId},'new',${text},'active'),(${consumed},${accountId},'new','Consumed','consumed')`;
+      for (const statement of migration.split("--> statement-breakpoint"))
+        if (statement.trim()) await sql.unsafe(statement);
+      const rows = await sql`SELECT id,rich_document FROM drafts`;
+      expect(
+        serializeRichDocument(rows.find((r) => r.id === active)!.rich_document)
+          .plainText,
+      ).toBe(text.replace(/\r\n/g, "\n"));
+      expect(rows.find((r) => r.id === consumed)!.rich_document).toBeNull();
+    });
+  });
+  it("round-trips a durable rich draft, CID and PDF, claims resources once, and preserves immutable retry/Sent bytes", async () => {
+    const draftId = randomUUID();
+    const image = await attachments.upload(
+      Readable.from([png]),
+      "screen.png",
+      "image/png",
+      draftId,
+      true,
+    );
+    const file = await attachments.upload(
+      Readable.from([pdf]),
+      "file.pdf",
+      "application/pdf",
+      draftId,
+    );
+    const document: RichDocument = {
+      version: 1,
+      editor: {
+        root: richElement("root", [
+          richElement("paragraph", [
+            richText("Zażółć", 1),
+            {
+              type: "maildock-image",
+              version: 1,
+              resourceId: image.id,
+              alt: "Screenshot",
+              width: 320,
+            },
+          ]),
+        ]),
+      },
+    };
+    const row = await draftService().create({
+      ...draftInput(),
+      id: draftId,
+      richDocument: document,
+      plainText: "untrusted stale alternative",
+      attachments: [
+        { id: image.id, kind: "staged", inline: true },
+        { id: file.id, kind: "staged" },
+      ],
+    });
+    const restored = await new DraftService(database.db).get(row.id);
+    expect(restored.richDocument).toEqual(row.richDocument);
+    expect(restored.plainText).toContain("Zażółć[Image: Screenshot]");
+    expect(restored.plainText).not.toContain("untrusted");
+    expect(restored.attachments.map((a) => a.inline)).toEqual([true, false]);
+    expect(
+      (await attachments.composeResource(draftId, image.id)).bytes,
+    ).toEqual(png);
+    await expect(
+      attachments.composeResource(randomUUID(), image.id),
+    ).rejects.toThrow();
+    await expect(
+      draftService().create({
+        ...draftInput(),
+        richDocument: document,
+        attachments: [{ id: image.id, kind: "staged", inline: true }],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      draftService().create({
+        ...draftInput(),
+        richDocument: document,
+        attachments: [{ id: image.id, kind: "draft", inline: true }],
+      }),
+    ).rejects.toThrow();
+    const sent = await outgoing.create(undefined, {
+      id: row.id,
+      expectedRevision: row.revision,
+    });
+    const message = (
+      await database.db
+        .select()
+        .from(outgoingMessages)
+        .where(eq(outgoingMessages.id, sent.id))
+    )[0];
+    const snapshots = await database.db
+      .select()
+      .from(outgoingMessageAttachments)
+      .where(eq(outgoingMessageAttachments.outgoingMessageId, sent.id));
+    const inline = snapshots.find((a) => a.inline)!;
+    expect(inline.contentId).toMatch(/@maildock\.invalid$/);
+    expect(message.html).toContain(`cid:${inline.contentId}`);
+    expect(message.richDocument).toEqual(restored.richDocument);
+    const mime = await loadOutgoingMime(
+      database.db,
+      storage,
+      message,
+      limits.maxOutgoingMimeBytes,
+    );
+    const parsed = await simpleParser(mime, { skipImageLinks: true });
+    expect(parsed.html).toBe(message.html);
+    expect(parsed.bcc).toBeUndefined();
+    expect(parsed.attachments.map((a) => a.contentDisposition)).toEqual([
+      "inline",
+      "attachment",
+    ]);
+    await expect(
+      database.db
+        .update(outgoingMessages)
+        .set({ html: "changed" })
+        .where(eq(outgoingMessages.id, sent.id)),
+    ).rejects.toThrow();
+    await expect(
+      database.db
+        .update(outgoingMessageAttachments)
+        .set({ contentId: `${randomUUID()}@maildock.invalid` })
+        .where(eq(outgoingMessageAttachments.outgoingMessageId, sent.id)),
+    ).rejects.toThrow();
+    deliver.mockResolvedValueOnce({
+      outcome: "definite_failure",
+      retryable: true,
+      message: "Retry",
+    });
+    await outgoing.run(sent.id);
+    await database.db
+      .update(outgoingMessages)
+      .set({ nextAttemptAt: new Date(0) })
+      .where(eq(outgoingMessages.id, sent.id));
+    await outgoing.run(sent.id);
+    expect(deliver.mock.calls).toHaveLength(2);
+    expect(deliver.mock.calls[0][2]).toEqual(mime);
+    expect(deliver.mock.calls[1][2]).toEqual(mime);
+    expect(deliver.mock.calls[0][1].to).toContain("private@example.com");
+    await new SentCopyService(
+      database.db,
+      accounts,
+      provider,
+      createOutgoingLock(database.client),
+      enqueue,
+      async () => true,
+      storage,
+    ).run(sent.id);
+    expect(append.mock.calls[0][2]).toEqual(mime);
+    expect(
+      await outgoing.create(undefined, { id: row.id, expectedRevision: 1 }),
+    ).toEqual({ id: sent.id, status: "sent" });
+  });
+  it("rejects invalid inline bytes, source substitution, dangling references and corrupt cached resources before consuming draft", async () => {
+    const id = randomUUID();
+    await expect(
+      attachments.upload(
+        Readable.from([pdf]),
+        "fake.png",
+        "image/png",
+        id,
+        true,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      attachments.upload(
+        Readable.from([Buffer.from("<svg/>")]),
+        "fake.svg",
+        "image/svg+xml",
+        id,
+        true,
+      ),
+    ).rejects.toThrow();
+    const image = await attachments.upload(
+      Readable.from([png]),
+      "screen.png",
+      "image/png",
+      id,
+      true,
+    );
+    const document = plainTextDocument("Body");
+    document.editor.root.children![0].children!.push({
+      type: "maildock-image",
+      version: 1,
+      resourceId: image.id,
+      alt: "Image",
+      width: 480,
+    });
+    await expect(
+      draftService().create({ ...draftInput(), id, richDocument: document }),
+    ).rejects.toThrow("resource");
+    const row = await draftService().create({
+      ...draftInput(),
+      id,
+      richDocument: document,
+      attachments: [{ id: image.id, kind: "staged", inline: true }],
+    });
+    const [association] = await database.db
+      .select()
+      .from(draftAttachments)
+      .where(eq(draftAttachments.draftId, row.id));
+    const [blob] = await database.db
+      .select()
+      .from(blobs)
+      .where(eq(blobs.id, association.blobId!));
+    await writeFile(
+      path.join(root, "blobs", blob.storageKey.slice(0, 2), blob.storageKey),
+      Buffer.from("corrupt"),
+    );
+    await expect(
+      outgoing.create(undefined, { id, expectedRevision: row.revision }),
+    ).rejects.toThrow("integrity");
+    expect((await draftService().get(id)).status).toBe("active");
+    expect(await database.db.select().from(outgoingMessages)).toHaveLength(0);
+    await expect(attachments.composeResource(id, image.id)).rejects.toThrow();
+    const incoming = (
+      await content.detail(accountId, mailboxId, messageId)
+    ).attachments.find((a) => a.inline)!;
+    await expect(
+      draftService().create({
+        ...draftInput(),
+        source: { ...source(), messageId: randomUUID() },
+        richDocument: plainTextDocument("Body"),
+        attachments: [{ id: incoming.id, kind: "incoming", inline: true }],
+      }),
+    ).rejects.toThrow();
+  });
+  it.each(["reply", "reply_all", "forward"] as const)(
+    "imports HTML-only %s without flattening, transfers only source CID and retains remote placeholders",
+    async (mode) => {
+      // A real local raster in another account must never satisfy source A's CID.
+      const otherAccountId = randomUUID(),
+        otherMessageId = randomUUID(),
+        otherAttachmentId = randomUUID();
+      const [owner] = await database.db
+        .select()
+        .from(mailAccounts)
+        .where(eq(mailAccounts.id, accountId));
+      await database.db
+        .insert(mailAccounts)
+        .values({ ...owner, id: otherAccountId, email: "other@example.com" });
+      await database.db
+        .insert(messages)
+        .values({
+          id: otherMessageId,
+          accountId: otherAccountId,
+          internalDate: new Date(),
+          size: 100n,
+        });
+      const foreign = await attachments.upload(
+        Readable.from([png]),
+        "foreign.png",
+        "image/png",
+      );
+      const [foreignStage] = await database.db
+        .select()
+        .from(stagedAttachments)
+        .where(eq(stagedAttachments.id, foreign.id));
+      await database.db
+        .insert(messageAttachments)
+        .values({
+          id: otherAttachmentId,
+          messageId: otherMessageId,
+          sourceUidValidity: 7n,
+          sourceUid: 42n,
+          partId: "3",
+          contentType: "image/png",
+          contentId: "<foreign>",
+          inline: true,
+          visible: false,
+          blobId: foreignStage.blobId,
+          status: "ready",
+        });
+      await richHtml(
+        '<h2>Title</h2><p><b>Rich</b> <a href="https://example.com/">link</a></p><table><tr><td>Table</td></tr></table><img src="cid:logo"><img src="cid:foreign"><img src="https://tracker.invalid/pixel">',
+      );
+      await database.db
+        .update(messages)
+        .set({ from: [{ address: "alice@example.com" }] })
+        .where(eq(messages.id, messageId));
+      await database.db
+        .update(messageContents)
+        .set({ plainText: null })
+        .where(eq(messageContents.messageId, messageId));
+      const inline = (
+        await content.detail(accountId, mailboxId, messageId)
+      ).attachments.find((a) => a.inline)!;
+      const staged = await attachments.upload(
+        Readable.from([png]),
+        "logo.png",
+        "image/png",
+      );
+      const [blob] = await database.db
+        .select()
+        .from(stagedAttachments)
+        .where(eq(stagedAttachments.id, staged.id));
+      await database.db
+        .update(messageAttachments)
+        .set({ blobId: blob.blobId, status: "ready" })
+        .where(eq(messageAttachments.id, inline.id));
+      const preparation = new ComposePreparationService(
+        database.db,
+        content,
+        attachments,
+      );
+      const ready = await preparation.prepare({ ...source(), mode });
+      expect(ready.status).toBe("ready");
+      if (ready.status !== "ready") throw Error();
+      const resources = [...richResourceIds(ready.prefill.richDocument!)];
+      expect(resources).toEqual([inline.id]);
+      const output = serializeRichDocument(
+        ready.prefill.richDocument,
+        new Map([[inline.id, `${randomUUID()}@maildock.invalid`]]),
+      );
+      expect(output.html).toContain("<strong>Rich</strong>");
+      expect(output.html).toContain("<table");
+      expect(output.html).toContain("https://tracker.invalid/pixel");
+      expect(output.plainText).toContain("Image unavailable");
+      expect(ready.prefill.attachments?.filter((a) => !a.inline)).toHaveLength(
+        mode === "forward" ? 1 : 0,
+      );
+      const row = await draftService().create({
+        ...draftInput(),
+        richDocument: ready.prefill.richDocument,
+        source: { ...source(), mode },
+        attachments: ready.prefill.attachments
+          ?.filter((a) => a.inline)
+          .map((a) => ({ id: a.id, kind: "incoming", inline: true })),
+      });
+      const substituted = plainTextDocument("Body");
+      substituted.editor.root.children![0].children!.push({
+        type: "maildock-image",
+        version: 1,
+        resourceId: otherAttachmentId,
+        alt: "Foreign",
+        width: 480,
+      });
+      await expect(
+        draftService().create({
+          ...draftInput(),
+          source: { ...source(), mode },
+          richDocument: substituted,
+          attachments: [
+            { id: otherAttachmentId, kind: "incoming", inline: true },
+          ],
+        }),
+      ).rejects.toThrow("unavailable");
+      const sent = await outgoing.create(undefined, {
+        id: row.id,
+        expectedRevision: row.revision,
+      });
+      const message = (
+        await database.db
+          .select()
+          .from(outgoingMessages)
+          .where(eq(outgoingMessages.id, sent.id))
+      )[0];
+      expect(message.html).toContain("cid:");
+      expect(message.html).not.toContain("cid:logo");
+      expect(
+        (await database.db.select().from(outgoingMessageAttachments)).filter(
+          (a) => a.inline,
+        ),
+      ).toHaveLength(1);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
   const updateFields = (row: Awaited<ReturnType<DraftService["get"]>>) => ({
     accountId: row.accountId,
     to: row.to,

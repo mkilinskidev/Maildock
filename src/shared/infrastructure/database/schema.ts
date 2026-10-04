@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
 import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
+import type { RichDocument } from "../../../modules/mail/domain/rich-document";
 
 export const outgoingMessages = pgTable(
   "outgoing_messages",
@@ -31,6 +32,8 @@ export const outgoingMessages = pgTable(
     bcc: jsonb("bcc").$type<OutgoingAddress[]>().notNull(),
     subject: text("subject").notNull(),
     plainText: text("plain_text").notNull(),
+    richDocument: jsonb("rich_document").$type<RichDocument>(),
+    html: text("html"),
     messageId: text("message_id").notNull(),
     inReplyTo: text("in_reply_to"),
     references: jsonb("references").$type<string[]>().default([]).notNull(),
@@ -192,6 +195,7 @@ export const stagedAttachments = pgTable(
   "staged_attachments",
   {
     id: uuid("id").primaryKey(),
+    draftId: uuid("draft_id"),
     blobId: uuid("blob_id")
       .notNull()
       .references(() => blobs.id, { onDelete: "restrict" }),
@@ -219,6 +223,9 @@ export const outgoingMessageAttachments = pgTable(
       .notNull()
       .references(() => outgoingMessages.id, { onDelete: "restrict" }),
     position: integer("position").notNull(),
+    resourceId: uuid("resource_id"),
+    contentId: text("content_id"),
+    inline: boolean("inline").default(false).notNull(),
     blobId: uuid("blob_id")
       .notNull()
       .references(() => blobs.id, { onDelete: "restrict" }),
@@ -1003,6 +1010,7 @@ export const drafts = pgTable(
     bcc: text("bcc").default("").notNull(),
     subject: text("subject").default("").notNull(),
     plainText: text("plain_text").default("").notNull(),
+    richDocument: jsonb("rich_document").$type<RichDocument>(),
     revision: integer("revision").default(1).notNull(),
     status: text("status").default("active").notNull(),
     outgoingMessageId: uuid("outgoing_message_id").references(
@@ -1042,6 +1050,8 @@ export const draftAttachments = pgTable(
       .references(() => drafts.id, { onDelete: "cascade" }),
     id: uuid("id").notNull(),
     kind: text("kind").notNull(),
+    inline: boolean("inline").default(false).notNull(),
+    contentId: text("content_id"),
     blobId: uuid("blob_id").references(() => blobs.id, {
       onDelete: "restrict",
     }),

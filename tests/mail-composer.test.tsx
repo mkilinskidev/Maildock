@@ -8,6 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MailComposer, sendStatusText } from "@/components/mail-composer";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import { MailClient } from "@/components/mail-client";
+import {
+  $getRoot,
+  $createParagraphNode,
+  $createTextNode,
+  getEditorPropertyFromDOMNode,
+  type LexicalEditor,
+} from "lexical";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -70,6 +77,18 @@ describe("compose UI", () => {
     prefill?: ComposePrefill,
     draft?: DraftView,
   ) {
+    // jsdom has selection ranges but no layout engine. Lexical's caret scroll
+    // code needs these geometry methods when inserting a link at the caret.
+    if (!Range.prototype.getBoundingClientRect)
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value: () => new DOMRect(),
+      });
+    if (!Range.prototype.getClientRects)
+      Object.defineProperty(Range.prototype, "getClientRects", {
+        configurable: true,
+        value: () => [],
+      });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     host = document.createElement("div");
     document.body.append(host);
@@ -92,6 +111,20 @@ describe("compose UI", () => {
     const element = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(
       `[aria-label="${label}"]`,
     )!;
+    if (label === "Message body") {
+      const editor = getEditorPropertyFromDOMNode(element) as LexicalEditor;
+      await act(async () =>
+        editor!.update(
+          () => {
+            $getRoot()
+              .clear()
+              .append($createParagraphNode().append($createTextNode(value)));
+          },
+          { discrete: true },
+        ),
+      );
+      return;
+    }
     const prototype =
       element.tagName === "TEXTAREA"
         ? HTMLTextAreaElement.prototype
@@ -103,6 +136,12 @@ describe("compose UI", () => {
       );
       element.dispatchEvent(new Event("input", { bubbles: true }));
     });
+  }
+  function bodyText() {
+    const editor = getEditorPropertyFromDOMNode(
+      host.querySelector('[aria-label="Message body"]'),
+    ) as LexicalEditor;
+    return editor.getEditorState().read(() => $getRoot().getTextContent());
   }
   async function submit() {
     await act(async () => {
@@ -125,6 +164,46 @@ describe("compose UI", () => {
       picker.dispatchEvent(new Event("change", { bubbles: true })),
     );
   }
+  it("inserts a visible safe link at an empty caret and persists its authoritative rich document", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async (url, init) =>
+        savedDraftResponse(url, init) ?? Response.json({ id: "outgoing" }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    const prompt = window.prompt;
+    window.prompt = () => "https://example.com/";
+    try {
+      await act(async () =>
+        host
+          .querySelector<HTMLButtonElement>('button[aria-label="Link"]')!
+          .click(),
+      );
+      expect(
+        host
+          .querySelector('[aria-label="Message body"] a')
+          ?.getAttribute("href"),
+      ).toBe("https://example.com/");
+      expect(bodyText()).toBe("https://example.com/");
+      await input("To", "to@example.com");
+      await submit();
+      const body = JSON.parse(
+        fetch.mock.calls.find(([url]) => String(url) === "/api/drafts")![1]!
+          .body as string,
+      );
+      expect(
+        body.richDocument.editor.root.children[0].children[0],
+      ).toMatchObject({
+        type: "link",
+        url: "https://example.com/",
+        rel: null,
+        target: null,
+      });
+      expect(host.textContent).not.toContain("unsupported formatting");
+    } finally {
+      window.prompt = prompt;
+    }
+  });
   it("durably uploads before Send and retains all editor fields after removal", async () => {
     let finish!: (response: Response) => void;
     const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
@@ -172,9 +251,10 @@ describe("compose UI", () => {
       "/api/attachments/staged/staged",
       { method: "DELETE" },
     ]);
-    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
-      "Keep body",
-    );
+    expect(
+      host.querySelector<HTMLElement>('[aria-label="Message body"]')!
+        .textContent,
+    ).toBe("Keep body");
     for (const [label, value] of [
       ["Subject", "Keep subject"],
       ["To", "recipient@example.com"],
@@ -202,9 +282,10 @@ describe("compose UI", () => {
     expect(
       host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
     ).toBe(true);
-    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
-      "Keep body",
-    );
+    expect(
+      host.querySelector<HTMLElement>('[aria-label="Message body"]')!
+        .textContent,
+    ).toBe("Keep body");
     await act(async () =>
       host
         .querySelector<HTMLButtonElement>('[aria-label="Remove invoice.pdf"]')!
@@ -268,7 +349,7 @@ describe("compose UI", () => {
       ([url]) => String(url) === "/api/drafts",
     )!;
     expect(JSON.parse(send[1]!.body as string).attachments).toEqual([
-      { kind: "incoming", id: "incoming" },
+      { kind: "incoming", id: "incoming", inline: false },
     ]);
   });
   it("shows failed Forward preparation and excludes removed incoming attachments without deleting cached data", async () => {
@@ -303,9 +384,10 @@ describe("compose UI", () => {
         String(url).startsWith("/api/attachments/"),
       ),
     ).toHaveLength(1);
-    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
-      "Quoted",
-    );
+    expect(
+      host.querySelector<HTMLElement>('[aria-label="Message body"]')!
+        .textContent,
+    ).toBe("Quoted");
   });
   it("defaults to the relevant account, allows only configured account selection and queues all compose fields", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(
@@ -336,6 +418,7 @@ describe("compose UI", () => {
       bcc: "hidden@example.com",
       subject: "Cześć",
       plainText: "Zażółć gęślą jaźń",
+      richDocument: expect.objectContaining({ version: 1 }),
       id: expect.any(String),
       attachments: [],
     });
@@ -373,9 +456,7 @@ describe("compose UI", () => {
       expect(
         host.querySelector<HTMLInputElement>('[aria-label="To"]')!.value,
       ).toBe(mode === "forward" ? "" : "alice@example.com");
-      expect(
-        host.querySelector<HTMLTextAreaElement>("textarea")!.selectionStart,
-      ).toBe(0);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
       expect(host.textContent).not.toContain(
         "Original attachments are not included",
       );
@@ -398,6 +479,7 @@ describe("compose UI", () => {
         bcc: "private@example.com",
         subject: "Edited",
         plainText: "Edited body",
+        richDocument: expect.objectContaining({ version: 1 }),
         id: expect.any(String),
         attachments: [],
         source,
@@ -415,9 +497,10 @@ describe("compose UI", () => {
     await input("Bcc", "hidden@example.com");
     await input("Message body", "Keep this content");
     await submit();
-    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
-      "Keep this content",
-    );
+    expect(
+      host.querySelector<HTMLElement>('[aria-label="Message body"]')!
+        .textContent,
+    ).toBe("Keep this content");
     expect(
       host.querySelector<HTMLInputElement>('[aria-label="Bcc"]')!.value,
     ).toBe("hidden@example.com");
@@ -524,8 +607,10 @@ describe("compose UI", () => {
         ["Message body", draft.plainText],
       ])
         expect(
-          host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
-            .value,
+          label === "Message body"
+            ? bodyText()
+            : host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+                .value,
         ).toBe(value);
       if (mode === "forward") expect(host.textContent).toContain("invoice.pdf");
       await act(async () => {
@@ -673,9 +758,10 @@ describe("compose UI", () => {
     });
     root = undefined;
     await render(vi.fn(), undefined, recovery);
-    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
-      "Last second edit",
-    );
+    expect(
+      host.querySelector<HTMLElement>('[aria-label="Message body"]')!
+        .textContent,
+    ).toBe("Last second edit");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });

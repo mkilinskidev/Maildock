@@ -13,6 +13,7 @@ import { attackFixtures, hostileMime, png } from "./fixtures";
 import { parseFixture } from "./pipeline";
 import { renderEmailDocument } from "../../src/modules/mail/infrastructure/render-email-document";
 import { createContentSecurityPolicy } from "../../src/shared/infrastructure/security/content-security-policy";
+import { verifyComposeBrowser } from "./compose-browser";
 
 async function listen(server: Server) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -336,6 +337,7 @@ try {
     sandbox,
     referrerPolicy,
     results,
+    compose: await verifyComposeBrowser(browser, trapOrigin),
   };
   await mkdir(".security-results", { recursive: true });
   await writeFile(

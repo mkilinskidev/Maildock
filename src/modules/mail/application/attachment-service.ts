@@ -200,15 +200,29 @@ export class AttachmentService {
     source: AsyncIterable<Uint8Array>,
     filename: string | null,
     contentType: string | null,
+    draftId?: string,
+    inline = false,
   ) {
     const blob = await this.storage.put(source, this.limits.maxAttachmentBytes);
     const id = randomUUID();
     const name = safeFilename(filename),
       type = safeContentType(contentType);
+    if (inline) {
+      const bytes = await readVerifiedBlob(
+        this.storage,
+        blob,
+        this.limits.maxAttachmentBytes,
+      );
+      if (!draftId || !isSafeRaster(bytes, type))
+        throw new AttachmentUnavailableError(
+          "Unsupported or invalid inline image.",
+        );
+    }
     await this.db.transaction(async (tx) => {
       const blobId = await registerBlob(tx, blob);
       await tx.insert(stagedAttachments).values({
         id,
+        draftId: draftId ?? null,
         blobId,
         filename: name,
         contentType: type,
@@ -223,6 +237,43 @@ export class AttachmentService {
       status: "ready",
       error: null,
     };
+  }
+  async composeResource(draftId: string, attachmentId: string) {
+    const [saved] = await this.db
+      .select({ a: draftAttachments, blob: blobs })
+      .from(draftAttachments)
+      .innerJoin(blobs, eq(blobs.id, draftAttachments.blobId))
+      .where(
+        and(
+          eq(draftAttachments.draftId, draftId),
+          eq(draftAttachments.id, attachmentId),
+          eq(draftAttachments.inline, true),
+        ),
+      );
+    const [staged] = saved
+      ? []
+      : await this.db
+          .select({ a: stagedAttachments, blob: blobs })
+          .from(stagedAttachments)
+          .innerJoin(blobs, eq(blobs.id, stagedAttachments.blobId))
+          .where(
+            and(
+              eq(stagedAttachments.id, attachmentId),
+              eq(stagedAttachments.draftId, draftId),
+              eq(stagedAttachments.status, "ready"),
+            ),
+          );
+    const row = saved ?? staged;
+    if (!row || (staged && staged.a.expiresAt <= new Date()))
+      throw new AttachmentUnavailableError("Inline resource is unavailable.");
+    const bytes = await readVerifiedBlob(
+      this.storage,
+      storedBlob(row.blob),
+      this.limits.maxAttachmentBytes,
+    );
+    if (!isSafeRaster(bytes, row.a.contentType))
+      throw new AttachmentUnavailableError("Invalid inline image.");
+    return { bytes, type: row.a.contentType };
   }
   async removeStaged(id: string) {
     const rows = await this.db

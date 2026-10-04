@@ -1,5 +1,6 @@
 import type { AttachmentView } from "./attachments";
 import { z } from "zod";
+import type { RichDocument } from "./rich-document";
 
 export const composeMode = z.enum(["reply", "reply_all", "forward"]);
 export type ComposeMode = z.infer<typeof composeMode>;
@@ -18,6 +19,7 @@ export type ComposePrefill = {
   cc: string;
   subject: string;
   plainText: string;
+  richDocument?: RichDocument;
   source: SourceContext;
   attachmentsOmitted: boolean;
   attachments?: AttachmentView[];

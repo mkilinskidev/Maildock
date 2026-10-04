@@ -2,6 +2,7 @@ import { z } from "zod";
 import { sourceContext } from "./compose-source";
 import type { SourceContext } from "./compose-source";
 import type { AttachmentView } from "./attachments";
+import { richDocumentSchema, type RichDocument } from "./rich-document";
 export class DraftConflictError extends Error {
   constructor() {
     super(
@@ -15,11 +16,16 @@ export const draftFields = z.object({
   cc: z.string().max(8000).default(""),
   bcc: z.string().max(8000).default(""),
   subject: z.string().max(998),
-  plainText: z.string().max(500000),
+  plainText: z.string().max(500000).default(""),
+  richDocument: richDocumentSchema.optional(),
   attachments: z
     .array(
       z
-        .object({ id: z.uuid(), kind: z.enum(["staged", "incoming", "draft"]) })
+        .object({
+          id: z.uuid(),
+          kind: z.enum(["staged", "incoming", "draft"]),
+          inline: z.boolean().default(false),
+        })
         .strict(),
     )
     .max(100)
@@ -46,6 +52,7 @@ export type DraftView = {
   bcc: string;
   subject: string;
   plainText: string;
+  richDocument?: RichDocument | null;
   revision: number;
   status: string;
   outgoingMessageId: string | null;

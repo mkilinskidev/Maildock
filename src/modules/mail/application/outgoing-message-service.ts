@@ -42,6 +42,12 @@ import {
 } from "../domain/outgoing-message";
 import { buildOutgoingMime } from "../infrastructure/outgoing-mime";
 import type { OutgoingLock } from "../infrastructure/outgoing-lock";
+import {
+  plainTextDocument,
+  richResourceIds,
+  serializeRichDocument,
+} from "../domain/rich-document";
+import { isSafeRaster } from "../infrastructure/render-email-document";
 
 export class OutgoingValidationError extends Error {}
 export class OutgoingMessageService {
@@ -95,10 +101,12 @@ export class OutgoingMessageService {
           bcc: row.bcc,
           subject: row.subject,
           plainText: row.plainText,
+          richDocument: row.richDocument ?? plainTextDocument(row.plainText),
           ...(row.source ? { source: row.source } : {}),
           attachments: selection.map((a) => ({
             id: a.id,
             kind: a.blobId ? "draft" : "incoming",
+            inline: a.inline,
           })),
         };
       }
@@ -107,7 +115,11 @@ export class OutgoingMessageService {
         const schema = draft
           ? composeInput.extend({
               attachments: z.array(
-                z.object({ id: z.uuid(), kind: z.enum(["draft", "incoming"]) }),
+                z.object({
+                  id: z.uuid(),
+                  kind: z.enum(["draft", "incoming"]),
+                  inline: z.boolean().default(false),
+                }),
               ),
             })
           : composeInput;
@@ -139,6 +151,19 @@ export class OutgoingMessageService {
           "Select an enabled, configured sending account.",
         );
       const { source, attachments: selection, ...snapshot } = values;
+      snapshot.richDocument =
+        snapshot.richDocument ?? plainTextDocument(snapshot.plainText);
+      const referenced = richResourceIds(snapshot.richDocument);
+      if (
+        selection.length > 100 ||
+        new Set(selection.map((a) => a.id)).size !== selection.length
+      )
+        throw new OutgoingValidationError("Invalid resource selection.");
+      if (referenced.size && !draft)
+        throw new OutgoingValidationError(
+          "Inline resources require a durable draft.",
+        );
+      const resourceCids = new Map<string, string>();
       let thread = {
         inReplyTo: null as string | null,
         references: [] as string[],
@@ -176,10 +201,18 @@ export class OutgoingMessageService {
         size: number;
         sha256: string;
         content: Buffer;
+        inline: boolean;
+        contentId: string | null;
+        resourceId: string;
       }[] = [];
       let total = 0;
       for (const selected of selection) {
         let blob, filename, contentType;
+        let contentId: string | null = null;
+        if (selected.inline !== referenced.has(selected.id))
+          throw new OutgoingValidationError(
+            "Invalid inline resource relationship.",
+          );
         if (selected.kind === "draft" && draft) {
           const [saved] = await tx
             .select({ a: draftAttachments, blob: blobs })
@@ -196,6 +229,9 @@ export class OutgoingMessageService {
           blob = saved.blob;
           filename = saved.a.filename;
           contentType = saved.a.contentType;
+          if (saved.a.inline !== selected.inline)
+            throw new OutgoingValidationError("Invalid resource disposition.");
+          contentId = saved.a.contentId;
         } else if (selected.kind === "staged") {
           const [staged] = await tx
             .select({ staged: stagedAttachments, blob: blobs })
@@ -272,8 +308,24 @@ export class OutgoingMessageService {
           size: blob.size,
           sha256: blob.sha256,
           content,
+          inline: selected.inline,
+          contentId,
+          resourceId: selected.id,
         });
+        if (selected.inline) {
+          if (
+            !contentId ||
+            !/^[0-9a-f-]{36}@maildock\.invalid$/.test(contentId) ||
+            !isSafeRaster(content, contentType)
+          )
+            throw new OutgoingValidationError(
+              "Inline image is invalid or corrupt.",
+            );
+          resourceCids.set(selected.id, contentId);
+        }
       }
+      const body = serializeRichDocument(snapshot.richDocument, resourceCids);
+      snapshot.plainText = body.plainText;
       let from;
       let mime: Buffer;
       try {
@@ -287,6 +339,7 @@ export class OutgoingMessageService {
         from = { address: addresses[0].address, name: account.displayName };
         mime = await buildOutgoingMime({
           ...snapshot,
+          html: body.html,
           ...thread,
           from,
           messageId,
@@ -306,6 +359,7 @@ export class OutgoingMessageService {
       const mimeBlobId = await registerBlob(tx, mimeBlob);
       await tx.insert(outgoingMessages).values({
         ...snapshot,
+        html: body.html,
         ...thread,
         id,
         from,
@@ -323,6 +377,9 @@ export class OutgoingMessageService {
             contentType: attachment.contentType,
             size: attachment.size,
             sha256: attachment.sha256,
+            inline: attachment.inline,
+            contentId: attachment.contentId,
+            resourceId: attachment.resourceId,
             outgoingMessageId: id,
             position,
           })),

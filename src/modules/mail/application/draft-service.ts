@@ -14,6 +14,14 @@ import {
 import { draftCreate, draftUpdate, DraftConflictError } from "../domain/draft";
 import type { z } from "zod";
 import type { draftFields } from "../domain/draft";
+import { randomUUID } from "node:crypto";
+import {
+  plainTextDocument,
+  richResourceIds,
+  serializeRichDocument,
+  validateRichDocument,
+} from "../domain/rich-document";
+import { SAFE_INLINE_IMAGE_TYPES } from "../infrastructure/render-email-document";
 type DraftTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export class DraftService {
@@ -78,6 +86,9 @@ export class DraftService {
       .orderBy(draftAttachments.position);
     return {
       ...row,
+      richDocument: validateRichDocument(
+        row.richDocument ?? plainTextDocument(row.plainText),
+      ),
       attachments: selection.map(({ a, blob, incoming }) => ({
         id: a.id,
         kind: blob ? ("draft" as const) : ("incoming" as const),
@@ -87,8 +98,8 @@ export class DraftService {
           blob?.size.toString() ?? incoming?.declaredSize?.toString() ?? null,
         status: blob ? "ready" : (incoming?.status ?? "failed"),
         error: blob ? null : (incoming?.error ?? null),
-        visible: true,
-        inline: false,
+        visible: !a.inline,
+        inline: a.inline,
       })),
     };
   }
@@ -103,20 +114,47 @@ export class DraftService {
       .select()
       .from(draftAttachments)
       .where(eq(draftAttachments.draftId, id));
-    const rows = [];
+    const rows: (typeof draftAttachments.$inferInsert)[] = [];
+    const referenced = richResourceIds(
+      values.richDocument ?? plainTextDocument(values.plainText),
+    );
+    if (referenced.size > 50 || values.attachments.length > 100)
+      throw new OutgoingValidationError("Too many message resources.");
     for (const [position, selected] of values.attachments.entries()) {
+      if (selected.inline && !referenced.has(selected.id))
+        throw new OutgoingValidationError(
+          "Inline resource must be referenced by the document.",
+        );
+      if (!selected.inline && referenced.has(selected.id))
+        throw new OutgoingValidationError(
+          "Image must use an inline resource association.",
+        );
       const saved = previous.find((a) => a.id === selected.id);
       if (saved?.blobId) {
+        if (saved.inline !== selected.inline)
+          throw new OutgoingValidationError(
+            "Resource disposition cannot be changed.",
+          );
         rows.push({ ...saved, position });
         continue;
       }
+      if (selected.kind === "draft")
+        throw new OutgoingValidationError(
+          "Resource does not belong to this draft.",
+        );
       if (selected.kind === "staged") {
         const [a] = await tx
           .select()
           .from(stagedAttachments)
           .where(eq(stagedAttachments.id, selected.id))
           .for("update");
-        if (!a || a.status !== "ready" || a.expiresAt <= new Date())
+        if (
+          !a ||
+          a.status !== "ready" ||
+          a.expiresAt <= new Date() ||
+          (a.draftId && a.draftId !== id) ||
+          (selected.inline && a.draftId !== id)
+        )
           throw new OutgoingValidationError(
             "Attachment unavailable or expired.",
           );
@@ -128,7 +166,18 @@ export class DraftService {
           filename: a.filename,
           contentType: a.contentType,
           position,
+          inline: selected.inline,
+          contentId: selected.inline
+            ? `${randomUUID()}@maildock.invalid`
+            : null,
         });
+        if (selected.inline && !SAFE_INLINE_IMAGE_TYPES.has(a.contentType))
+          throw new OutgoingValidationError("Unsupported inline image type.");
+        // Claim once and pin in the same transaction; another draft cannot reuse it.
+        await tx
+          .update(stagedAttachments)
+          .set({ draftId: id, status: "consumed" })
+          .where(eq(stagedAttachments.id, a.id));
       } else {
         const [a] = await tx
           .select()
@@ -137,9 +186,14 @@ export class DraftService {
           .for("share");
         if (
           !a ||
-          source?.mode !== "forward" ||
+          !source ||
           a.messageId !== source.messageId ||
-          !a.visible
+          (selected.inline
+            ? !a.contentId ||
+              !SAFE_INLINE_IMAGE_TYPES.has(a.contentType) ||
+              a.status !== "ready" ||
+              !a.blobId
+            : source.mode !== "forward" || !a.visible)
         )
           throw new OutgoingValidationError("Forward attachment unavailable.");
         rows.push({
@@ -150,14 +204,37 @@ export class DraftService {
           filename: a.filename ?? "Attachment",
           contentType: a.contentType,
           position,
+          inline: selected.inline,
+          contentId: selected.inline
+            ? `${randomUUID()}@maildock.invalid`
+            : null,
         });
       }
     }
+    if (
+      [...referenced].some(
+        (resourceId) => !rows.some((a) => a.id === resourceId && a.inline),
+      )
+    )
+      throw new OutgoingValidationError(
+        "Inline resource is unavailable in this draft.",
+      );
     await tx.delete(draftAttachments).where(eq(draftAttachments.draftId, id));
     if (rows.length) await tx.insert(draftAttachments).values(rows);
   }
   async create(input: unknown) {
     const { id, source, attachments, ...fields } = draftCreate.parse(input);
+    fields.richDocument =
+      fields.richDocument ?? plainTextDocument(fields.plainText);
+    fields.plainText = serializeRichDocument(
+      fields.richDocument,
+      new Map(
+        [...richResourceIds(fields.richDocument)].map((id) => [
+          id,
+          `${id}@maildock.invalid`,
+        ]),
+      ),
+    ).plainText;
     return this.db.transaction(async (tx) => {
       // A stable client UUID also makes retry after a lost create response safe.
       const inserted = await tx
@@ -205,6 +282,17 @@ export class DraftService {
   async update(id: string, input: unknown) {
     const { expectedRevision, attachments, ...fields } =
       draftUpdate.parse(input);
+    fields.richDocument =
+      fields.richDocument ?? plainTextDocument(fields.plainText);
+    fields.plainText = serializeRichDocument(
+      fields.richDocument,
+      new Map(
+        [...richResourceIds(fields.richDocument)].map((id) => [
+          id,
+          `${id}@maildock.invalid`,
+        ]),
+      ),
+    ).plainText;
     return this.db.transaction(async (tx) => {
       const [row] = await tx
         .select()

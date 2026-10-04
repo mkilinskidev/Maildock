@@ -1,6 +1,7 @@
 import { sourceContext } from "./compose-source";
 import { z } from "zod";
 import addressparser from "nodemailer/lib/addressparser";
+import { richDocumentSchema } from "./rich-document";
 
 export type OutgoingAddress = Readonly<{ name?: string; address: string }>;
 export const UNCERTAIN_SEND =
@@ -10,10 +11,15 @@ export const composeInput = z
   .object({
     accountId: z.uuid(),
     source: sourceContext.optional(),
+    richDocument: richDocumentSchema.optional(),
     attachments: z
       .array(
         z
-          .object({ kind: z.enum(["staged", "incoming"]), id: z.uuid() })
+          .object({
+            kind: z.enum(["staged", "incoming"]),
+            id: z.uuid(),
+            inline: z.boolean().default(false),
+          })
           .strict(),
       )
       .max(100)

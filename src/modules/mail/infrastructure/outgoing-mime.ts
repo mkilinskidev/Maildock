@@ -11,11 +11,18 @@ export async function buildOutgoingMime(message: {
   cc: OutgoingAddress[];
   subject: string;
   plainText: string;
+  html?: string | null;
   messageId: string;
   createdAt: Date;
   inReplyTo?: string | null;
   references?: string[];
-  attachments?: { filename: string; contentType: string; content: Buffer }[];
+  attachments?: {
+    filename: string;
+    contentType: string;
+    content: Buffer;
+    contentId?: string | null;
+    inline?: boolean;
+  }[];
   maxMimeBytes?: number;
 }): Promise<Buffer> {
   if (
@@ -26,6 +33,15 @@ export async function buildOutgoingMime(message: {
         message.references.some((id) => !validMessageId(id))))
   )
     throw new Error("Invalid threading headers.");
+  if (
+    message.attachments?.some(
+      (a) =>
+        a.inline &&
+        (!a.contentId ||
+          !/^[0-9a-f-]{36}@maildock\.invalid$/.test(a.contentId)),
+    )
+  )
+    throw new Error("Invalid inline Content-ID.");
   const compiled = new MailComposer({
     from: message.from,
     to: message.to,
@@ -35,6 +51,12 @@ export async function buildOutgoingMime(message: {
       content: Buffer.from(message.plainText, "utf8"),
       contentTransferEncoding: "base64",
     },
+    html: message.html
+      ? {
+          content: Buffer.from(message.html, "utf8"),
+          contentTransferEncoding: "base64",
+        }
+      : undefined,
     date: message.createdAt,
     messageId: message.messageId,
     inReplyTo: message.inReplyTo ?? undefined,
@@ -44,8 +66,11 @@ export async function buildOutgoingMime(message: {
     disableFileAccess: true,
     disableUrlAccess: true,
     attachments: message.attachments?.map((attachment) => ({
-      ...attachment,
-      contentDisposition: "attachment",
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      content: attachment.content,
+      cid: attachment.inline ? attachment.contentId! : undefined,
+      contentDisposition: attachment.inline ? "inline" : "attachment",
       contentTransferEncoding: "base64",
     })),
   }).compile();

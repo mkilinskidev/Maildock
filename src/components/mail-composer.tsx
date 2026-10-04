@@ -2,11 +2,19 @@
 
 import type { DraftView } from "@/modules/mail/domain/draft";
 import type { ComposePrefill } from "@/modules/mail/domain/compose-source";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, X, Paperclip } from "lucide-react";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
 import { attachmentSize } from "./attachment-list";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
+import { RichComposer } from "./rich-composer";
+import {
+  plainTextDocument,
+  richResourceIds,
+  serializeRichDocument,
+  validateRichDocument,
+  type RichDocument,
+} from "@/modules/mail/domain/rich-document";
 
 export function sendingAccountAvailable(account: MailAccountView) {
   return (
@@ -46,11 +54,6 @@ export function MailComposer({
   onSaved?: () => void;
   onClose: () => void;
 }) {
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    bodyRef.current?.focus();
-    bodyRef.current?.setSelectionRange(0, 0);
-  }, []);
   const usable = accounts.filter(sendingAccountAvailable);
   const [from, setFrom] = useState(
     draft?.accountId ??
@@ -70,9 +73,21 @@ export function MailComposer({
   const [subject, setSubject] = useState(
     draft?.subject ?? prefill?.subject ?? "",
   );
-  const [plainText, setPlainText] = useState(
-    draft?.plainText ?? prefill?.plainText ?? "",
+  const [richDocument, setRichDocument] = useState<RichDocument>(() =>
+    validateRichDocument(
+      draft?.richDocument ??
+        prefill?.richDocument ??
+        plainTextDocument(draft?.plainText ?? prefill?.plainText ?? ""),
+    ),
   );
+  const referenced = richResourceIds(richDocument);
+  const plainText = serializeRichDocument(
+    richDocument,
+    new Map([...referenced].map((id) => [id, `${id}@maildock.invalid`])),
+  ).plainText;
+  const [editorValid, setEditorValid] = useState(true);
+  const editorValidRef = useRef(true);
+  editorValidRef.current = editorValid;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -97,13 +112,15 @@ export function MailComposer({
     bcc,
     subject,
     plainText,
+    richDocument,
     attachments: attachments
       .filter(
         (a) =>
           a.status !== "uploading" &&
           !(a.kind === "staged" && a.status === "failed"),
       )
-      .map(({ id, kind }) => ({ id, kind })),
+      .filter((a) => !a.inline || referenced.has(a.id))
+      .map(({ id, kind, inline }) => ({ id, kind, inline })),
   });
   const latest = useRef(snapshot);
   latest.current = snapshot;
@@ -117,17 +134,20 @@ export function MailComposer({
     bcc,
     subject,
     plainText,
+    richDocument,
     source: source ?? null,
     composeMode: source?.mode ?? "new",
     revision: revision.current,
     status: "active",
     outgoingMessageId: null,
     recovery: true,
-    attachments: attachments.filter(
-      (a) =>
-        a.status !== "uploading" &&
-        !(a.kind === "staged" && a.status === "failed"),
-    ),
+    attachments: attachments
+      .filter(
+        (a) =>
+          a.status !== "uploading" &&
+          !(a.kind === "staged" && a.status === "failed"),
+      )
+      .filter((a) => !a.inline || referenced.has(a.id)),
   };
   function meaningful() {
     const value = JSON.parse(latest.current);
@@ -141,6 +161,7 @@ export function MailComposer({
     );
   }
   function backup() {
+    if (!editorValidRef.current) return;
     if (!meaningful()) {
       try {
         localStorage.removeItem(`maildock-draft:${draftId.current}`);
@@ -154,16 +175,21 @@ export function MailComposer({
       recovery.current
     ) {
       try {
-        localStorage.setItem(
-          `maildock-draft:${draftId.current}`,
-          JSON.stringify({ ...recovery.current, revision: revision.current }),
-        );
+        const serialized = JSON.stringify({
+          ...recovery.current,
+          revision: revision.current,
+        });
+        if (new TextEncoder().encode(serialized).length <= 1_000_000)
+          localStorage.setItem(`maildock-draft:${draftId.current}`, serialized);
+        else localStorage.removeItem(`maildock-draft:${draftId.current}`);
       } catch {
         /* Server autosave remains available. */
       }
     }
   }
   async function save() {
+    if (!editorValidRef.current)
+      throw Error("Undo unsupported formatting before saving or sending.");
     if (saving.current) return saving.current;
     if (
       stopped.current ||
@@ -206,6 +232,8 @@ export function MailComposer({
             ["accountId", "to", "cc", "bcc", "subject", "plainText"].every(
               (key) => requested[key] === result[key as keyof DraftView],
             ) &&
+            JSON.stringify(requested.richDocument) ===
+              JSON.stringify(result.richDocument) &&
             JSON.stringify(
               requested.attachments.map((a: { id: string }) => a.id),
             ) === JSON.stringify(result.attachments.map((a) => a.id));
@@ -347,9 +375,8 @@ export function MailComposer({
       clearTimeout(timer);
     };
   }, [attachments]);
-  async function upload(files: FileList | null) {
-    if (!files) return;
-    for (const file of Array.from(files)) {
+  const uploadFile = useCallback(
+    async (file: File, inline: boolean): Promise<AttachmentView | null> => {
       const temporaryId = crypto.randomUUID();
       setAttachments((current) => [
         ...current,
@@ -361,8 +388,8 @@ export function MailComposer({
           size: null,
           status: "uploading",
           error: null,
-          visible: true,
-          inline: false,
+          visible: !inline,
+          inline,
         },
       ]);
       try {
@@ -371,6 +398,8 @@ export function MailComposer({
           headers: {
             "Content-Type": file.type || "application/octet-stream",
             "X-Attachment-Filename": encodeURIComponent(file.name),
+            "X-Draft-Id": draftId.current,
+            "X-Attachment-Disposition": inline ? "inline" : "attachment",
           },
           body: file,
         });
@@ -386,12 +415,13 @@ export function MailComposer({
                   ...a,
                   ...result,
                   kind: "staged",
-                  visible: true,
-                  inline: false,
+                  visible: !inline,
+                  inline,
                 }
               : a,
           ),
         );
+        return { ...result, inline, visible: !inline };
       } catch (failure) {
         setAttachments((current) =>
           current.map((a) =>
@@ -407,8 +437,14 @@ export function MailComposer({
               : a,
           ),
         );
+        return null;
       }
-    }
+    },
+    [],
+  );
+  async function upload(files: FileList | null) {
+    if (!files) return;
+    for (const file of Array.from(files)) await uploadFile(file, false);
     if (fileRef.current) fileRef.current.value = "";
   }
   async function retryAttachment(a: AttachmentView) {
@@ -484,7 +520,18 @@ export function MailComposer({
     }
   }
   return (
-    <form className="mail-composer" onSubmit={(event) => void send(event)}>
+    <form
+      className="mail-composer"
+      onSubmit={(event) => void send(event)}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (submitting || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        void upload(e.dataTransfer.files);
+      }}
+    >
       <div className="mail-detail-header composer-heading">
         <h2>
           {source
@@ -562,13 +609,15 @@ export function MailComposer({
             maxLength={998}
           />
         </label>
-        <textarea
-          ref={bodyRef}
-          aria-label="Message body"
-          value={plainText}
-          onChange={(event) => setPlainText(event.target.value)}
-          maxLength={500000}
-          placeholder="Write your message…"
+        <RichComposer
+          initialDocument={richDocument}
+          onChange={setRichDocument}
+          onError={setError}
+          onValidation={setEditorValid}
+          upload={uploadFile}
+          disabled={submitting}
+          draftId={draftId.current}
+          revision={revision.current}
         />
       </fieldset>
       <div className="composer-attachments">
@@ -589,42 +638,47 @@ export function MailComposer({
         >
           <Paperclip size={15} /> Attach files
         </button>
-        {attachments.map((a) => (
-          <div key={a.id} className="mail-attachment">
-            <Paperclip size={13} />
-            <span>
-              {a.filename || "Attachment"} · {attachmentSize(a.size)}{" "}
-              {a.status === "uploading"
-                ? "Uploading…"
-                : ["pending", "fetching"].includes(a.status)
-                  ? "Preparing attachment…"
-                  : ""}
-            </span>
-            {a.error ? (
-              <span role="alert" className="error">
-                {a.error}
+        {attachments
+          .filter(
+            (a) =>
+              !a.inline || a.status === "failed" || a.status === "uploading",
+          )
+          .map((a) => (
+            <div key={a.id} className="mail-attachment">
+              <Paperclip size={13} />
+              <span>
+                {a.filename || "Attachment"} · {attachmentSize(a.size)}{" "}
+                {a.status === "uploading"
+                  ? "Uploading…"
+                  : ["pending", "fetching"].includes(a.status)
+                    ? "Preparing attachment…"
+                    : ""}
               </span>
-            ) : null}
-            {a.kind === "incoming" &&
-            ["failed", "not_fetched"].includes(a.status) ? (
+              {a.error ? (
+                <span role="alert" className="error">
+                  {a.error}
+                </span>
+              ) : null}
+              {a.kind === "incoming" &&
+              ["failed", "not_fetched"].includes(a.status) ? (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => void retryAttachment(a)}
+                >
+                  Retry preparation
+                </button>
+              ) : null}
               <button
                 type="button"
-                disabled={submitting}
-                onClick={() => void retryAttachment(a)}
+                disabled={submitting || a.status === "uploading"}
+                aria-label={`Remove ${a.filename || "attachment"}`}
+                onClick={() => removeAttachment(a.id)}
               >
-                Retry preparation
+                Remove
               </button>
-            ) : null}
-            <button
-              type="button"
-              disabled={submitting || a.status === "uploading"}
-              aria-label={`Remove ${a.filename || "attachment"}`}
-              onClick={() => removeAttachment(a.id)}
-            >
-              Remove
-            </button>
-          </div>
-        ))}
+            </div>
+          ))}
       </div>
       <div className="composer-footer">
         {error ? (
@@ -653,7 +707,7 @@ export function MailComposer({
           <button
             className="button"
             type="submit"
-            disabled={submitting || !from || attachmentsBlocked}
+            disabled={submitting || !from || attachmentsBlocked || !editorValid}
           >
             <Send size={15} />
             {submitting ? "Queueing…" : "Send"}

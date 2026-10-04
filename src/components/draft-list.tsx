@@ -2,6 +2,10 @@
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DraftView } from "@/modules/mail/domain/draft";
+import {
+  plainTextDocument,
+  validateRichDocument,
+} from "@/modules/mail/domain/rich-document";
 export function DraftList({
   onResume,
   disabled = false,
@@ -54,7 +58,14 @@ export function DraftList({
       const backup = localStorage.getItem(`maildock-draft:${id}`);
       const response = await fetch(`/api/drafts/${id}`);
       if (backup) {
+        if (new TextEncoder().encode(backup).length > 1_000_000)
+          throw Error(
+            "Recovery copy exceeds the supported size. Reopen the saved draft.",
+          );
         const local = JSON.parse(backup) as DraftView;
+        local.richDocument = validateRichDocument(
+          local.richDocument ?? plainTextDocument(local.plainText),
+        );
         if (response.ok) {
           const remote = (await response.json()) as DraftView;
           if (local.revision !== remote.revision && local.revision !== 0) {
