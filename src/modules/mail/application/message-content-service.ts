@@ -104,8 +104,14 @@ export class MessageContentService {
       flagged: placement.flags.includes("\\Flagged"),
       attachments: await listAttachmentMetadata(this.database, messageId),
       content: {
-        status: content?.status ?? "not_fetched",
-        plainText: content?.status === "ready" ? content.plainText : null,
+        status:
+          content?.status === "ready" &&
+          content.sanitizedHtml !== null &&
+          content.policyVersion !== EMAIL_HTML_POLICY &&
+          this.scheduler
+            ? "not_fetched"
+            : (content?.status ?? "not_fetched"),
+        plainText: content?.plainText ?? null,
         sanitizedHtml:
           content?.status === "ready" ? content.sanitizedHtml : null,
         remoteContentBlocked: content?.remoteContentBlocked ?? false,
@@ -121,7 +127,9 @@ export class MessageContentService {
     if (!row.mailbox.selectable || row.mailbox.lifecycleStatus !== "active")
       throw new MessageContentUnavailableError("This mailbox is unavailable.");
     if (
-      row.content?.status === "ready" ||
+      (row.content?.status === "ready" &&
+        (row.content.sanitizedHtml === null ||
+          row.content.policyVersion === EMAIL_HTML_POLICY)) ||
       row.content?.status === "pending" ||
       row.content?.status === "fetching"
     )
@@ -162,7 +170,12 @@ export class MessageContentService {
       throw new Error("Content worker dependencies are unavailable.");
     try {
       const row = await this.placement(accountId, mailboxId, messageId);
-      if (row.content?.status === "ready") return;
+      if (
+        row.content?.status === "ready" &&
+        (row.content.sanitizedHtml === null ||
+          row.content.policyVersion === EMAIL_HTML_POLICY)
+      )
+        return;
       if (
         !row.account.enabled ||
         !row.mailbox.selectable ||
@@ -198,7 +211,7 @@ export class MessageContentService {
       if (result.html !== null) {
         try {
           const sanitized = sanitizeEmailHtml(result.html);
-          html = sanitized.html;
+          html = sanitized.html || null;
           blocked = sanitized.remoteContentBlocked;
         } catch {
           if (result.plainText === null)

@@ -9,9 +9,9 @@ import {
   Eye,
   EyeOff,
   MailOpen,
-  ShieldOff,
   CircleAlert,
 } from "lucide-react";
+import { RichEmailBody } from "./rich-email-body";
 import { AttachmentList } from "./attachment-list";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
 import type { ComposeMode } from "@/modules/mail/domain/compose-source";
@@ -45,10 +45,6 @@ function address(values: Address[]) {
     )
     .join(", ");
 }
-function shell(html: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; form-action 'none'; base-uri 'none'; style-src 'unsafe-inline'"><style>body{font:15px/1.55 system-ui,sans-serif;color:#20242b;margin:20px;overflow-wrap:anywhere}table{max-width:100%;display:block;overflow:auto}pre{white-space:pre-wrap}blockquote{border-left:3px solid #d0d7de;padding-left:1em;margin-left:0;color:#596579}</style></head><body>${html}</body></html>`;
-}
-
 export type MessageAction =
   "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "unflag";
 export function MessageReader({
@@ -63,6 +59,8 @@ export function MessageReader({
   act,
   moveAvailable,
   retryContent,
+  renderUrl,
+  contentPollIntervalMs,
 }: {
   selectedId: string;
   detail: MessageDetail | null;
@@ -75,6 +73,8 @@ export function MessageReader({
   act: (action: MessageAction) => Promise<void>;
   moveAvailable: (action: "archive" | "trash") => boolean;
   retryContent: () => Promise<void>;
+  renderUrl?: string;
+  contentPollIntervalMs?: number;
 }) {
   const sender = detail?.from[0];
   const senderName = sender?.name || sender?.address || "Unknown sender";
@@ -199,26 +199,23 @@ export function MessageReader({
               {detail.cc.length ? " · Cc: " + address(detail.cc) : ""}
             </div>
           </header>
-          {detail.content.remoteContentBlocked ? (
-            <div className="mail-privacy">
-              <ShieldOff size={15} />
-              Remote content blocked for your privacy
-            </div>
-          ) : null}
           <div className="mail-body" key={`body:${detail.id}`}>
             {detail.content.status === "ready" ? (
-              detail.content.sanitizedHtml !== null ? (
-                <iframe
-                  title="Email content"
-                  sandbox=""
-                  referrerPolicy="no-referrer"
-                  srcDoc={shell(detail.content.sanitizedHtml)}
+              detail.content.sanitizedHtml?.trim() && renderUrl ? (
+                <RichEmailBody
+                  contentPollIntervalMs={contentPollIntervalMs}
+                  key={detail.id}
+                  url={renderUrl}
+                  plainText={detail.content.plainText}
                 />
               ) : (
                 <pre>{detail.content.plainText}</pre>
               )
             ) : detail.content.status === "failed" ? (
               <div className="mail-content-failure">
+                {detail.content.plainText ? (
+                  <pre>{detail.content.plainText}</pre>
+                ) : null}
                 <p className="error">
                   <CircleAlert size={15} />{" "}
                   {detail.content.error ?? "Content fetch failed."}

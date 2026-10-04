@@ -1,5 +1,9 @@
 "use client";
 import { DraftList } from "./draft-list";
+import {
+  contentPollDelay,
+  DEFAULT_CONTENT_POLL_INTERVAL_MS,
+} from "@/shared/application/content-polling";
 import { FlatMessageList } from "./flat-message-list";
 import { ConversationMessageList } from "./conversation-message-list";
 import { MessageReader, type MessageDetail } from "./message-reader";
@@ -65,11 +69,13 @@ export function MailClient({
   mailboxesByAccount,
   rolesByAccount,
   initialConversationView = false,
+  contentPollIntervalMs = DEFAULT_CONTENT_POLL_INTERVAL_MS,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
   rolesByAccount: Record<string, MailboxRoleView[]>;
   initialConversationView?: boolean;
+  contentPollIntervalMs?: number;
 }) {
   const conversationView = initialConversationView;
   const listModeRef = useRef(conversationView);
@@ -670,25 +676,37 @@ export function MailClient({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const url = `${messageBase}/${selectedId}`;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    function scheduleNext() {
+      if (cancelled) return;
+      timer = setTimeout(
+        () => void load().catch(handleError),
+        contentPollDelay(contentPollIntervalMs, Date.now() - startedAt),
+      );
+    }
     async function load() {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new Error("Message could not be loaded.");
       const value = (await response.json()) as MessageDetail;
       if (cancelled) return;
       setDetail(value);
       setLoadingDetail(false);
       if (value.content.status === "not_fetched") {
-        const queued = await fetch(`${url}/content`, { method: "POST" });
+        const queued = await fetch(`${url}/content`, {
+          method: "POST",
+          signal: controller.signal,
+        });
         if (!queued.ok) {
           const body = (await queued.json()) as { error?: string };
           throw new Error(body.error ?? "Content could not be requested.");
         }
-        timer = setTimeout(() => void load().catch(handleError), 2500);
+        scheduleNext();
       } else if (
         value.content.status === "pending" ||
         value.content.status === "fetching"
       ) {
-        timer = setTimeout(() => void load().catch(handleError), 2500);
+        scheduleNext();
       }
     }
     function handleError(failure: unknown) {
@@ -704,9 +722,10 @@ export function MailClient({
     void load().catch(handleError);
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [messageBase, selectedId, retryNonce]);
+  }, [messageBase, selectedId, retryNonce, contentPollIntervalMs]);
 
   async function retryContent() {
     if (!selectedId) return;
@@ -1112,6 +1131,8 @@ export function MailClient({
           />
         ) : (
           <MessageReader
+            contentPollIntervalMs={contentPollIntervalMs}
+            renderUrl={`${messageBase}/${selectedId}/render`}
             selectedId={selectedId}
             detail={detail}
             loadingDetail={loadingDetail}

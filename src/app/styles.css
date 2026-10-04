@@ -853,6 +853,7 @@ a {
 }
 .mail-privacy {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 10px clamp(24px, 5vw, 64px);
@@ -883,13 +884,20 @@ a {
   overflow-y: auto;
 }
 .mail-reader > .mail-body {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
-.mail-reader > .mail-body iframe {
-  height: 100%;
+.mail-reader > .mail-body > iframe {
+  flex: 1;
+  height: 0;
   min-height: 0;
+}
+.mail-reader > .mail-body > .mail-privacy,
+.mail-reader > .mail-body > [role="status"] {
+  flex: none;
 }
 .mail-reader > .mail-attachments {
   position: relative;

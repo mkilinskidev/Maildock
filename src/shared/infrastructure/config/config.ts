@@ -1,5 +1,6 @@
 import path from "node:path";
 import { DEFAULT_ATTACHMENT_LIMITS } from "../../application/attachment-limits";
+import { DEFAULT_CONTENT_POLL_INTERVAL_MS } from "../../application/content-polling";
 
 import { z } from "zod";
 
@@ -117,6 +118,12 @@ const schema = z
       .min(30)
       .max(3600)
       .default(300),
+    MAILDOCK_CONTENT_POLL_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(2500)
+      .default(DEFAULT_CONTENT_POLL_INTERVAL_MS),
     MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES: z.coerce
       .number()
       .int()
@@ -171,6 +178,7 @@ export type AppConfig = Readonly<{
   backfillChunkSize: number;
   messageSyncConcurrency: number;
   mailPollIntervalSeconds: number;
+  contentPollIntervalMs: number;
   maxMessageTextPartBytes: number;
 }>;
 
@@ -225,6 +233,7 @@ export function parseConfig(
     backfillChunkSize: result.data.MAILDOCK_BACKFILL_CHUNK_SIZE,
     messageSyncConcurrency: result.data.MAILDOCK_MESSAGE_SYNC_CONCURRENCY,
     mailPollIntervalSeconds: result.data.MAILDOCK_MAIL_POLL_INTERVAL_SECONDS,
+    contentPollIntervalMs: result.data.MAILDOCK_CONTENT_POLL_INTERVAL_MS,
     maxMessageTextPartBytes: result.data.MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES,
   });
 }

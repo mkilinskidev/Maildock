@@ -9,6 +9,7 @@ import {
 import { db } from "@/shared/infrastructure/database/runtime-database";
 import { MailClient } from "@/components/mail-client";
 import { ConversationService } from "@/modules/mail/application/conversation-service";
+import { getConfig } from "@/shared/infrastructure/config/config";
 
 export const dynamic = "force-dynamic";
 export default async function HomePage() {
@@ -29,6 +30,7 @@ export default async function HomePage() {
   );
   return (
     <MailClient
+      contentPollIntervalMs={getConfig().contentPollIntervalMs}
       initialConversationView={await new ConversationService(db).enabled()}
       accounts={accounts}
       mailboxesByAccount={Object.fromEntries(entries)}

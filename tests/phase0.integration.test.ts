@@ -1252,7 +1252,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
       remoteContentBlocked: true,
     });
     expect(ready.content.sanitizedHtml).toContain("Hello");
-    expect(ready.content.sanitizedHtml).not.toContain("tracker.example");
+    expect(ready.content.sanitizedHtml).not.toMatch(/\ssrc=["\']https?:/);
     expect((await db.select().from(messageContents))[0]?.sanitizedHtml).toBe(
       ready.content.sanitizedHtml,
     );

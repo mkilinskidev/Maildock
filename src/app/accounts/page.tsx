@@ -1,3 +1,5 @@
+import { RemoteContentSettings } from "@/components/remote-content-settings";
+import { RemoteContentSenderService } from "@/modules/mail/application/remote-content-sender-service";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ThemeControl } from "@/components/theme-control";
@@ -50,6 +52,9 @@ export default async function AccountsPage({
         </header>
         <ConversationViewSettings
           initialEnabled={await new ConversationService(db).enabled()}
+        />
+        <RemoteContentSettings
+          initialSenders={await new RemoteContentSenderService(db).list()}
         />
         <AccountList
           accounts={accounts}

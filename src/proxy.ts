@@ -1,3 +1,4 @@
+import { createContentSecurityPolicy } from "@/shared/infrastructure/security/content-security-policy";
 import { randomBytes } from "node:crypto";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,23 +14,6 @@ function isPublicPath(pathname: string): boolean {
   return publicPaths.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
-}
-
-function createContentSecurityPolicy(nonce: string): string {
-  const developmentScriptPolicy =
-    process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
-
-  return [
-    "default-src 'self'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "object-src 'none'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${developmentScriptPolicy}`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "connect-src 'self'",
-  ].join("; ");
 }
 
 function continueWithCsp(

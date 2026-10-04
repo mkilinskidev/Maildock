@@ -68,6 +68,9 @@ export class ComposePreparationService {
       const dom = new JSDOM(detail.content.sanitizedHtml);
       try {
         dom.window.document
+          .querySelectorAll("style")
+          .forEach((el) => el.remove());
+        dom.window.document
           .querySelectorAll("br")
           .forEach((el) => el.replaceWith("\n"));
         dom.window.document

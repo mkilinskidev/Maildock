@@ -1,3 +1,8 @@
+import {
+  SAFE_INLINE_IMAGE_TYPES,
+  isSafeRaster,
+} from "../infrastructure/render-email-document";
+import { normalizeContentId } from "../infrastructure/sanitize-email-html";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -172,6 +177,24 @@ export class AttachmentService {
       ),
       filename: row.attachment.filename,
     };
+  }
+  async inlineResource(
+    messageId: string,
+    attachmentId: string,
+    contentId: string,
+  ) {
+    const row = await this.lookup(this.db, attachmentId);
+    if (
+      row.attachment.messageId !== messageId ||
+      !row.attachment.contentId ||
+      normalizeContentId(row.attachment.contentId) !== contentId ||
+      !SAFE_INLINE_IMAGE_TYPES.has(row.attachment.contentType)
+    )
+      throw new AttachmentUnavailableError("Inline resource is unavailable.");
+    const result = await this.download(attachmentId);
+    if (!isSafeRaster(result.bytes, row.attachment.contentType))
+      throw new AttachmentUnavailableError("Inline image format is invalid.");
+    return { ...result, type: row.attachment.contentType };
   }
   async upload(
     source: AsyncIterable<Uint8Array>,

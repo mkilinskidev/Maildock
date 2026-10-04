@@ -1,3 +1,10 @@
+import { EmailRenderingService } from "@/modules/mail/application/email-rendering-service";
+import { RemoteContentSenderService } from "@/modules/mail/application/remote-content-sender-service";
+import {
+  EMAIL_HTML_POLICY,
+  sanitizeEmailHtml,
+} from "@/modules/mail/infrastructure/sanitize-email-html";
+import { JSDOM } from "jsdom";
 import { DraftService } from "@/modules/mail/application/draft-service";
 import { DraftConflictError } from "@/modules/mail/domain/draft";
 import { randomUUID } from "node:crypto";
@@ -40,6 +47,7 @@ import type {
   RemoteMimePart,
 } from "@/modules/accounts/domain/mail-provider";
 import {
+  remoteContentSenders,
   drafts,
   draftAttachments,
   blobs,
@@ -174,6 +182,7 @@ describe("durable attachment and MIME lifecycle", () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
   beforeEach(async () => {
+    await database.db.delete(remoteContentSenders);
     await database.db.delete(drafts);
     await database.db.delete(outgoingMessageAttachments);
     await database.db.delete(outgoingMessages);
@@ -277,6 +286,313 @@ describe("durable attachment and MIME lifecycle", () => {
     incomingId = (
       await content.detail(accountId, mailboxId, messageId)
     ).attachments.find((a) => a.visible)!.id;
+  });
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYqkAAAAASUVORK5CYII=",
+    "base64",
+  );
+  async function richHtml(html: string) {
+    const clean = sanitizeEmailHtml(html);
+    await database.db
+      .update(messages)
+      .set({
+        from: [{ name: "Microsoft Support", address: " Evil@Example.Test " }],
+      })
+      .where(eq(messages.id, messageId));
+    await database.db
+      .update(messageContents)
+      .set({
+        sanitizedHtml: clean.html,
+        remoteContentBlocked: clean.remoteContentBlocked,
+        policyVersion: EMAIL_HTML_POLICY,
+      })
+      .where(eq(messageContents.messageId, messageId));
+  }
+  const blockedOptions = { loadImages: false, trustSender: false };
+  it("fetches only referenced CID on demand, reuses verified cache, and keeps inline visibility", async () => {
+    await richHtml('<p>HTML</p><img src="cid:%3Clogo%3E">');
+    const renderer = new EmailRenderingService(
+      database.db,
+      content,
+      attachments,
+    );
+    const first = await renderer.render(
+      accountId,
+      mailboxId,
+      messageId,
+      blockedOptions,
+    );
+    const inline = (
+      await content.detail(accountId, mailboxId, messageId)
+    ).attachments.find((a) => a.inline)!;
+    expect(first.pending).toBe(true);
+    expect(first.blocked).toBe(false);
+    expect(enqueue.mock.calls.map((c) => c[0])).toEqual([inline.id]);
+    expect((await attachments.status(incomingId)).status).toBe("not_fetched");
+    const fetchInline = vi.fn();
+    const inlineProvider: MailProvider = {
+      ...provider,
+      async fetchAttachment(_account, request, consume) {
+        fetchInline();
+        expect(request.partId).toBe("3");
+        return consume(Readable.from([png]));
+      },
+    };
+    const worker = new AttachmentService(
+      database.db,
+      storage,
+      limits,
+      enqueue,
+      accounts,
+      inlineProvider,
+      createAttachmentLock(database.client),
+    );
+    await worker.run(inline.id);
+    const ready = await renderer.render(
+      accountId,
+      mailboxId,
+      messageId,
+      blockedOptions,
+    );
+    expect(ready.pending).toBe(false);
+    expect(ready.inlineFailures).toBe(0);
+    expect(
+      new JSDOM(ready.document!).window.document.querySelector("img")?.src,
+    ).toMatch(/^data:image\/png;base64,/);
+    await renderer.render(accountId, mailboxId, messageId, blockedOptions);
+    await worker.run(inline.id);
+    expect(fetchInline).toHaveBeenCalledTimes(1);
+    expect(
+      (await content.detail(accountId, mailboxId, messageId)).attachments.find(
+        (a) => a.id === inline.id,
+      )?.visible,
+    ).toBe(false);
+    await expect(
+      attachments.inlineResource(randomUUID(), inline.id, "logo"),
+    ).rejects.toThrow("Inline resource is unavailable");
+    await expect(
+      attachments.inlineResource(messageId, inline.id, "wrong"),
+    ).rejects.toThrow("Inline resource is unavailable");
+  });
+  it("normalizes CID domain case, refuses ambiguous/missing/unsafe types, and handles fetch failure", async () => {
+    const inline = (
+      await content.detail(accountId, mailboxId, messageId)
+    ).attachments.find((a) => a.inline)!;
+    await database.db
+      .update(messageAttachments)
+      .set({ contentId: " <Logo@EXAMPLE.TEST> " })
+      .where(eq(messageAttachments.id, inline.id));
+    await richHtml('<img src="cid:Logo@example.test"><img src="cid:missing">');
+    const renderer = new EmailRenderingService(
+      database.db,
+      content,
+      attachments,
+    );
+    expect(
+      (await renderer.render(accountId, mailboxId, messageId, blockedOptions))
+        .pending,
+    ).toBe(true);
+    expect(enqueue).toHaveBeenCalledWith(inline.id);
+    await database.db
+      .update(messageAttachments)
+      .set({ status: "failed", error: "Failed" })
+      .where(eq(messageAttachments.id, inline.id));
+    const failed = await renderer.render(
+      accountId,
+      mailboxId,
+      messageId,
+      blockedOptions,
+    );
+    expect(failed.pending).toBe(false);
+    expect(failed.inlineFailures).toBe(2);
+    expect(failed.document).toBeTruthy();
+    enqueue.mockClear();
+    await database.db
+      .update(messageAttachments)
+      .set({ status: "not_fetched", contentType: "image/svg+xml" })
+      .where(eq(messageAttachments.id, inline.id));
+    expect(
+      (await renderer.render(accountId, mailboxId, messageId, blockedOptions))
+        .inlineFailures,
+    ).toBe(2);
+    expect(enqueue).not.toHaveBeenCalled();
+    await expect(
+      attachments.inlineResource(messageId, inline.id, "Logo@example.test"),
+    ).rejects.toThrow("Inline resource is unavailable");
+  });
+  it("refuses script-capable bytes mislabeled as a raster inline resource", async () => {
+    await richHtml('<img src="cid:logo">');
+    const inline = (
+      await content.detail(accountId, mailboxId, messageId)
+    ).attachments.find((a) => a.inline)!;
+    await attachments.request(inline.id);
+    const worker = new AttachmentService(
+      database.db,
+      storage,
+      limits,
+      enqueue,
+      accounts,
+      {
+        ...provider,
+        async fetchAttachment(_account, _request, consume) {
+          return consume(
+            Readable.from([
+              Buffer.from(
+                '<svg xmlns="http://www.w3.org/2000/svg"><script>evil()</script></svg>',
+              ),
+            ]),
+          );
+        },
+      },
+      createAttachmentLock(database.client),
+    );
+    await worker.run(inline.id);
+    await expect(
+      attachments.inlineResource(messageId, inline.id, "logo"),
+    ).rejects.toThrow("Inline image format is invalid");
+    const result = await new EmailRenderingService(
+      database.db,
+      content,
+      attachments,
+    ).render(accountId, mailboxId, messageId, blockedOptions);
+    expect(result.inlineFailures).toBe(1);
+    expect(result.document).not.toContain("data:image");
+  });
+  it("never downloads unreferenced attachments for remote-only HTML", async () => {
+    await richHtml('<p>Newsletter</p><img src="https://tracker.test/pixel">');
+    const renderer = new EmailRenderingService(
+      database.db,
+      content,
+      attachments,
+    );
+    const blocked = await renderer.render(
+      accountId,
+      mailboxId,
+      messageId,
+      blockedOptions,
+    );
+    expect(blocked.blocked).toBe(true);
+    expect(blocked.document).not.toContain("tracker.test");
+    expect(enqueue).not.toHaveBeenCalled();
+    const loaded = await renderer.render(accountId, mailboxId, messageId, {
+      ...blockedOptions,
+      loadImages: true,
+    });
+    expect(loaded.blocked).toBe(false);
+    expect(loaded.document).toContain('src="https://tracker.test/pixel"');
+    expect(
+      (await renderer.render(accountId, mailboxId, messageId, blockedOptions))
+        .blocked,
+    ).toBe(true);
+    expect(await new RemoteContentSenderService(database.db).list()).toEqual(
+      [],
+    );
+  });
+  it("persists exact parsed sender, applies to later messages, and removal restores blocking", async () => {
+    await richHtml('<p>Hello</p><img src="https://tracker.test/image">');
+    const renderer = new EmailRenderingService(
+      database.db,
+      content,
+      attachments,
+    );
+    await renderer.render(accountId, mailboxId, messageId, {
+      ...blockedOptions,
+      trustSender: true,
+    });
+    const rules = new RemoteContentSenderService(database.db);
+    expect((await rules.list()).map((r) => r.address)).toEqual([
+      "evil@example.test",
+    ]);
+    async function next(address: string) {
+      const id = randomUUID();
+      await database.db.insert(messages).values({
+        id,
+        accountId,
+        internalDate: new Date(),
+        size: 1n,
+        from: [{ name: "Microsoft Support", address }],
+      });
+      await database.db.insert(mailboxMessages).values({
+        id: randomUUID(),
+        messageId: id,
+        mailboxId,
+        uidValidity: 7n,
+        uid: BigInt(Math.floor(Math.random() * 100000) + 1000),
+        firstSynchronizedAt: new Date(),
+        lastSynchronizedAt: new Date(),
+      });
+      const clean = sanitizeEmailHtml('<img src="https://tracker.test/image">');
+      await database.db.insert(messageContents).values({
+        messageId: id,
+        status: "ready",
+        sanitizedHtml: clean.html,
+        remoteContentBlocked: true,
+        policyVersion: EMAIL_HTML_POLICY,
+      });
+      return renderer.render(accountId, mailboxId, id, blockedOptions);
+    }
+    expect((await next("EVIL@example.test")).blocked).toBe(false);
+    expect((await next("other@example.test")).blocked).toBe(true);
+    await rules.remove("evil@example.test");
+    expect((await next("evil@example.test")).blocked).toBe(true);
+  });
+  it("lazily refreshes historical HTML using selected text parts without full MIME", async () => {
+    await richHtml("<p>Old reduced body</p>");
+    await database.db
+      .update(messageContents)
+      .set({ policyVersion: "email-html-v1" })
+      .where(eq(messageContents.messageId, messageId));
+    await database.db
+      .update(messages)
+      .set({
+        mimeStructure: part("", {
+          type: "multipart/alternative",
+          disposition: null,
+          filename: null,
+          children: [
+            part("1", {
+              type: "text/plain",
+              disposition: null,
+              filename: null,
+            }),
+            part("2", { type: "text/html", disposition: null, filename: null }),
+          ],
+        }),
+      })
+      .where(eq(messages.id, messageId));
+    const schedule = vi.fn(async () => true);
+    const fetchBody = vi.fn<MailProvider["fetchMessageContent"]>(
+      async (_account, request) => {
+        expect(request.parts).toEqual([
+          { part: "1", type: "text/plain" },
+          { part: "2", type: "text/html" },
+        ]);
+        return {
+          plainText: "Fallback",
+          html: '<table><tr><td style="color:red">Restored<img src="https://tracker.test/x"></td></tr></table>',
+        };
+      },
+    );
+    const service = new MessageContentService(
+      database.db,
+      { schedule },
+      accounts,
+      { ...provider, fetchMessageContent: fetchBody },
+      { maxMessageTextPartBytes: 100000 },
+    );
+    expect(
+      (await service.detail(accountId, mailboxId, messageId)).content.status,
+    ).toBe("not_fetched");
+    await service.request(accountId, mailboxId, messageId);
+    await service.run(accountId, mailboxId, messageId);
+    const result = await service.detail(accountId, mailboxId, messageId);
+    expect(result.content.status).toBe("ready");
+    expect(result.content.sanitizedHtml).toContain("Restored");
+    expect(result.content.sanitizedHtml).toContain('style="color:red"');
+    expect(fetchBody).toHaveBeenCalledTimes(1);
+    expect(enqueue).not.toHaveBeenCalled();
+    await service.request(accountId, mailboxId, messageId);
+    expect(schedule).toHaveBeenCalledTimes(1);
   });
   async function cached() {
     await attachments.request(incomingId);
@@ -586,6 +902,28 @@ describe("durable attachment and MIME lifecycle", () => {
         });
         expect(enqueue).toHaveBeenCalledWith(incomingId);
       }
+    },
+  );
+  it.each(["reply", "reply_all", "forward"] as const)(
+    "quotes HTML-only %s without stylesheet text",
+    async (mode) => {
+      await richHtml(
+        "<p>Visible message</p><style>.signature{color:#123456}</style><p>Signature</p>",
+      );
+      await database.db
+        .update(messageContents)
+        .set({ plainText: null })
+        .where(eq(messageContents.messageId, messageId));
+      const result = await new ComposePreparationService(
+        database.db,
+        content,
+        attachments,
+      ).prepare({ ...source(), mode });
+      expect(result.status).toBe("ready");
+      if (result.status !== "ready") throw Error();
+      expect(result.prefill.plainText).toContain("Visible message");
+      expect(result.prefill.plainText).toContain("Signature");
+      expect(result.prefill.plainText).not.toContain(".signature");
     },
   );
   it("Forward reuses the cached incoming blob, and removing selection never deletes it", async () => {

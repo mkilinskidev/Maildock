@@ -1047,3 +1047,10 @@ export const draftAttachments = pgTable(
     index("draft_attachments_blob_idx").on(t.blobId),
   ],
 );
+
+export const remoteContentSenders = pgTable("remote_content_senders", {
+  address: text("address").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
