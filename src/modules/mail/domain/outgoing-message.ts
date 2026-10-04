@@ -10,6 +10,20 @@ export const composeInput = z
   .object({
     accountId: z.uuid(),
     source: sourceContext.optional(),
+    attachments: z
+      .array(
+        z
+          .object({ kind: z.enum(["staged", "incoming"]), id: z.uuid() })
+          .strict(),
+      )
+      .max(100)
+      .default([])
+      .refine(
+        (items) =>
+          new Set(items.map((item) => `${item.kind}:${item.id}`)).size ===
+          items.length,
+        "Duplicate attachment selection.",
+      ),
     to: header.max(8000),
     cc: header.max(8000).default(""),
     bcc: header.max(8000).default(""),

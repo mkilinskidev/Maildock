@@ -32,7 +32,10 @@ export const outgoingMessages = pgTable(
     messageId: text("message_id").notNull(),
     inReplyTo: text("in_reply_to"),
     references: jsonb("references").$type<string[]>().default([]).notNull(),
-    mimeBase64: text("mime_base64").notNull(),
+    mimeBase64: text("mime_base64"),
+    mimeBlobId: uuid("mime_blob_id").references(() => blobs.id, {
+      onDelete: "restrict",
+    }),
     status: text("status").default("queued").notNull(),
     sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
     sentCopyStatus: text("sent_copy_status").default("not_required").notNull(),
@@ -68,6 +71,10 @@ export const outgoingMessages = pgTable(
       .notNull(),
   },
   (table) => [
+    check(
+      "outgoing_messages_mime_source",
+      sql`(${table.mimeBlobId} is not null and ${table.mimeBase64} is null) or (${table.mimeBlobId} is null and ${table.mimeBase64} is not null)`,
+    ),
     check(
       "outgoing_messages_sent_copy_policy",
       sql`${table.sentCopyPolicy} in ('server', 'maildock')`,
@@ -106,6 +113,121 @@ export const outgoingMessages = pgTable(
       table.status,
       table.nextAttemptAt,
     ),
+  ],
+);
+
+/** Registry provides integrity and a conservative reference-aware GC seam.
+ * Physical orphan objects may outlive DB failures; no age-based blob deletion. */
+export const blobs = pgTable(
+  "blobs",
+  {
+    id: uuid("id").primaryKey(),
+    storageKey: text("storage_key").notNull().unique(),
+    size: bigint("size", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check("blobs_size", sql`${table.size} >= 0`),
+    check("blobs_sha256", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
+export const messageAttachments = pgTable(
+  "message_attachments",
+  {
+    id: uuid("id").primaryKey(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    sourceMailboxId: uuid("source_mailbox_id").references(() => mailboxes.id, {
+      onDelete: "set null",
+    }),
+    sourceUidValidity: bigint("source_uid_validity", {
+      mode: "bigint",
+    }).notNull(),
+    sourceUid: bigint("source_uid", { mode: "bigint" }).notNull(),
+    partId: text("part_id").notNull(),
+    filename: text("filename"),
+    contentType: text("content_type").notNull(),
+    disposition: text("disposition"),
+    contentId: text("content_id"),
+    inline: boolean("inline").notNull(),
+    visible: boolean("visible").notNull(),
+    declaredSize: bigint("declared_size", { mode: "bigint" }),
+    blobId: uuid("blob_id").references(() => blobs.id, {
+      onDelete: "restrict",
+    }),
+    status: text("status").default("not_fetched").notNull(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("message_attachments_part_unique").on(
+      table.messageId,
+      table.partId,
+    ),
+    index("message_attachments_pending_idx").on(table.status),
+    check(
+      "message_attachments_status",
+      sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,
+    ),
+    check(
+      "message_attachments_ready",
+      sql`(${table.status} = 'ready') = (${table.blobId} is not null)`,
+    ),
+  ],
+);
+
+export const stagedAttachments = pgTable(
+  "staged_attachments",
+  {
+    id: uuid("id").primaryKey(),
+    blobId: uuid("blob_id")
+      .notNull()
+      .references(() => blobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    status: text("status").default("ready").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check(
+      "staged_attachments_status",
+      sql`${table.status} in ('ready', 'removed', 'consumed')`,
+    ),
+    index("staged_attachments_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const outgoingMessageAttachments = pgTable(
+  "outgoing_message_attachments",
+  {
+    outgoingMessageId: uuid("outgoing_message_id")
+      .notNull()
+      .references(() => outgoingMessages.id, { onDelete: "restrict" }),
+    position: integer("position").notNull(),
+    blobId: uuid("blob_id")
+      .notNull()
+      .references(() => blobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    size: bigint("size", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.outgoingMessageId, table.position] }),
+    check("outgoing_attachment_position", sql`${table.position} >= 0`),
   ],
 );
 

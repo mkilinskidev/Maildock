@@ -1,5 +1,18 @@
 import { threading } from "../domain/reply-forward";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import {
+  readVerifiedBlob,
+  type BlobStorage,
+} from "../../../shared/application/blob-storage";
+import {
+  DEFAULT_ATTACHMENT_LIMITS,
+  safeFilename,
+  safeContentType,
+  type AttachmentLimits,
+} from "../domain/attachments";
+import { registerBlob, storedBlob } from "./attachment-service";
+import { loadOutgoingMime } from "./outgoing-mime-storage";
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
@@ -8,6 +21,10 @@ import {
   messages,
   mailboxMessages,
   mailboxes,
+  blobs,
+  stagedAttachments,
+  messageAttachments,
+  outgoingMessageAttachments,
 } from "../../../shared/infrastructure/database/schema";
 import type { AccountsService } from "../../accounts/application/accounts-service";
 import type {
@@ -31,6 +48,8 @@ export class OutgoingMessageService {
     private readonly provider?: MailProvider,
     private readonly lock?: OutgoingLock,
     private readonly enqueueSentCopy?: (id: string) => Promise<void>,
+    private readonly storage?: BlobStorage,
+    private readonly limits: AttachmentLimits = DEFAULT_ATTACHMENT_LIMITS,
   ) {}
 
   async create(input: unknown) {
@@ -67,7 +86,7 @@ export class OutgoingMessageService {
         throw new OutgoingValidationError(
           "Select an enabled, configured sending account.",
         );
-      const { source, ...snapshot } = values;
+      const { source, attachments: selection, ...snapshot } = values;
       let thread = {
         inReplyTo: null as string | null,
         references: [] as string[],
@@ -96,6 +115,97 @@ export class OutgoingMessageService {
           );
         thread = threading(original.message, source.mode);
       }
+      if (!this.storage)
+        throw new OutgoingValidationError("Attachment storage is unavailable.");
+      const attachments: {
+        blobId: string;
+        filename: string;
+        contentType: string;
+        size: number;
+        sha256: string;
+        content: Buffer;
+      }[] = [];
+      let total = 0;
+      for (const selected of selection) {
+        let blob, filename, contentType;
+        if (selected.kind === "staged") {
+          const [staged] = await tx
+            .select({ staged: stagedAttachments, blob: blobs })
+            .from(stagedAttachments)
+            .innerJoin(blobs, eq(blobs.id, stagedAttachments.blobId))
+            .where(
+              and(
+                eq(stagedAttachments.id, selected.id),
+                eq(stagedAttachments.status, "ready"),
+              ),
+            )
+            .for("update");
+          if (!staged || staged.staged.expiresAt <= createdAt)
+            throw new OutgoingValidationError(
+              "A staged attachment is unavailable or expired.",
+            );
+          ({ blob } = staged);
+          filename = staged.staged.filename;
+          contentType = staged.staged.contentType;
+          await tx
+            .update(stagedAttachments)
+            .set({ status: "consumed" })
+            .where(eq(stagedAttachments.id, selected.id));
+        } else {
+          if (source?.mode !== "forward")
+            throw new OutgoingValidationError(
+              "Incoming attachments require a Forward source.",
+            );
+          const [incoming] = await tx
+            .select({ attachment: messageAttachments, blob: blobs })
+            .from(messageAttachments)
+            .innerJoin(blobs, eq(blobs.id, messageAttachments.blobId))
+            .where(
+              and(
+                eq(messageAttachments.id, selected.id),
+                eq(messageAttachments.messageId, source.messageId),
+                eq(messageAttachments.status, "ready"),
+                eq(messageAttachments.visible, true),
+              ),
+            )
+            .for("share");
+          if (!incoming)
+            throw new OutgoingValidationError(
+              "A forwarded attachment is not ready. Prepare it or remove it before sending.",
+            );
+          ({ blob } = incoming);
+          filename = incoming.attachment.filename;
+          contentType = incoming.attachment.contentType;
+        }
+        total += blob.size;
+        if (
+          total > this.limits.maxOutgoingAttachmentBytes ||
+          blob.size > this.limits.maxAttachmentBytes
+        )
+          throw new OutgoingValidationError(
+            "Selected attachments exceed the configured size limit.",
+          );
+        let content;
+        try {
+          content = await readVerifiedBlob(
+            this.storage,
+            storedBlob(blob),
+            this.limits.maxAttachmentBytes,
+          );
+        } catch {
+          throw new OutgoingValidationError(
+            "An attachment blob is missing or failed its integrity check.",
+          );
+        }
+        attachments.push({
+          blobId: blob.id,
+          filename: safeFilename(filename),
+          contentType: safeContentType(contentType),
+          size: blob.size,
+          sha256: blob.sha256,
+          content,
+        });
+      }
       let from;
       let mime: Buffer;
       try {
@@ -113,12 +223,19 @@ export class OutgoingMessageService {
           from,
           messageId,
           createdAt,
+          attachments,
+          maxMimeBytes: this.limits.maxOutgoingMimeBytes,
         });
       } catch {
         throw new OutgoingValidationError(
           "The sending identity is invalid or the message is too large.",
         );
       }
+      const mimeBlob = await this.storage.put(
+        Readable.from([mime]),
+        this.limits.maxOutgoingMimeBytes,
+      );
+      const mimeBlobId = await registerBlob(tx, mimeBlob);
       await tx.insert(outgoingMessages).values({
         ...snapshot,
         ...thread,
@@ -126,10 +243,24 @@ export class OutgoingMessageService {
         from,
         messageId,
         createdAt,
-        mimeBase64: mime.toString("base64"),
+        mimeBlobId,
         status: "queued",
         sentCopyPolicy: account.sentCopyPolicy,
       });
+      if (attachments.length)
+        await tx
+          .insert(outgoingMessageAttachments)
+          .values(
+            attachments.map((attachment, position) => ({
+              blobId: attachment.blobId,
+              filename: attachment.filename,
+              contentType: attachment.contentType,
+              size: attachment.size,
+              sha256: attachment.sha256,
+              outgoingMessageId: id,
+              position,
+            })),
+          );
     });
     // The row is the source of truth; a queue outage leaves a repairable message.
     await this.enqueue(id).catch(() => undefined);
@@ -252,6 +383,31 @@ export class OutgoingMessageService {
         return;
       }
       if (!account) return; // Another attempt just returned to queued; poll again.
+      let mime: Buffer;
+      try {
+        mime = await loadOutgoingMime(
+          db,
+          this.storage,
+          row,
+          this.limits.maxOutgoingMimeBytes,
+        );
+      } catch {
+        await db
+          .update(outgoingMessages)
+          .set({
+            status: "failed",
+            error:
+              "The immutable message could not be loaded from storage. No SMTP delivery was attempted.",
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(outgoingMessages.id, id),
+              eq(outgoingMessages.status, "queued"),
+            ),
+          );
+        return;
+      }
       const [claimed] = await db
         .update(outgoingMessages)
         .set({
@@ -286,7 +442,7 @@ export class OutgoingMessageService {
               ),
             ],
           },
-          Buffer.from(row.mimeBase64, "base64"),
+          mime,
         );
       } catch {
         result = { outcome: "uncertain" };

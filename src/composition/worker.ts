@@ -1,3 +1,10 @@
+import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
+import { AttachmentService } from "../modules/mail/application/attachment-service";
+import { createAttachmentLock } from "../modules/mail/infrastructure/attachment-lock";
+import {
+  enqueueAttachment,
+  AttachmentPoller,
+} from "../modules/mail/infrastructure/attachment-jobs";
 import { JobRuntime } from "../modules/jobs/infrastructure/job-runtime.js";
 import { getConfig } from "../shared/infrastructure/config/config.js";
 import { createLogger } from "../shared/infrastructure/logging/logger.js";
@@ -79,6 +86,18 @@ export function createWorkerComposition() {
         enqueueBackfill(jobs.boss, accountId, mailboxId),
     },
   );
+  const blobStorage = new LocalBlobStorage(config.attachmentsPath);
+  const attachments = new AttachmentService(
+    database.db,
+    blobStorage,
+    config,
+    (id) => enqueueAttachment(jobs.boss, id),
+    accounts,
+    provider,
+    createAttachmentLock(database.client),
+    (accountId, mailboxId) =>
+      recentSyncScheduler.schedule(accountId, mailboxId),
+  );
   const withMailboxLock = createMailboxLock(database.client);
   const sentCopy = new SentCopyService(
     database.db,
@@ -90,6 +109,8 @@ export function createWorkerComposition() {
       initial
         ? recentSyncScheduler.schedule(accountId, mailboxId)
         : enqueueDelta(jobs.boss, accountId, mailboxId, "manual"),
+    blobStorage,
+    config.maxOutgoingMimeBytes,
   );
   const outgoing = new OutgoingMessageService(
     database.db,
@@ -98,6 +119,8 @@ export function createWorkerComposition() {
     provider,
     createOutgoingLock(database.client),
     (id) => enqueueSentCopy(jobs.boss, id),
+    blobStorage,
+    config,
   );
   const commands = new MessageCommandService(
     database.db,
@@ -109,6 +132,8 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    attachments,
+    attachmentPoller: new AttachmentPoller(attachments),
     outgoing,
     sentCopy,
     sentCopyPoller: new SentCopyPoller(sentCopy),

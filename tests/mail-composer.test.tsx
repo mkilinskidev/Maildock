@@ -93,6 +93,192 @@ describe("compose UI", () => {
         );
     });
   }
+  async function selectFile() {
+    const picker = host.querySelector<HTMLInputElement>(
+      '[aria-label="Select attachments"]',
+    )!;
+    Object.defineProperty(picker, "files", {
+      configurable: true,
+      value: [new File(["bytes"], "invoice.pdf", { type: "application/pdf" })],
+    });
+    await act(async () =>
+      picker.dispatchEvent(new Event("change", { bubbles: true })),
+    );
+  }
+  it("durably uploads before Send and retains all editor fields after removal", async () => {
+    let finish!: (response: Response) => void;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
+      String(url) === "/api/attachments/staged"
+        ? new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+        : Response.json({ removed: true }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    await input("To", "recipient@example.com");
+    await input("Cc", "cc@example.com");
+    await input("Bcc", "private@example.com");
+    await input("Subject", "Keep subject");
+    await input("Message body", "Keep body");
+    await selectFile();
+    expect(host.textContent).toContain("Uploading");
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(true);
+    await submit();
+    expect(fetch).toHaveBeenCalledOnce();
+    await act(async () =>
+      finish(
+        Response.json({
+          id: "staged",
+          filename: "invoice.pdf",
+          type: "application/pdf",
+          size: "5",
+          status: "ready",
+          error: null,
+        }),
+      ),
+    );
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(false);
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Remove invoice.pdf"]')!
+        .click(),
+    );
+    expect(fetch.mock.calls[1]).toEqual([
+      "/api/attachments/staged/staged",
+      { method: "DELETE" },
+    ]);
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
+      "Keep body",
+    );
+    for (const [label, value] of [
+      ["Subject", "Keep subject"],
+      ["To", "recipient@example.com"],
+      ["Cc", "cc@example.com"],
+      ["Bcc", "private@example.com"],
+    ])
+      expect(
+        host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!.value,
+      ).toBe(value);
+  });
+  it("keeps upload errors at attachment level and blocks Send until failed selection is removed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { error: "File exceeds the size limit." },
+          { status: 413 },
+        ),
+      ),
+    );
+    await render();
+    await input("Message body", "Keep body");
+    await selectFile();
+    expect(host.textContent).toContain("File exceeds the size limit");
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
+      "Keep body",
+    );
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Remove invoice.pdf"]')!
+        .click(),
+    );
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(false);
+  });
+  function forwardPrefill(status = "pending"): ComposePrefill {
+    return {
+      accountId: "second",
+      to: "to@example.com",
+      cc: "",
+      subject: "Forward",
+      plainText: "Quoted",
+      source: {
+        accountId: "second",
+        mailboxId: "mailbox",
+        messageId: "message",
+        mode: "forward",
+      },
+      attachmentsOmitted: false,
+      attachments: [
+        {
+          id: "incoming",
+          filename: "invoice.pdf",
+          type: "application/pdf",
+          size: "100",
+          status,
+          error: null,
+          visible: true,
+          inline: false,
+        },
+      ],
+    };
+  }
+  it("blocks Forward Send while preparing, polls readiness, then sends selected incoming IDs", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
+      String(url) === "/api/outgoing"
+        ? Response.json({ id: "queued" })
+        : Response.json({ status: "ready", size: "100", error: null }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render(vi.fn(), forwardPrefill());
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(true);
+    expect(host.textContent).toContain("Preparing attachment");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(false);
+    await submit();
+    const send = fetch.mock.calls.find(
+      ([url]) => String(url) === "/api/outgoing",
+    )!;
+    expect(JSON.parse(send[1]!.body as string).attachments).toEqual([
+      { kind: "incoming", id: "incoming" },
+    ]);
+  });
+  it("shows failed Forward preparation and excludes removed incoming attachments without deleting cached data", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(async () =>
+      Response.json({
+        status: "failed",
+        error: "Remote attachment is unavailable.",
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render(vi.fn(), forwardPrefill());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(host.textContent).toContain("Remote attachment is unavailable");
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(true);
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Remove invoice.pdf"]')!
+        .click(),
+    );
+    expect(
+      host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
+    ).toBe(false);
+    expect(fetch.mock.calls).toHaveLength(1);
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
+      "Quoted",
+    );
+  });
   it("defaults to the relevant account, allows only configured account selection and queues all compose fields", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json({ id: "durable-id", status: "queued" }, { status: 202 }),
@@ -156,7 +342,7 @@ describe("compose UI", () => {
       expect(
         host.querySelector<HTMLTextAreaElement>("textarea")!.selectionStart,
       ).toBe(0);
-      expect(host.textContent).toContain(
+      expect(host.textContent).not.toContain(
         "Original attachments are not included",
       );
       await input("To", "edited@example.com");

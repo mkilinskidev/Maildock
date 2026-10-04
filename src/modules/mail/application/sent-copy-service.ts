@@ -1,4 +1,7 @@
 import { and, eq, inArray, or } from "drizzle-orm";
+import type { BlobStorage } from "../../../shared/application/blob-storage";
+import { DEFAULT_ATTACHMENT_LIMITS } from "../domain/attachments";
+import { loadOutgoingMime } from "./outgoing-mime-storage";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailAccounts,
@@ -33,6 +36,8 @@ export class SentCopyService {
       mailboxId: string,
       initial: boolean,
     ) => Promise<boolean>,
+    private readonly storage?: BlobStorage,
+    private readonly maxMimeBytes = DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
   ) {}
 
   async repair() {
@@ -156,6 +161,13 @@ export class SentCopyService {
         );
         return;
       }
+      let mime: Buffer;
+      try {
+        mime = await loadOutgoingMime(db, this.storage, row, this.maxMimeBytes);
+      } catch {
+        await this.finish(db, row, "failed");
+        return;
+      }
       const [claimed] = await db
         .update(outgoingMessages)
         .set({
@@ -184,7 +196,7 @@ export class SentCopyService {
             flags: ["\\Seen"],
             internalDate: row.smtpAcceptedAt ?? row.createdAt,
           },
-          Buffer.from(row.mimeBase64, "base64"),
+          mime,
         );
       } catch {
         result = { outcome: "uncertain" as const };

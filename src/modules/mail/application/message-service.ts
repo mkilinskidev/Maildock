@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { persistAttachmentMetadata } from "./attachment-metadata";
 
 import { and, desc, eq, lt, or } from "drizzle-orm";
 
@@ -379,6 +380,14 @@ export class MessageService {
             .update(messages)
             .set(messageValues(accountId, remote, synchronizedAt))
             .where(eq(messages.id, placement.messageId));
+          await persistAttachmentMetadata(
+            tx,
+            placement.messageId,
+            mailboxId,
+            uidValidity,
+            uid,
+            remote.mimeStructure,
+          );
           continue;
         }
         const messageId = randomUUID();
@@ -387,6 +396,14 @@ export class MessageService {
           ...messageValues(accountId, remote, synchronizedAt),
           createdAt: synchronizedAt,
         });
+        await persistAttachmentMetadata(
+          tx,
+          messageId,
+          mailboxId,
+          uidValidity,
+          uid,
+          remote.mimeStructure,
+        );
         await tx.insert(mailboxMessages).values({
           id: randomUUID(),
           mailboxId,

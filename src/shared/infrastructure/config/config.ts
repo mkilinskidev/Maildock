@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DEFAULT_ATTACHMENT_LIMITS } from "../../application/attachment-limits";
 
 import { z } from "zod";
 
@@ -63,6 +64,24 @@ const schema = z
       .string()
       .min(1)
       .refine(path.isAbsolute, "must be an absolute path"),
+    MAILDOCK_MAX_ATTACHMENT_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(100 * 1024 * 1024)
+      .default(DEFAULT_ATTACHMENT_LIMITS.maxAttachmentBytes),
+    MAILDOCK_MAX_OUTGOING_ATTACHMENT_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(100 * 1024 * 1024)
+      .default(DEFAULT_ATTACHMENT_LIMITS.maxOutgoingAttachmentBytes),
+    MAILDOCK_MAX_OUTGOING_MIME_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(150 * 1024 * 1024)
+      .default(DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace"])
       .default("info"),
@@ -141,6 +160,9 @@ export type AppConfig = Readonly<{
   }>;
   microsoft: Readonly<{ clientId: string; clientSecret: string }>;
   attachmentsPath: string;
+  maxAttachmentBytes: number;
+  maxOutgoingAttachmentBytes: number;
+  maxOutgoingMimeBytes: number;
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   databasePoolSize: number;
   workerConcurrency: number;
@@ -191,6 +213,10 @@ export function parseConfig(
       clientSecret: result.data.MICROSOFT_CLIENT_SECRET,
     }),
     attachmentsPath: result.data.ATTACHMENTS_PATH,
+    maxAttachmentBytes: result.data.MAILDOCK_MAX_ATTACHMENT_BYTES,
+    maxOutgoingAttachmentBytes:
+      result.data.MAILDOCK_MAX_OUTGOING_ATTACHMENT_BYTES,
+    maxOutgoingMimeBytes: result.data.MAILDOCK_MAX_OUTGOING_MIME_BYTES,
     logLevel: result.data.LOG_LEVEL,
     databasePoolSize: result.data.DATABASE_POOL_SIZE,
     workerConcurrency: result.data.WORKER_CONCURRENCY,

@@ -10,6 +10,9 @@ import {
 import nodemailer from "nodemailer";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { decodeAttachment } from "./decode-attachment";
+import { discoverAttachments } from "../../mail/domain/attachments";
+import { BlobLimitError } from "../../../shared/application/blob-storage";
 import type SMTPTransport from "nodemailer/lib/smtp-transport";
 
 import {
@@ -126,7 +129,16 @@ type ImapClient = {
   ): AsyncGenerator<FetchMessageObject, false | void, undefined>;
   fetchOne?(
     seq: string,
-    query: { uid: true; flags: true; modseq?: true; envelope?: true },
+    query: {
+      uid: true;
+      flags?: true;
+      modseq?: true;
+      envelope?: true;
+      bodyStructure?: true;
+      bodyParts?: (
+        string | { key: string; start: number; maxLength: number }
+      )[];
+    },
     options: { uid: true },
   ): Promise<FetchMessageObject | false | undefined>;
   messageFlagsAdd?(
@@ -1185,6 +1197,107 @@ export class ImapSmtpMailProvider implements MailProvider {
     } finally {
       if (selected) await client.mailboxClose().catch(() => false);
       if (connected) await client.logout().catch(() => undefined);
+      client.close();
+    }
+  }
+
+  async fetchAttachment<T>(
+    account: ProviderImapAccount,
+    request: {
+      remotePath: string;
+      uid: string;
+      expectedUidValidity: string;
+      partId: string;
+      maxBytes: number;
+    },
+    consume: (bytes: AsyncIterable<Uint8Array>) => Promise<T>,
+  ): Promise<T> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    try {
+      const uid = Number(request.uid);
+      if (
+        !/^[1-9]\d*$/.test(request.uid) ||
+        !Number.isInteger(uid) ||
+        uid < 1 ||
+        uid > 0xffffffff ||
+        !/^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(request.partId) ||
+        !client.fetchOne
+      )
+        throw Error("Invalid attachment identity.");
+      await client.connect();
+      const mailbox = await client.mailboxOpen(request.remotePath, {
+        readOnly: true,
+      });
+      if (mailbox.uidValidity.toString() !== request.expectedUidValidity)
+        throw new MailboxEpochChangedError();
+      const remote = await client.fetchOne(
+        request.uid,
+        { uid: true, bodyStructure: true },
+        { uid: true },
+      );
+      if (!remote || remote.uid !== uid || !remote.bodyStructure)
+        throw Error("Source message is unavailable.");
+      const structure = normalizeMimeStructure(remote.bodyStructure);
+      if (
+        !discoverAttachments(structure).some((p) => p.partId === request.partId)
+      )
+        throw Error("MIME part is not an attachment.");
+      let encoding: string | null = null;
+      function visit(node: RemoteMimePart, root = false) {
+        if (
+          (node.part ?? (root && !node.children.length ? "1" : null)) ===
+          request.partId
+        )
+          encoding = node.encoding;
+        node.children.forEach((child) => visit(child));
+      }
+      visit(structure, true);
+      const section =
+        request.partId === "1" && !structure.children.length
+          ? "TEXT"
+          : request.partId;
+      // Quoted-printable can use three wire bytes per decoded byte, plus soft
+      // wraps. Bound malformed streams without rejecting ordinary encodings.
+      const wireLimit = request.maxBytes * 4 + 128 * 1024;
+      async function* raw() {
+        let offset = 0;
+        const chunkSize = 64 * 1024;
+        while (true) {
+          const response = await client.fetchOne!(
+            request.uid,
+            {
+              uid: true,
+              bodyParts: [
+                { key: section, start: offset, maxLength: chunkSize },
+              ],
+            },
+            { uid: true },
+          );
+          const chunk =
+            response && response.uid === uid
+              ? response.bodyParts?.get(section.toLowerCase())
+              : undefined;
+          if (!chunk) throw Error("Attachment part is unavailable.");
+          if (chunk.length > chunkSize)
+            throw Error("Server ignored bounded attachment fetch.");
+          offset += chunk.length;
+          if (offset > wireLimit) throw new BlobLimitError();
+          if (chunk.length) yield chunk;
+          if (chunk.length < chunkSize) break;
+        }
+      }
+      async function* bounded() {
+        let size = 0;
+        for await (const chunk of decodeAttachment(raw(), encoding)) {
+          size += chunk.length;
+          if (size > request.maxBytes) throw new BlobLimitError();
+          yield chunk;
+        }
+      }
+      return await consume(bounded());
+    } finally {
+      await client.mailboxClose().catch(() => false);
+      await client.logout().catch(() => undefined);
       client.close();
     }
   }

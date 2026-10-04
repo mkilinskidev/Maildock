@@ -1,4 +1,6 @@
 "use client";
+import { AttachmentList } from "./attachment-list";
+import type { AttachmentView } from "@/modules/mail/domain/attachments";
 
 import Link from "next/link";
 import {
@@ -65,7 +67,7 @@ type Detail = {
   to: Address[];
   cc: Address[];
   replyTo: Address[];
-  attachments: { filename: string | null; type: string; size: string | null }[];
+  attachments: AttachmentView[];
   content: {
     status: string;
     plainText: string | null;
@@ -1007,7 +1009,10 @@ export function MailClient({
           ) : null}
         </div>
       </section>
-      <section className="mail-detail-pane" aria-label="Message detail">
+      <section
+        className={`mail-detail-pane${!composing && detail ? " mail-reader" : ""}`}
+        aria-label="Message detail"
+      >
         {Object.entries(outgoing).map(([id, item]) => (
           <div
             className={`send-feedback send-${item.status}${item.status === "sent" && ["failed", "uncertain"].includes(item.sentCopyStatus ?? "") ? " send-copy-warning" : ""}`}
@@ -1192,7 +1197,7 @@ export function MailClient({
                     Remote content blocked for your privacy
                   </div>
                 ) : null}
-                <div className="mail-body">
+                <div className="mail-body" key={`body:${detail.id}`}>
                   {detail.content.status === "ready" ? (
                     detail.content.sanitizedHtml !== null ? (
                       <iframe
@@ -1228,21 +1233,10 @@ export function MailClient({
                     </div>
                   )}
                 </div>
-                {detail.attachments.length > 0 ? (
-                  <div className="mail-attachments">
-                    <h3>Attachments</h3>
-                    {detail.attachments.map((item, index) => (
-                      <span key={index} className="mail-attachment">
-                        <Paperclip size={13} />
-                        {item.filename ?? "Unnamed attachment"}
-                        {item.size
-                          ? " · " + Math.ceil(Number(item.size) / 1024) + " KB"
-                          : ""}{" "}
-                        · Not available yet
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
+                <AttachmentList
+                  key={detail.id}
+                  attachments={detail.attachments}
+                />
               </>
             ) : null}
           </>

@@ -2,7 +2,9 @@
 
 import type { ComposePrefill } from "@/modules/mail/domain/compose-source";
 import { useEffect, useRef, useState } from "react";
-import { Send, X } from "lucide-react";
+import { Send, X, Paperclip } from "lucide-react";
+import type { AttachmentView } from "@/modules/mail/domain/attachments";
+import { attachmentSize } from "./attachment-list";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 
 export function sendingAccountAvailable(account: MailAccountView) {
@@ -57,9 +59,163 @@ export function MailComposer({
   const [plainText, setPlainText] = useState(prefill?.plainText ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<
+    (AttachmentView & { kind: "incoming" | "staged" })[]
+  >(() =>
+    (prefill?.attachments ?? []).map((a) => ({ ...a, kind: "incoming" })),
+  );
+  const attachmentsBlocked = attachments.some((a) => a.status !== "ready");
+  useEffect(() => {
+    const pending = attachments.filter(
+      (a) =>
+        a.kind === "incoming" && ["pending", "fetching"].includes(a.status),
+    );
+    if (!pending.length) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void Promise.all(
+        pending.map(async (a) => {
+          try {
+            const response = await fetch(`/api/attachments/${a.id}`);
+            if (!response.ok) throw Error();
+            const result = (await response.json()) as Partial<AttachmentView>;
+            if (!cancelled)
+              setAttachments((current) =>
+                current.map((item) =>
+                  item.id === a.id
+                    ? {
+                        ...item,
+                        status: result.status ?? "failed",
+                        size: result.size ?? item.size,
+                        error: result.error ?? null,
+                      }
+                    : item,
+                ),
+              );
+          } catch {
+            if (!cancelled)
+              setAttachments((current) =>
+                current.map((item) =>
+                  item.id === a.id
+                    ? {
+                        ...item,
+                        status: "failed",
+                        error:
+                          "Attachment status could not be loaded. Retry preparation.",
+                      }
+                    : item,
+                ),
+              );
+          }
+        }),
+      );
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [attachments]);
+  async function upload(files: FileList | null) {
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      const temporaryId = crypto.randomUUID();
+      setAttachments((current) => [
+        ...current,
+        {
+          id: temporaryId,
+          kind: "staged",
+          filename: file.name,
+          type: file.type,
+          size: null,
+          status: "uploading",
+          error: null,
+          visible: true,
+          inline: false,
+        },
+      ]);
+      try {
+        const response = await fetch("/api/attachments/staged", {
+          method: "POST",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "X-Attachment-Filename": encodeURIComponent(file.name),
+          },
+          body: file,
+        });
+        const result = (await response.json()) as AttachmentView & {
+          error: string | null;
+        };
+        if (!response.ok)
+          throw Error(result.error ?? "Attachment upload failed.");
+        setAttachments((current) =>
+          current.map((a) =>
+            a.id === temporaryId
+              ? {
+                  ...a,
+                  ...result,
+                  kind: "staged",
+                  visible: true,
+                  inline: false,
+                }
+              : a,
+          ),
+        );
+      } catch (failure) {
+        setAttachments((current) =>
+          current.map((a) =>
+            a.id === temporaryId
+              ? {
+                  ...a,
+                  status: "failed",
+                  error:
+                    failure instanceof Error
+                      ? failure.message
+                      : "Attachment upload failed.",
+                }
+              : a,
+          ),
+        );
+      }
+    }
+    if (fileRef.current) fileRef.current.value = "";
+  }
+  async function retryAttachment(a: AttachmentView) {
+    setAttachments((current) =>
+      current.map((item) =>
+        item.id === a.id ? { ...item, status: "pending", error: null } : item,
+      ),
+    );
+    try {
+      const response = await fetch(`/api/attachments/${a.id}`, {
+        method: "POST",
+      });
+      if (!response.ok) throw Error();
+    } catch {
+      setAttachments((current) =>
+        current.map((item) =>
+          item.id === a.id
+            ? {
+                ...item,
+                status: "failed",
+                error: "Attachment could not be prepared.",
+              }
+            : item,
+        ),
+      );
+    }
+  }
+  function removeAttachment(id: string) {
+    const item = attachments.find((a) => a.id === id);
+    setAttachments((current) => current.filter((a) => a.id !== id));
+    if (item?.kind === "staged" && item.status === "ready")
+      void fetch(`/api/attachments/staged/${id}`, { method: "DELETE" }).catch(
+        () => undefined,
+      );
+  }
   async function send(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting) return;
+    if (submitting || attachmentsBlocked) return;
     if (
       !from ||
       ![to, cc, bcc].some((value) => value.trim()) ||
@@ -84,6 +240,9 @@ export function MailComposer({
           bcc,
           subject,
           plainText,
+          ...(attachments.length
+            ? { attachments: attachments.map(({ kind, id }) => ({ kind, id })) }
+            : {}),
         }),
       });
       const result = (await response.json()) as { id?: string; error?: string };
@@ -119,9 +278,6 @@ export function MailComposer({
           <X size={18} />
         </button>
       </div>
-      {prefill?.attachmentsOmitted ? (
-        <p role="note">Original attachments are not included.</p>
-      ) : null}
       <fieldset disabled={submitting} className="composer-fields">
         <label>
           From
@@ -188,13 +344,72 @@ export function MailComposer({
           placeholder="Write your message…"
         />
       </fieldset>
+      <div className="composer-attachments">
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          aria-label="Select attachments"
+          disabled={submitting}
+          onChange={(event) => void upload(event.target.files)}
+        />
+        <button
+          type="button"
+          className="button secondary"
+          disabled={submitting}
+          onClick={() => fileRef.current?.click()}
+        >
+          <Paperclip size={15} /> Attach files
+        </button>
+        {attachments.map((a) => (
+          <div key={a.id} className="mail-attachment">
+            <Paperclip size={13} />
+            <span>
+              {a.filename || "Attachment"} · {attachmentSize(a.size)}{" "}
+              {a.status === "uploading"
+                ? "Uploading…"
+                : ["pending", "fetching"].includes(a.status)
+                  ? "Preparing attachment…"
+                  : ""}
+            </span>
+            {a.error ? (
+              <span role="alert" className="error">
+                {a.error}
+              </span>
+            ) : null}
+            {a.kind === "incoming" &&
+            ["failed", "not_fetched"].includes(a.status) ? (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void retryAttachment(a)}
+              >
+                Retry preparation
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={submitting || a.status === "uploading"}
+              aria-label={`Remove ${a.filename || "attachment"}`}
+              onClick={() => removeAttachment(a.id)}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
       <div className="composer-footer">
         {error ? (
           <p role="alert" className="error">
             {error}
           </p>
         ) : null}
-        <button className="button" type="submit" disabled={submitting || !from}>
+        <button
+          className="button"
+          type="submit"
+          disabled={submitting || !from || attachmentsBlocked}
+        >
           <Send size={15} />
           {submitting ? "Queueing…" : "Send"}
         </button>

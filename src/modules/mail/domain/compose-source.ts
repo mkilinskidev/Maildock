@@ -1,3 +1,4 @@
+import type { AttachmentView } from "./attachments";
 import { z } from "zod";
 
 export const composeMode = z.enum(["reply", "reply_all", "forward"]);
@@ -19,4 +20,5 @@ export type ComposePrefill = {
   plainText: string;
   source: SourceContext;
   attachmentsOmitted: boolean;
+  attachments?: AttachmentView[];
 };

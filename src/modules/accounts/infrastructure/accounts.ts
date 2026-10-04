@@ -1,3 +1,6 @@
+import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
+import { AttachmentService } from "@/modules/mail/application/attachment-service";
+import { PgBossAttachmentScheduler } from "@/modules/mail/infrastructure/attachment-jobs";
 import { ComposePreparationService } from "@/modules/mail/application/compose-preparation-service";
 import { AccountsService } from "@/modules/accounts/application/accounts-service";
 import { ImapSmtpMailProvider } from "@/modules/accounts/infrastructure/imap-smtp-mail-provider";
@@ -20,8 +23,23 @@ import { PgBossOutgoingScheduler } from "@/modules/mail/infrastructure/outgoing-
 
 const config = getConfig();
 const outgoingScheduler = new PgBossOutgoingScheduler(config);
-export const outgoingMessageService = new OutgoingMessageService(db, (id) =>
-  outgoingScheduler.enqueue(id),
+export const blobStorage = new LocalBlobStorage(config.attachmentsPath);
+const attachmentScheduler = new PgBossAttachmentScheduler(config);
+export const attachmentService = new AttachmentService(
+  db,
+  blobStorage,
+  config,
+  (id) => attachmentScheduler.enqueue(id),
+);
+export const outgoingMessageService = new OutgoingMessageService(
+  db,
+  (id) => outgoingScheduler.enqueue(id),
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  blobStorage,
+  config,
 );
 const encryption = new AesGcmSecretEncryption(
   config.credentialsEncryption.activeKeyId,
@@ -64,4 +82,5 @@ export const messageCommandService = new MessageCommandService(
 export const composePreparationService = new ComposePreparationService(
   db,
   messageContentService,
+  attachmentService,
 );

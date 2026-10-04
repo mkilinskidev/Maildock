@@ -229,6 +229,18 @@ export type RemoteMutationResult = Readonly<{
 }>;
 
 export interface MailProvider {
+  /** Adapter retains the connection until the streaming consumer has finished. */
+  fetchAttachment?<T>(
+    account: ProviderImapAccount,
+    request: Readonly<{
+      remotePath: string;
+      uid: string;
+      expectedUidValidity: string;
+      partId: string;
+      maxBytes: number;
+    }>,
+    consume: (bytes: AsyncIterable<Uint8Array>) => Promise<T>,
+  ): Promise<T>;
   appendMessage?(
     account: ProviderImapAccount,
     request: SentCopyAppendRequest,

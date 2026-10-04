@@ -16,7 +16,7 @@ coverage/
 
 # Runtime data
 data/
-attachments/
+/attachments/
 
 # Tooling and operating systems
 *.log

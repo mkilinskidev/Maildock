@@ -1,3 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
+import { loadOutgoingMime } from "@/modules/mail/application/outgoing-mime-storage";
+import { DEFAULT_ATTACHMENT_LIMITS } from "@/modules/mail/domain/attachments";
 import { ComposePreparationService } from "@/modules/mail/application/compose-preparation-service";
 import { MessageContentService } from "@/modules/mail/application/message-content-service";
 import { randomUUID } from "node:crypto";
@@ -46,6 +52,8 @@ describe("durable outgoing mail", () => {
   let encryption: AesGcmSecretEncryption;
   let databaseUrl: string;
   let service: OutgoingMessageService;
+  let storage: LocalBlobStorage;
+  let storageRoot: string;
   let lock: ReturnType<typeof createOutgoingLock>;
   let accountId: string;
   let otherAccountId: string;
@@ -85,6 +93,7 @@ describe("durable outgoing mail", () => {
       provider,
       lock,
       enqueueCopy,
+      storage,
     );
   const copies = () =>
     new SentCopyService(
@@ -94,6 +103,7 @@ describe("durable outgoing mail", () => {
       lock,
       enqueueCopy,
       syncCopy,
+      storage,
     );
   const destination = async (
     source: "manual" | "special_use" = "manual",
@@ -145,6 +155,8 @@ describe("durable outgoing mail", () => {
         .where(eq(outgoingMessages.id, id))
     )[0];
   beforeAll(async () => {
+    storageRoot = await mkdtemp(path.join(tmpdir(), "maildock-outgoing-"));
+    storage = new LocalBlobStorage(storageRoot);
     let url = process.env.TEST_DATABASE_URL;
     if (!url) {
       container = await new GenericContainer("postgres:18.6-bookworm")
@@ -237,6 +249,7 @@ describe("durable outgoing mail", () => {
   afterAll(async () => {
     if (database) await database.client.end();
     await container?.stop();
+    if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
   });
 
   async function replyFixture(
@@ -288,7 +301,7 @@ describe("durable outgoing mail", () => {
       expect(result.status).toBe("ready");
       if (result.status !== "ready") throw Error();
       expect(result.prefill.accountId).toBe(accountId);
-      expect(result.prefill.attachmentsOmitted).toBe(true);
+      expect(result.prefill.attachmentsOmitted).toBe(mode !== "forward");
       if (mode === "forward") expect(result.prefill.to).toBe("");
       await database.db
         .update(messages)
@@ -311,7 +324,14 @@ describe("durable outgoing mail", () => {
       });
       const saved = await row(created.id);
       expect(saved.from.address).toBe("other@example.com");
-      const mime = await simpleParser(Buffer.from(saved.mimeBase64, "base64"));
+      const mime = await simpleParser(
+        await loadOutgoingMime(
+          database.db,
+          storage,
+          saved,
+          DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+        ),
+      );
       expect(mime.messageId).toBe(saved.messageId);
       expect(saved.messageId).not.toBe("<updated@example.com>");
       expect(saved.inReplyTo).toBe(
@@ -341,7 +361,12 @@ describe("durable outgoing mail", () => {
         expect.objectContaining({
           to: expect.arrayContaining(["hidden@example.com"]),
         }),
-        Buffer.from(saved.mimeBase64, "base64"),
+        await loadOutgoingMime(
+          database.db,
+          storage,
+          saved,
+          DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+        ),
       );
       expect(mime.bcc).toBeUndefined();
       expect(enqueueCopy).toHaveBeenCalledWith(created.id);
@@ -432,7 +457,14 @@ describe("durable outgoing mail", () => {
       { name: "Ukryty", address: "hidden@example.com" },
     ]);
     expect(saved.messageId).toMatch(/^<[0-9a-f-]{36}@maildock\.invalid>$/);
-    const mime = await simpleParser(Buffer.from(saved.mimeBase64, "base64"));
+    const mime = await simpleParser(
+      await loadOutgoingMime(
+        database.db,
+        storage,
+        saved,
+        DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+      ),
+    );
     expect(mime.messageId).toBe(saved.messageId);
     expect(mime.subject).toBe("Cześć");
     expect(mime.text).toBe(input().plainText);
@@ -498,7 +530,14 @@ describe("durable outgoing mail", () => {
         from: saved.from.address,
         to: ["to@example.com", "cc@example.com", "hidden@example.com"],
       });
-      expect(mime).toEqual(Buffer.from(saved.mimeBase64, "base64"));
+      expect(mime).toEqual(
+        await loadOutgoingMime(
+          database.db,
+          storage,
+          saved,
+          DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+        ),
+      );
       return { outcome: "accepted", acceptedCount: 3, rejectedCount: 0 };
     });
     const imap = vi.spyOn(provider, "listMailboxes");
@@ -536,7 +575,14 @@ describe("durable outgoing mail", () => {
     await makeService().run(created.id);
     expect(deliver).toHaveBeenCalledTimes(3);
     for (const call of deliver.mock.calls)
-      expect(call[2]).toEqual(Buffer.from(initial.mimeBase64, "base64"));
+      expect(call[2]).toEqual(
+        await loadOutgoingMime(
+          database.db,
+          storage,
+          initial,
+          DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+        ),
+      );
     expect((await row(created.id)).messageId).toBe(initial.messageId);
   });
   it("makes permanent failures terminal", async () => {
@@ -658,6 +704,8 @@ describe("durable outgoing mail", () => {
         new AccountsService(single.db, encryption, provider),
         provider,
         createOutgoingLock(single.client),
+        undefined,
+        storage,
       );
       const created = await sender.create(input());
       await sender.run(created.id);
@@ -718,7 +766,16 @@ describe("durable outgoing mail", () => {
           flags: ["\\Seen"],
           internalDate: before.smtpAcceptedAt,
         });
-        expect(raw.equals(Buffer.from(before.mimeBase64, "base64"))).toBe(true);
+        expect(
+          raw.equals(
+            await loadOutgoingMime(
+              database.db,
+              storage,
+              before,
+              DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+            ),
+          ),
+        ).toBe(true);
         expect(raw.equals(deliver.mock.calls[0][2])).toBe(true);
         return { outcome: "saved", uidValidity: "7", uid: "42" };
       });

@@ -149,6 +149,7 @@ describe("reader reply and forward actions", () => {
         ).click();
       });
       expect(host.querySelector(".mail-composer")).not.toBeNull();
+      expect(host.querySelector(".mail-body")).toBeNull();
       const compose = [...host.querySelectorAll("button")].find(
         (button) => button.textContent === "Compose",
       )!;

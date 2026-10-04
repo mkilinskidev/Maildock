@@ -1,3 +1,4 @@
+import { registerAttachmentWorker } from "../modules/mail/infrastructure/attachment-jobs";
 import { createWorkerComposition } from "./worker.js";
 import { registerMailboxDiscoveryWorker } from "../modules/mail/infrastructure/mailbox-discovery-jobs.js";
 import { registerRecentSyncWorker } from "../modules/mail/infrastructure/recent-sync-jobs.js";
@@ -19,6 +20,7 @@ async function shutdown(signal: string) {
     "Worker shutting down",
   );
   try {
+    worker.attachmentPoller.stop();
     worker.poller.stop();
     worker.backfillPoller.stop();
     worker.commandPoller.stop();
@@ -42,6 +44,8 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 
 try {
   await worker.jobs.start();
+  await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
+  await worker.attachmentPoller.start();
   await registerSentCopyWorker(worker.jobs.boss, worker.sentCopy);
   await registerOutgoingWorker(worker.jobs.boss, worker.outgoing);
   await worker.outgoingPoller.start();

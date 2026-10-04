@@ -1,5 +1,8 @@
 import { validMessageId } from "../domain/reply-forward";
 import MailComposer from "nodemailer/lib/mail-composer";
+import type { Readable } from "node:stream";
+import { BlobLimitError } from "../../../shared/application/blob-storage";
+import { DEFAULT_ATTACHMENT_LIMITS } from "../domain/attachments";
 import type { OutgoingAddress } from "../domain/outgoing-message";
 
 export async function buildOutgoingMime(message: {
@@ -12,6 +15,8 @@ export async function buildOutgoingMime(message: {
   createdAt: Date;
   inReplyTo?: string | null;
   references?: string[];
+  attachments?: { filename: string; contentType: string; content: Buffer }[];
+  maxMimeBytes?: number;
 }): Promise<Buffer> {
   if (
     (message.inReplyTo && !validMessageId(message.inReplyTo)) ||
@@ -21,7 +26,7 @@ export async function buildOutgoingMime(message: {
         message.references.some((id) => !validMessageId(id))))
   )
     throw new Error("Invalid threading headers.");
-  const mime = await new MailComposer({
+  const compiled = new MailComposer({
     from: message.from,
     to: message.to,
     cc: message.cc,
@@ -38,9 +43,23 @@ export async function buildOutgoingMime(message: {
     newline: "windows",
     disableFileAccess: true,
     disableUrlAccess: true,
-  })
-    .compile()
-    .build();
-  if (mime.length > 1_000_000) throw new Error("Message is too large.");
-  return mime;
+    attachments: message.attachments?.map((attachment) => ({
+      ...attachment,
+      contentDisposition: "attachment",
+      contentTransferEncoding: "base64",
+    })),
+  }).compile();
+  const source = compiled.createReadStream() as Readable;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of source) {
+    size += chunk.length;
+    if (
+      size >
+      (message.maxMimeBytes ?? DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes)
+    )
+      throw new BlobLimitError();
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks, size);
 }

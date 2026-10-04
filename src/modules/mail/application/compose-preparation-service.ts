@@ -1,3 +1,4 @@
+import type { AttachmentService } from "./attachment-service";
 import { and, eq } from "drizzle-orm";
 import { JSDOM } from "jsdom";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -18,6 +19,7 @@ export class ComposePreparationService {
   constructor(
     private readonly db: Database,
     private readonly content: MessageContentService,
+    private readonly attachments?: AttachmentService,
   ) {}
   async prepare(
     input: unknown,
@@ -85,6 +87,16 @@ export class ComposePreparationService {
       throw new ReplyUnavailableError(
         "The quoted message exceeds the composer size limit.",
       );
+    const attachments =
+      source.mode === "forward"
+        ? detail.attachments.filter((a) => a.visible)
+        : [];
+    for (const attachment of attachments) {
+      if (attachment.status === "not_fetched") {
+        await this.attachments?.request(attachment.id);
+        attachment.status = "pending";
+      }
+    }
     return {
       status: "ready",
       prefill: {
@@ -93,7 +105,9 @@ export class ComposePreparationService {
         ...recipients,
         subject: derivedSubject(row.message.subject, source.mode),
         plainText,
-        attachmentsOmitted: row.message.hasAttachments,
+        attachmentsOmitted:
+          source.mode !== "forward" && row.message.hasAttachments,
+        attachments,
       },
     };
   }

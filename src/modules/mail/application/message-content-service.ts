@@ -1,4 +1,8 @@
 import { and, eq, ne } from "drizzle-orm";
+import {
+  persistAttachmentMetadata,
+  listAttachmentMetadata,
+} from "./attachment-metadata";
 import type { AccountsService } from "../../accounts/application/accounts-service";
 import {
   MailProviderOperationError,
@@ -13,10 +17,7 @@ import {
   messageContents,
   messages,
 } from "../../../shared/infrastructure/database/schema";
-import {
-  attachmentMetadata,
-  selectDisplayParts,
-} from "../domain/display-parts";
+import { selectDisplayParts } from "../domain/display-parts";
 import {
   EMAIL_HTML_POLICY,
   sanitizeEmailHtml,
@@ -80,6 +81,14 @@ export class MessageContentService {
       mailboxId,
       messageId,
     );
+    await persistAttachmentMetadata(
+      this.database,
+      messageId,
+      mailboxId,
+      placement.uidValidity,
+      placement.uid,
+      message.mimeStructure,
+    );
     return {
       id: message.id,
       subject: message.subject,
@@ -93,7 +102,7 @@ export class MessageContentService {
       bcc: message.bcc,
       seen: placement.flags.includes("\\Seen"),
       flagged: placement.flags.includes("\\Flagged"),
-      attachments: attachmentMetadata(message.mimeStructure),
+      attachments: await listAttachmentMetadata(this.database, messageId),
       content: {
         status: content?.status ?? "not_fetched",
         plainText: content?.status === "ready" ? content.plainText : null,
