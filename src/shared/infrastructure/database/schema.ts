@@ -12,6 +12,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
 import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
@@ -237,6 +238,7 @@ export const instanceState = pgTable(
     id: integer("id").primaryKey(),
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
     passwordAlgorithm: text("password_algorithm"),
+    conversationView: boolean("conversation_view").default(false).notNull(),
     passwordParameters: jsonb("password_parameters").$type<
       Record<string, number>
     >(),
@@ -690,6 +692,80 @@ export const messages = pgTable(
       table.accountId,
       table.internalDate,
     ),
+    uniqueIndex("messages_account_id_unique").on(table.accountId, table.id),
+  ],
+);
+
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    mergedInto: uuid("merged_into"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("conversations_account_id_unique").on(t.accountId, t.id),
+    foreignKey({
+      columns: [t.accountId, t.mergedInto],
+      foreignColumns: [t.accountId, t.id],
+    }),
+  ],
+);
+
+export const conversationMembers = pgTable(
+  "conversation_members",
+  {
+    messageId: uuid("message_id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull(),
+    normalizedMessageId: text("normalized_message_id"),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.accountId, t.conversationId],
+      foreignColumns: [conversations.accountId, conversations.id],
+    }),
+    foreignKey({
+      columns: [t.accountId, t.messageId],
+      foreignColumns: [messages.accountId, messages.id],
+    }).onDelete("cascade"),
+    index("conversation_members_group_idx").on(t.accountId, t.conversationId),
+    index("conversation_members_header_idx").on(
+      t.accountId,
+      t.normalizedMessageId,
+    ),
+  ],
+);
+
+export const conversationReferences = pgTable(
+  "conversation_references",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    headerId: text("header_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.headerId] }),
+    foreignKey({
+      columns: [t.accountId, t.conversationId],
+      foreignColumns: [conversations.accountId, conversations.id],
+    }),
+    index("conversation_references_group_idx").on(
+      t.accountId,
+      t.conversationId,
+    ),
   ],
 );
 
@@ -886,6 +962,9 @@ export const schema = {
   mailboxes,
   mailboxRoles,
   messages,
+  conversations,
+  conversationMembers,
+  conversationReferences,
   mailboxMessages,
   messageContents,
   messageCommands,

@@ -1,29 +1,19 @@
 "use client";
 import { DraftList } from "./draft-list";
+import { FlatMessageList } from "./flat-message-list";
+import { ConversationMessageList } from "./conversation-message-list";
+import { MessageReader, type MessageDetail } from "./message-reader";
 import type { DraftView } from "@/modules/mail/domain/draft";
-
-import { AttachmentList } from "./attachment-list";
-import type { AttachmentView } from "@/modules/mail/domain/attachments";
 
 import Link from "next/link";
 import {
-  Reply,
-  ReplyAll,
-  Forward,
-  Archive,
-  CircleAlert,
   Inbox,
+  Archive,
   Mail,
   MailOpen,
-  Paperclip,
   Plus,
   RefreshCw,
   Settings2,
-  ShieldOff,
-  Trash2,
-  Star,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
@@ -46,7 +36,6 @@ import type {
   ComposePrefill,
 } from "@/modules/mail/domain/compose-source";
 
-type Address = { name?: string; address?: string };
 type SendFeedback = {
   status: string;
   error?: string | null;
@@ -61,42 +50,12 @@ function autoDismissSentFeedback(item?: SendFeedback) {
     )
   );
 }
-type Detail = {
-  id: string;
-  subject: string | null;
-  date: string;
-  sentAt: string | null;
-  from: Address[];
-  to: Address[];
-  cc: Address[];
-  replyTo: Address[];
-  attachments: AttachmentView[];
-  content: {
-    status: string;
-    plainText: string | null;
-    sanitizedHtml: string | null;
-    remoteContentBlocked: boolean;
-    error: string | null;
-  };
-};
 type CountAdjustment = {
   key: string;
   mailboxId: string;
   delta: number;
   completedAt: string | null;
 };
-function address(values: Address[]) {
-  return values
-    .map((value) =>
-      value.name
-        ? `${value.name} <${value.address ?? ""}>`
-        : (value.address ?? "Unknown"),
-    )
-    .join(", ");
-}
-function shell(html: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; form-action 'none'; base-uri 'none'; style-src 'unsafe-inline'"><style>body{font:15px/1.55 system-ui,sans-serif;color:#20242b;margin:20px;overflow-wrap:anywhere}table{max-width:100%;display:block;overflow:auto}pre{white-space:pre-wrap}blockquote{border-left:3px solid #d0d7de;padding-left:1em;margin-left:0;color:#596579}</style></head><body>${html}</body></html>`;
-}
 function formatCount(value: string): string {
   return new Intl.NumberFormat().format(BigInt(value));
 }
@@ -105,11 +64,20 @@ export function MailClient({
   accounts,
   mailboxesByAccount,
   rolesByAccount,
+  initialConversationView = false,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
   rolesByAccount: Record<string, MailboxRoleView[]>;
+  initialConversationView?: boolean;
 }) {
+  const conversationView = initialConversationView;
+  const listModeRef = useRef(conversationView);
+  const [listReloadNonce, setListReloadNonce] = useState(0);
+  const [memberSelection, setMemberSelection] = useState<{
+    message: MessageListItem & { mailboxId: string };
+    location: string;
+  }>();
   const [showDrafts, setShowDrafts] = useState(false);
   const [draft, setDraft] = useState<DraftView | undefined>();
   const [draftListGeneration, setDraftListGeneration] = useState(0);
@@ -221,7 +189,7 @@ export function MailClient({
   const pageRequestIdRef = useRef(0);
   const loadedMoreRef = useRef(false);
   const [selectedId, setSelectedId] = useState("");
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -241,18 +209,43 @@ export function MailClient({
     [],
   );
   const folder = folders.find((item) => item.id === mailboxId);
-  const preparationKey = `${accountId}:${mailboxId}:${selectedId}`;
+  const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+  const location = `${accountId}:${mailboxId}`;
+  const selectedMember =
+    conversationView &&
+    memberSelection?.location === location &&
+    memberSelection.message.id === selectedId
+      ? memberSelection.message
+      : undefined;
+  function selectMessage(message: MessageListItem, placementMailboxId: string) {
+    if (
+      selectedId === message.id &&
+      (selectedMember?.mailboxId ?? mailboxId) === placementMailboxId
+    )
+      return;
+    setMemberSelection({
+      message: { ...message, mailboxId: placementMailboxId },
+      location,
+    });
+    setSelectedId(message.id);
+    setDetail(null);
+    setLoadingDetail(true);
+    setError("");
+  }
+  const actionMailboxId = selectedMember?.mailboxId ?? mailboxId;
+  const messageBase = `/api/accounts/${accountId}/mailboxes/${actionMailboxId}/messages`;
+  const preparationKey = `${accountId}:${actionMailboxId}:${selectedId}`;
   const preparing = preparingState && prepareLocation === preparationKey;
   const prepareError =
     prepareLocation === preparationKey ? prepareErrorState : "";
-  const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+
   useEffect(() => {
     const generation = preparationGeneration;
     generation.current++;
     return () => {
       generation.current++;
     };
-  }, [accountId, mailboxId, selectedId]);
+  }, [accountId, mailboxId, actionMailboxId, selectedId]);
   async function prepare(mode: ComposeMode) {
     if (!selectedId || preparing) return;
     const generation = ++preparationGeneration.current;
@@ -262,7 +255,7 @@ export function MailClient({
     try {
       for (let attempt = 0; attempt < 60; attempt++) {
         const response = await fetch(
-          `${base}/${selectedId}/prepare?mode=${mode}`,
+          `${messageBase}/${selectedId}/prepare?mode=${mode}`,
           { method: "POST" },
         );
         const result = (await response.json()) as {
@@ -295,7 +288,10 @@ export function MailClient({
     }
   }
 
-  const selectedMessage = messages.find((item) => item.id === selectedId);
+  const selectedMessage =
+    conversationView && detail?.id === selectedId
+      ? detail
+      : (selectedMember ?? messages.find((item) => item.id === selectedId));
   const moveAvailable = (action: "archive" | "trash") => {
     const mapping = liveRolesByAccount[accountId]?.find(
       (item) => item.role === action,
@@ -304,7 +300,7 @@ export function MailClient({
       activeAccount?.enabled &&
       activeAccount.mailboxDiscovery.capabilities.includes("MOVE") &&
       mapping?.available &&
-      mapping.mailboxId !== mailboxId,
+      mapping.mailboxId !== actionMailboxId,
     );
   };
 
@@ -325,17 +321,22 @@ export function MailClient({
     if (adjustmentKey)
       setCountAdjustments((current) => [
         ...current,
-        { key: adjustmentKey, mailboxId, delta: countDelta, completedAt: null },
+        {
+          key: adjustmentKey,
+          mailboxId: actionMailboxId,
+          delta: countDelta,
+          completedAt: null,
+        },
       ]);
     setError("");
-    if (action === "archive" || action === "trash") {
+    if (!conversationView && (action === "archive" || action === "trash")) {
       const index = messages.findIndex((item) => item.id === targetId);
       const next = messages[index + 1] ?? messages[index - 1];
       setMessages((current) => current.filter((item) => item.id !== targetId));
       setSelectedId(next?.id ?? "");
       setDetail(null);
       setLoadingDetail(Boolean(next));
-    } else {
+    } else if (!conversationView) {
       setMessages((current) =>
         current.map((item) =>
           item.id === targetId
@@ -359,7 +360,7 @@ export function MailClient({
       );
     }
     try {
-      const response = await fetch(`${base}/${targetId}/actions`, {
+      const response = await fetch(`${messageBase}/${targetId}/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
@@ -369,7 +370,7 @@ export function MailClient({
         throw new Error(result.error ?? "Message action could not be queued.");
       setPendingCommands((current) => ({
         ...current,
-        [result.id!]: { accountId, mailboxId, adjustmentKey },
+        [result.id!]: { accountId, mailboxId: actionMailboxId, adjustmentKey },
       }));
     } catch (failure) {
       if (adjustmentKey)
@@ -438,8 +439,13 @@ export function MailClient({
               for (const item of finished) delete next[item.id];
               return next;
             });
-            if (finished.some((item) => item.status === "succeeded"))
+            if (finished.some((item) => item.status === "succeeded")) {
               setFolderReloadNonce((value) => value + 1);
+              if (conversationView) {
+                setListReloadNonce((value) => value + 1);
+                setRetryNonce((value) => value + 1);
+              }
+            }
             const failure = finished.find((item) => item.status === "failed");
             if (failure) {
               const source = pendingCommands[failure.id];
@@ -465,15 +471,22 @@ export function MailClient({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [accountId, mailboxId, base, pendingCommands]);
+  }, [accountId, mailboxId, base, pendingCommands, conversationView]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
     setMessages((current) => {
       if (!loadedMoreRef.current) return [...page.items];
       const firstPageIds = new Set(page.items.map((item) => item.id));
+      const firstPageConversations = new Set(
+        page.items.map((item) => item.conversationId).filter(Boolean),
+      );
       return [
         ...page.items,
-        ...current.filter((item) => !firstPageIds.has(item.id)),
+        ...current.filter(
+          (item) =>
+            !firstPageIds.has(item.id) &&
+            !firstPageConversations.has(item.conversationId),
+        ),
       ];
     });
     if (!loadedMoreRef.current) setNextCursor(page.nextCursor);
@@ -551,6 +564,18 @@ export function MailClient({
         })
         .then((result) => {
           if (!cancelled) {
+            if (listModeRef.current !== conversationView) {
+              listModeRef.current = conversationView;
+              loadedMoreRef.current = false;
+              loadingPageRef.current = false;
+              pageRequestIdRef.current++;
+              setLoadingMore(false);
+              setPaginationError("");
+              setSelectedId("");
+              setMemberSelection(undefined);
+              setDetail(null);
+              listRef.current?.scrollTo({ top: 0 });
+            }
             applyFirstPage(result);
             setError("");
           }
@@ -571,7 +596,14 @@ export function MailClient({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", load);
     };
-  }, [accountId, mailboxId, base, applyFirstPage]);
+  }, [
+    accountId,
+    mailboxId,
+    base,
+    applyFirstPage,
+    conversationView,
+    listReloadNonce,
+  ]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -598,9 +630,16 @@ export function MailClient({
             loadedMoreRef.current = true;
             setMessages((current) => {
               const existingIds = new Set(current.map((item) => item.id));
+              const existingConversations = new Set(
+                current.map((item) => item.conversationId).filter(Boolean),
+              );
               return [
                 ...current,
-                ...page.items.filter((item) => !existingIds.has(item.id)),
+                ...page.items.filter(
+                  (item) =>
+                    !existingIds.has(item.id) &&
+                    !existingConversations.has(item.conversationId),
+                ),
               ];
             });
             setNextCursor(page.nextCursor);
@@ -630,11 +669,11 @@ export function MailClient({
     if (!selectedId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const url = `${base}/${selectedId}`;
+    const url = `${messageBase}/${selectedId}`;
     async function load() {
       const response = await fetch(url);
       if (!response.ok) throw new Error("Message could not be loaded.");
-      const value = (await response.json()) as Detail;
+      const value = (await response.json()) as MessageDetail;
       if (cancelled) return;
       setDetail(value);
       setLoadingDetail(false);
@@ -667,14 +706,14 @@ export function MailClient({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [base, selectedId, retryNonce]);
+  }, [messageBase, selectedId, retryNonce]);
 
   async function retryContent() {
     if (!selectedId) return;
     setRetrying(true);
     setError("");
     try {
-      const response = await fetch(`${base}/${selectedId}/content`, {
+      const response = await fetch(`${messageBase}/${selectedId}/content`, {
         method: "POST",
       });
       if (!response.ok) {
@@ -725,8 +764,6 @@ export function MailClient({
   const visibleFolders = folders.filter(
     (item) => item.selectable && item.lifecycleStatus === "active",
   );
-  const sender = detail?.from[0];
-  const senderName = sender?.name || sender?.address || "Unknown sender";
 
   return (
     <main className="mail-app">
@@ -940,77 +977,43 @@ export function MailClient({
           />
         ) : (
           <div className="mail-rows" ref={listRef}>
-            {loadingMessages && mailboxId
-              ? Array.from({ length: 5 }, (_, index) => (
-                  <div className="skeleton-row" key={index}>
-                    <div
-                      className="skeleton"
-                      style={{ width: "55%", height: 12 }}
-                    />
-                    <div
-                      className="skeleton"
-                      style={{ width: "80%", height: 10 }}
-                    />
-                    <div
-                      className="skeleton"
-                      style={{ width: "35%", height: 9 }}
-                    />
-                  </div>
-                ))
-              : messages.map((message) => (
-                  <button
-                    key={message.id}
-                    className={
-                      "mail-list-row " +
-                      (selectedId === message.id ? "selected " : "") +
-                      (!message.seen ? "unread" : "")
-                    }
-                    aria-current={
-                      selectedId === message.id ? "true" : undefined
-                    }
-                    onClick={() => {
-                      if (selectedId === message.id) return;
-                      setDetail(null);
-                      setLoadingDetail(true);
-                      setError("");
-                      setSelectedId(message.id);
-                    }}
-                  >
-                    <span className="mail-row-top">
-                      <span className="mail-row-marker">
-                        {!message.seen ? (
-                          <span className="unread-dot" aria-label="Unread" />
-                        ) : null}
-                      </span>
-                      <strong>
-                        {message.from[0]?.name ||
-                          message.from[0]?.address ||
-                          "Unknown sender"}
-                      </strong>
-                      <time dateTime={message.date}>
-                        {new Date(message.date).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          year:
-                            new Date(message.date).getFullYear() ===
-                            new Date().getFullYear()
-                              ? undefined
-                              : "numeric",
-                        })}
-                      </time>
-                    </span>
-                    <span className="mail-row-subject">
-                      {message.subject || "(No subject)"}
-                    </span>
-                    <span className="mail-row-bottom">
-                      {message.hasAttachments ? (
-                        <>
-                          <Paperclip size={12} /> Attachment
-                        </>
-                      ) : null}
-                    </span>
-                  </button>
-                ))}
+            {loadingMessages && mailboxId ? (
+              Array.from({ length: 5 }, (_, index) => (
+                <div className="skeleton-row" key={index}>
+                  <div
+                    className="skeleton"
+                    style={{ width: "55%", height: 12 }}
+                  />
+                  <div
+                    className="skeleton"
+                    style={{ width: "80%", height: 10 }}
+                  />
+                  <div
+                    className="skeleton"
+                    style={{ width: "35%", height: 9 }}
+                  />
+                </div>
+              ))
+            ) : conversationView ? (
+              <ConversationMessageList
+                key={location}
+                accountId={accountId}
+                mailboxId={mailboxId}
+                messages={messages}
+                selectedId={selectedId}
+                refreshKey={retryNonce + folderReloadNonce + listReloadNonce}
+                onSelect={(message) =>
+                  selectMessage(message, message.mailboxId ?? mailboxId)
+                }
+              />
+            ) : (
+              <FlatMessageList
+                messages={messages}
+                selectedId={selectedId}
+                onSelect={(message) => selectMessage(message, mailboxId)}
+              />
+            )}
+
             {!loadingMessages && nextCursor ? (
               <div
                 className="mail-load-more"
@@ -1108,188 +1111,19 @@ export function MailClient({
             }}
           />
         ) : (
-          <>
-            {!selectedId ? (
-              <div className="pane-empty reader-empty">
-                <MailOpen size={30} strokeWidth={1.4} />
-                <strong>Select a message</strong>
-                <p>Choose a message from the list to read it here.</p>
-              </div>
-            ) : null}
-            {selectedId && loadingDetail && !detail ? (
-              <div className="mail-detail-header">
-                <div
-                  className="skeleton"
-                  style={{ width: "60%", height: 22 }}
-                />
-                <div
-                  className="skeleton"
-                  style={{ width: "40%", height: 13, marginTop: 24 }}
-                />
-              </div>
-            ) : null}
-            {detail ? (
-              <>
-                <header className="mail-detail-header">
-                  <div
-                    className="message-actions"
-                    role="toolbar"
-                    aria-label="Message actions"
-                  >
-                    {(
-                      [
-                        { mode: "reply", label: "Reply", Icon: Reply },
-                        {
-                          mode: "reply_all",
-                          label: "Reply All",
-                          Icon: ReplyAll,
-                        },
-                        { mode: "forward", label: "Forward", Icon: Forward },
-                      ] as const
-                    ).map(({ mode, label, Icon }) => (
-                      <button
-                        key={mode}
-                        className="icon-button"
-                        title={label}
-                        aria-label={label}
-                        disabled={preparing}
-                        onClick={() => void prepare(mode)}
-                      >
-                        <Icon size={17} />
-                      </button>
-                    ))}
-                    <button
-                      className="icon-button"
-                      title="Archive"
-                      aria-label="Archive"
-                      disabled={!moveAvailable("archive")}
-                      onClick={() => void act("archive")}
-                    >
-                      <Archive size={17} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      title="Move to Trash"
-                      aria-label="Move to Trash"
-                      disabled={!moveAvailable("trash")}
-                      onClick={() => void act("trash")}
-                    >
-                      <Trash2 size={17} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      title={
-                        selectedMessage?.seen ? "Mark unread" : "Mark read"
-                      }
-                      aria-label={
-                        selectedMessage?.seen ? "Mark unread" : "Mark read"
-                      }
-                      onClick={() =>
-                        void act(
-                          selectedMessage?.seen ? "mark_unread" : "mark_read",
-                        )
-                      }
-                    >
-                      {selectedMessage?.seen ? (
-                        <EyeOff size={17} />
-                      ) : (
-                        <Eye size={17} />
-                      )}
-                    </button>
-                    <button
-                      className="icon-button"
-                      title={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                      aria-label={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                      onClick={() =>
-                        void act(selectedMessage?.flagged ? "unflag" : "flag")
-                      }
-                    >
-                      <Star
-                        size={17}
-                        fill={
-                          selectedMessage?.flagged ? "currentColor" : "none"
-                        }
-                      />
-                    </button>
-                  </div>
-                  {preparing ? <p role="status">Preparing message…</p> : null}
-                  {prepareError ? (
-                    <p role="alert" className="error">
-                      {prepareError}
-                    </p>
-                  ) : null}
-                  <h2>{detail.subject || "(No subject)"}</h2>
-                  <div className="reader-sender">
-                    <span className="sender-avatar">
-                      {senderName.charAt(0)}
-                    </span>
-                    <div className="reader-addresses">
-                      <strong>{senderName}</strong>
-                      <small>
-                        {sender?.name ? sender.address : address(detail.from)}
-                      </small>
-                    </div>
-                    <time
-                      className="reader-date"
-                      dateTime={detail.sentAt ?? detail.date}
-                    >
-                      {new Date(detail.sentAt ?? detail.date).toLocaleString()}
-                    </time>
-                  </div>
-                  <div className="reader-meta">
-                    To: {address(detail.to)}
-                    {detail.cc.length ? " · Cc: " + address(detail.cc) : ""}
-                  </div>
-                </header>
-                {detail.content.remoteContentBlocked ? (
-                  <div className="mail-privacy">
-                    <ShieldOff size={15} />
-                    Remote content blocked for your privacy
-                  </div>
-                ) : null}
-                <div className="mail-body" key={`body:${detail.id}`}>
-                  {detail.content.status === "ready" ? (
-                    detail.content.sanitizedHtml !== null ? (
-                      <iframe
-                        title="Email content"
-                        sandbox=""
-                        referrerPolicy="no-referrer"
-                        srcDoc={shell(detail.content.sanitizedHtml)}
-                      />
-                    ) : (
-                      <pre>{detail.content.plainText}</pre>
-                    )
-                  ) : detail.content.status === "failed" ? (
-                    <div className="mail-content-failure">
-                      <p className="error">
-                        <CircleAlert size={15} />{" "}
-                        {detail.content.error ?? "Content fetch failed."}
-                      </p>
-                      <button
-                        className="button secondary"
-                        onClick={() => void retryContent()}
-                        disabled={retrying}
-                      >
-                        Retry download
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="pane-empty">
-                      <div
-                        className="skeleton"
-                        style={{ width: 180, height: 11 }}
-                      />
-                      <p>Downloading message content…</p>
-                    </div>
-                  )}
-                </div>
-                <AttachmentList
-                  key={detail.id}
-                  attachments={detail.attachments}
-                />
-              </>
-            ) : null}
-          </>
+          <MessageReader
+            selectedId={selectedId}
+            detail={detail}
+            loadingDetail={loadingDetail}
+            selectedMessage={selectedMessage}
+            preparing={preparing}
+            prepareError={prepareError}
+            retrying={retrying}
+            prepare={prepare}
+            act={act}
+            moveAvailable={moveAvailable}
+            retryContent={retryContent}
+          />
         )}
       </section>
     </main>

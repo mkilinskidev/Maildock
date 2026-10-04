@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ConversationService } from "./conversation-service";
 import { persistAttachmentMetadata } from "./attachment-metadata";
 
 import { and, desc, eq, lt, or } from "drizzle-orm";
@@ -43,6 +44,9 @@ export type MessageListItem = Readonly<{
   flagged: boolean;
   size: string;
   hasAttachments: boolean;
+  conversationId?: string;
+  messageCount?: number;
+  conversationMessageCount?: number;
 }>;
 
 export type MessagePage = Readonly<{
@@ -464,6 +468,9 @@ export class MessageService {
     cursor?: string,
   ): Promise<MessagePage> {
     await this.ownedMailbox(accountId, mailboxId);
+    const conversations = new ConversationService(this.database);
+    if (await conversations.enabled())
+      return conversations.list(accountId, mailboxId, pageSize, cursor);
     const limit = Math.min(Math.max(pageSize, 1), 100);
     const cursorValue = cursor ? decodeCursor(cursor) : undefined;
     const rows = await this.database

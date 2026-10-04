@@ -3,6 +3,9 @@ import Link from "next/link";
 import { ThemeControl } from "@/components/theme-control";
 import { getCurrentSession } from "@/modules/auth/application/session";
 import { AccountList } from "@/components/account-list";
+import { ConversationViewSettings } from "@/components/conversation-view-settings";
+import { ConversationService } from "@/modules/mail/application/conversation-service";
+import { db } from "@/shared/infrastructure/database/runtime-database";
 import { microsoftOAuth } from "@/modules/accounts/infrastructure/accounts";
 import {
   accountsService,
@@ -45,6 +48,9 @@ export default async function AccountsPage({
             </Link>
           </div>
         </header>
+        <ConversationViewSettings
+          initialEnabled={await new ConversationService(db).enabled()}
+        />
         <AccountList
           accounts={accounts}
           mailboxesByAccount={Object.fromEntries(entries)}

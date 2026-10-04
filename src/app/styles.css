@@ -1,5 +1,145 @@
 @import "tailwindcss";
 
+.mail-preferences {
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.mail-preferences-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--secondary);
+  margin-bottom: 16px;
+}
+.mail-preferences-heading h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+.conversation-preference {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.conversation-preference input {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin: 2px 0 0;
+  border: 1.5px solid var(--border);
+  border-radius: 5px;
+  background: var(--elevated);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.conversation-preference input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.conversation-preference input:checked::after {
+  content: "";
+  width: 5px;
+  height: 10px;
+  border: solid var(--accent-text);
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+.conversation-preference input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.conversation-preference input:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.conversation-preference strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+.conversation-preference span span {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--secondary);
+}
+.preference-save-status {
+  min-height: 16px;
+  margin: 8px 0 0 32px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.conversation-group {
+  border-bottom: 1px solid var(--border);
+}
+.conversation-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  color: var(--secondary);
+  background: var(--surface);
+  cursor: pointer;
+}
+.conversation-group-header:hover {
+  background: var(--hover);
+}
+.conversation-group-header.unread {
+  color: var(--text);
+  font-weight: 650;
+}
+.conversation-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.conversation-count {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.conversation-children {
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+  margin-left: 22px;
+}
+.mail-list-row.conversation-child {
+  padding: 10px 14px 10px 8px;
+}
+.conversation-child .mail-row-top {
+  gap: 6px;
+}
+.conversation-child .mail-row-top time {
+  font-size: 10px;
+}
+.conversation-child .mail-row-subject {
+  font-size: 12px;
+}
+.conversation-list-status {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .compose-action {
   margin: 4px 16px 12px;
 }
