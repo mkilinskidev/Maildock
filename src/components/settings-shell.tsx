@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ChevronRight, Mail, Grid2X2 } from "lucide-react";
+import { AccountForm } from "./account-form";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
@@ -13,7 +16,13 @@ import { RemoteContentSettings } from "./remote-content-settings";
 import { AccountSettings } from "./account-settings";
 
 type Section =
-  "appearance" | "mail" | "signatures" | "remote-images" | `account:${string}`;
+  | "add-account"
+  | "add-imap"
+  | "appearance"
+  | "mail"
+  | "signatures"
+  | "remote-images"
+  | `account:${string}`;
 export function SettingsShell({
   accounts,
   mailboxesByAccount,
@@ -24,6 +33,7 @@ export function SettingsShell({
   oauthConfigured,
   oauthResult,
   initialAccountId,
+  initialAddAccount = false,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
@@ -34,10 +44,25 @@ export function SettingsShell({
   oauthConfigured: boolean;
   oauthResult: { oauth?: string; oauth_error?: string };
   initialAccountId?: string;
+  initialAddAccount?: boolean;
 }) {
+  const router = useRouter();
+  const [createdAccount, setCreatedAccount] = useState<MailAccountView>();
+  const accountItems =
+    createdAccount && !accounts.some((a) => a.id === createdAccount.id)
+      ? [...accounts, createdAccount]
+      : accounts;
+  // Use the server list once refresh includes the created account. Clear the
+  // temporary view so a subsequent deletion cannot reintroduce it in the rail.
+  if (createdAccount && accounts.some((a) => a.id === createdAccount.id))
+    setCreatedAccount(undefined);
   const [section, setSection] = useState<Section>(() => {
     const selected = accounts.find((a) => a.id === initialAccountId);
-    return selected ? `account:${selected.id}` : "appearance";
+    return selected
+      ? `account:${selected.id}`
+      : initialAddAccount
+        ? "add-account"
+        : "appearance";
   });
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -45,7 +70,7 @@ export function SettingsShell({
   const onDirtyChange = useCallback((value: boolean) => setDirty(value), []);
   const onBusyChange = useCallback((value: boolean) => setBusy(value), []);
   const selectedAccount = section.startsWith("account:")
-    ? accounts.find((a) => a.id === section.slice(8))
+    ? accountItems.find((a) => a.id === section.slice(8))
     : undefined;
   useEffect(() => {
     leaving.current = false;
@@ -147,13 +172,21 @@ export function SettingsShell({
           </div>
           <div className="settings-nav-group">
             <h2>Accounts</h2>
-            {accounts.map((a) =>
+            {accountItems.map((a) =>
               item(`account:${a.id}`, a.displayName, a.email),
             )}
-            <a href="/accounts/new">+ Add account</a>
-            {oauthConfigured ? (
-              <a href="/api/oauth/microsoft/start">Connect Microsoft account</a>
-            ) : null}
+            <button
+              type="button"
+              disabled={busy}
+              aria-current={
+                section === "add-account" || section === "add-imap"
+                  ? "page"
+                  : undefined
+              }
+              onClick={() => select("add-account")}
+            >
+              + Add account
+            </button>
           </div>
           <div className="settings-nav-group">
             <h2>Compose</h2>
@@ -175,6 +208,90 @@ export function SettingsShell({
               {oauthErrors[oauthResult.oauth_error] ??
                 "Microsoft connection failed. Try again."}
             </p>
+          ) : null}
+          {section === "add-account" ? (
+            <>
+              <header className="settings-pane-header account-provider-header">
+                <h2>Add email account</h2>
+                <p>Choose how you want to connect your account.</p>
+              </header>
+              <div
+                className="account-provider-list"
+                aria-label="Email providers"
+              >
+                {oauthConfigured ? (
+                  <a
+                    className="account-provider-row"
+                    href="/api/oauth/microsoft/start"
+                  >
+                    <Grid2X2 aria-hidden="true" />
+                    <span>
+                      <strong>Microsoft</strong>
+                      <small>Outlook, Hotmail, Microsoft 365</small>
+                    </span>
+                    <ChevronRight aria-hidden="true" />
+                  </a>
+                ) : (
+                  <button className="account-provider-row" disabled>
+                    <Grid2X2 aria-hidden="true" />
+                    <span>
+                      <strong>Microsoft</strong>
+                      <small>Outlook, Hotmail, Microsoft 365</small>
+                    </span>
+                    <small>Not configured</small>
+                  </button>
+                )}
+                <button className="account-provider-row" disabled>
+                  <Mail aria-hidden="true" />
+                  <span>
+                    <strong>Google</strong>
+                    <small>Gmail and Google Workspace</small>
+                  </span>
+                  <small>Coming soon</small>
+                </button>
+                <button
+                  type="button"
+                  className="account-provider-row"
+                  onClick={() => select("add-imap")}
+                >
+                  <Mail aria-hidden="true" />
+                  <span>
+                    <strong>Other email</strong>
+                    <small>Connect using IMAP and SMTP</small>
+                  </span>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+            </>
+          ) : null}
+          {section === "add-imap" ? (
+            <>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={busy}
+                onClick={() => select("add-account")}
+              >
+                <ArrowLeft size={16} aria-hidden="true" /> Back
+              </button>
+              <header className="settings-pane-header">
+                <h2>Add email account</h2>
+                <p>Connect using IMAP and SMTP.</p>
+              </header>
+              <AccountForm
+                onDirtyChange={onDirtyChange}
+                onBusyChange={onBusyChange}
+                onCreated={(account) => {
+                  setDirty(false);
+                  setCreatedAccount(account);
+                  setSection(`account:${account.id}`);
+                  router.replace(
+                    `/accounts?account=${encodeURIComponent(account.id)}`,
+                  );
+                  router.refresh();
+                }}
+              />
+            </>
           ) : null}
           {selectedAccount ? (
             <AccountSettings

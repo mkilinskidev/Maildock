@@ -1001,10 +1001,6 @@ export function MailClient({
             <Settings2 size={15} />
             Accounts & settings
           </Link>
-          <Link href="/accounts/new">
-            <Plus size={15} />
-            Add account
-          </Link>
           <LogoutButton />
         </div>
       </aside>

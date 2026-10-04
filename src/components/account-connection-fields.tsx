@@ -1,7 +1,7 @@
 "use client";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 
-// Shared by existing Add Account and the Settings connection editor.
+// Shared by Settings account creation and the Settings connection editor.
 export function AccountConnectionFields({
   account,
   useImapCredentials,

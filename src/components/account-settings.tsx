@@ -9,6 +9,8 @@ import type {
   SystemMailboxRole,
 } from "@/modules/mail/application/mailbox-role-service";
 import type { SignatureCatalog } from "@/modules/mail/domain/signature";
+import { AccountIdentityFields } from "./account-identity-fields";
+import { accountConnectionPayload } from "./account-connection-payload";
 import { AccountConnectionFields } from "./account-connection-fields";
 import { SentCopyPolicyFields } from "./sent-copy-settings";
 import { MessageList } from "./message-list";
@@ -121,31 +123,15 @@ export function AccountSettings({
     }
   }
   function connectionPayload(form: HTMLFormElement) {
-    const data = new FormData(form);
     return {
       ...savedIdentity,
       enabled: account.enabled,
       providerType: account.providerType,
       sentCopyPolicy: policy,
-      imap: {
-        host: data.get("imapHost"),
-        port: data.get("imapPort"),
-        security: data.get("imapSecurity"),
-        username: data.get("imapUsername"),
-        password: data.get("imapPassword") || undefined,
-      },
-      smtp: {
-        host: data.get("smtpHost"),
-        port: data.get("smtpPort"),
-        security: data.get("smtpSecurity"),
-        useImapCredentials,
-        username: useImapCredentials ? undefined : data.get("smtpUsername"),
-        password: useImapCredentials
-          ? undefined
-          : data.get("smtpPassword") || undefined,
-      },
+      ...accountConnectionPayload(form, useImapCredentials),
     };
   }
+
   return (
     <>
       <header className="settings-pane-header">
@@ -206,34 +192,11 @@ export function AccountSettings({
               Account name is your local label. Your name appears in outgoing
               From headers.
             </p>
-            <div className="settings-fields">
-              {(
-                [
-                  ["displayName", "Account name"],
-                  ["senderDisplayName", "Your name"],
-                  ["email", "Email address"],
-                ] as const
-              ).map(([key, label]) => (
-                <label key={key}>
-                  {label}
-                  <input
-                    name={key}
-                    value={identity[key]}
-                    required={key !== "senderDisplayName"}
-                    type={key === "email" ? "email" : "text"}
-                    maxLength={
-                      key === "displayName" ? 100 : key === "email" ? 320 : 200
-                    }
-                    readOnly={
-                      key === "email" && account.authMethod === "oauth2"
-                    }
-                    onChange={(e) =>
-                      setIdentity({ ...identity, [key]: e.target.value })
-                    }
-                  />
-                </label>
-              ))}
-            </div>
+            <AccountIdentityFields
+              value={identity}
+              onChange={setIdentity}
+              emailReadOnly={account.authMethod === "oauth2"}
+            />
             {account.authMethod === "oauth2" ? (
               <p className="muted">
                 Email identity is managed by Microsoft. Reconnect to refresh

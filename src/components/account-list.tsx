@@ -53,7 +53,6 @@ export function AccountList({
   accounts,
   mailboxesByAccount,
   rolesByAccount,
-  oauthConfigured,
   oauthResult,
   signatureCatalog,
 }: {
@@ -149,14 +148,9 @@ export function AccountList({
         ) : null}
         <p>Add an email account to get started.</p>
         <div className="actions justify-center">
-          {oauthConfigured ? (
-            <Link className="button-link" href="/api/oauth/microsoft/start">
-              Connect Microsoft account
-            </Link>
-          ) : null}
-          <Link className="button-link secondary" href="/accounts/new">
+          <Link className="button-link secondary" href="/accounts?add=1">
             <Plus size={15} />
-            Configure IMAP/SMTP
+            Add account
           </Link>
         </div>
       </div>
@@ -166,14 +160,9 @@ export function AccountList({
   return (
     <>
       <div className="actions page-toolbar">
-        {oauthConfigured ? (
-          <Link className="button-link" href="/api/oauth/microsoft/start">
-            Connect Microsoft account
-          </Link>
-        ) : null}
-        <Link className="button-link secondary" href="/accounts/new">
+        <Link className="button-link secondary" href="/accounts?add=1">
           <Plus size={15} />
-          Configure IMAP/SMTP
+          Add account
         </Link>
       </div>
       {oauthResult.oauth === "connected" ? (

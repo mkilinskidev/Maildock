@@ -21,7 +21,12 @@ export async function GET(request: Request) {
       query.get("error") ?? undefined,
     );
     await accountsService.requestMailboxDiscovery(id);
-    return Response.redirect(new URL("/accounts?oauth=connected", origin));
+    return Response.redirect(
+      new URL(
+        `/accounts?oauth=connected&account=${encodeURIComponent(id)}`,
+        origin,
+      ),
+    );
   } catch (error) {
     const reason =
       error instanceof MicrosoftAuthorizationError

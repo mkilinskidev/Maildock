@@ -20,6 +20,7 @@ export default async function AccountsPage({
     oauth?: string;
     oauth_error?: string;
     account?: string;
+    add?: string;
   }>;
 }) {
   if (!(await getCurrentSession())) redirect("/login");
@@ -47,6 +48,7 @@ export default async function AccountsPage({
       oauthConfigured={microsoftOAuth.configured}
       oauthResult={params}
       initialAccountId={params.account}
+      initialAddAccount={params.add === "1" || !!params.oauth_error}
       conversationEnabled={await new ConversationService(db).enabled()}
       trustedSenders={await new RemoteContentSenderService(db).list()}
     />

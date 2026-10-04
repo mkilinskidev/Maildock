@@ -100,6 +100,78 @@
   margin: 0;
   font-size: 13px;
 }
+/* Providers belong to the content pane; keep this list vertical at every width. */
+.account-provider-header {
+  text-align: center;
+}
+.account-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+}
+.account-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.account-provider-row > span {
+  flex: 1;
+  min-width: 0;
+}
+.account-provider-row strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 650;
+}
+.account-provider-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.account-provider-row > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.account-provider-row:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+.account-provider-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.account-provider-row:disabled {
+  cursor: default;
+  background: var(--bg);
+}
+.account-provider-row:disabled > svg {
+  color: var(--muted);
+}
+.settings-create-form {
+  max-width: 900px;
+}
+.settings-create-form > .settings-connection-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.settings-pane > .button + .settings-pane-header {
+  margin-top: 20px;
+}
 .settings-tabs {
   display: flex;
   gap: 24px;

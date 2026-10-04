@@ -1,102 +1,82 @@
 "use client";
 
-import Link from "next/link";
+import { AccountIdentityFields } from "./account-identity-fields";
+import { accountConnectionPayload } from "./account-connection-payload";
 import { AccountConnectionFields } from "./account-connection-fields";
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useState } from "react";
 
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { ConnectionReport } from "@/modules/accounts/domain/mail-provider";
 import type { SentCopyPolicy } from "@/modules/accounts/domain/account";
-import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import { SentCopyPolicyFields } from "@/components/sent-copy-settings";
 
 export function AccountForm({
-  id,
-  account,
-  sentRole,
+  onCreated,
+  onDirtyChange,
+  onBusyChange,
 }: {
-  id: string;
-  account?: MailAccountView;
-  sentRole?: MailboxRoleView;
+  onCreated: (account: MailAccountView) => void;
+  onDirtyChange: (dirty: boolean) => void;
+  onBusyChange: (busy: boolean) => void;
 }) {
-  const router = useRouter();
-  const [sentCopyPolicy, setSentCopyPolicy] = useState<SentCopyPolicy>(
-    account?.sentCopyPolicy ?? "server",
-  );
-  const [useImapCredentials, setUseImapCredentials] = useState(
-    account?.smtp.useImapCredentials ?? true,
-  );
+  const [id] = useState(() => crypto.randomUUID());
+  const [identity, setIdentity] = useState({
+    displayName: "",
+    senderDisplayName: "",
+    email: "",
+  });
+  const [sentCopyPolicy, setSentCopyPolicy] =
+    useState<SentCopyPolicy>("server");
+  const [useImapCredentials, setUseImapCredentials] = useState(true);
   const [pending, setPending] = useState<"save" | "test">();
   const [error, setError] = useState<string>();
   const [report, setReport] = useState<ConnectionReport>();
 
-  function payload(form: HTMLFormElement) {
-    const data = new FormData(form);
-    const optional = (name: string) => {
-      const value = String(data.get(name) ?? "");
-      return value.length > 0 ? value : undefined;
-    };
-    return {
-      ...(account ? {} : { id }),
-      displayName: data.get("displayName"),
-      senderDisplayName: data.get("senderDisplayName"),
-      email: data.get("email"),
-      enabled: data.get("enabled") === "on",
-      sentCopyPolicy,
-      providerType: "imap_smtp",
-      imap: {
-        host: data.get("imapHost"),
-        port: data.get("imapPort"),
-        security: data.get("imapSecurity"),
-        username: data.get("imapUsername"),
-        password: account ? optional("imapPassword") : data.get("imapPassword"),
-      },
-      smtp: {
-        host: data.get("smtpHost"),
-        port: data.get("smtpPort"),
-        security: data.get("smtpSecurity"),
-        useImapCredentials,
-        username: useImapCredentials ? undefined : data.get("smtpUsername"),
-        password: useImapCredentials
-          ? undefined
-          : account
-            ? optional("smtpPassword")
-            : data.get("smtpPassword"),
-      },
-    };
-  }
+  useEffect(() => {
+    onBusyChange(!!pending);
+    return () => onBusyChange(false);
+  }, [pending, onBusyChange]);
 
   async function request(form: HTMLFormElement, action: "save" | "test") {
+    if (pending || !form.reportValidity()) return;
     setPending(action);
     setError(undefined);
     setReport(undefined);
-    const response = await fetch(
-      action === "save"
-        ? account
-          ? `/api/accounts/${id}`
-          : "/api/accounts"
-        : account
-          ? `/api/accounts/${id}/test`
-          : "/api/accounts/test",
-      {
-        method: action === "save" ? (account ? "PUT" : "POST") : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload(form)),
-      },
-    );
-    const result = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      result?: ConnectionReport;
-    };
-    if (!response.ok) setError(result.error ?? "The request failed.");
-    else if (action === "test") setReport(result.result);
-    else {
-      router.push("/");
-      router.refresh();
-      return;
+    try {
+      const response = await fetch(
+        action === "save" ? "/api/accounts" : "/api/accounts/test",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            ...identity,
+            enabled: true,
+            sentCopyPolicy,
+            providerType: "imap_smtp",
+            ...accountConnectionPayload(form, useImapCredentials),
+          }),
+        },
+      );
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        result?: ConnectionReport;
+        account?: MailAccountView;
+      };
+      if (!response.ok) setError(result.error ?? "The request failed.");
+      else if (action === "test") setReport(result.result);
+      else if (result.account) {
+        onDirtyChange(false);
+        onCreated(result.account);
+      } else
+        setError(
+          "The account could not be opened. Reload Settings to check your accounts.",
+        );
+    } catch {
+      setError("The request failed. Check your connection and try again.");
+    } finally {
+      setPending(undefined);
     }
-    setPending(undefined);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -105,54 +85,28 @@ export function AccountForm({
   }
 
   return (
-    <form className="account-form" onSubmit={submit}>
-      <div className="form-grid">
-        <label>
-          Account name
-          <input
-            name="displayName"
-            required
-            maxLength={100}
-            defaultValue={account?.displayName}
-          />
-        </label>
-        <label>
-          Your name
-          <input
-            name="senderDisplayName"
-            maxLength={200}
-            defaultValue={account?.senderDisplayName}
-          />
-        </label>
-        <label>
-          Email
-          <input
-            name="email"
-            type="email"
-            required
-            defaultValue={account?.email}
-          />
-        </label>
-      </div>
-      <label className="checkbox">
-        <input
-          name="enabled"
-          type="checkbox"
-          defaultChecked={account?.enabled ?? true}
-        />{" "}
-        Enabled
-      </label>
-
-      <AccountConnectionFields
-        account={account}
-        useImapCredentials={useImapCredentials}
-        onUseImapCredentialsChange={setUseImapCredentials}
-      />
-
+    <form
+      className="settings-create-form"
+      onSubmit={submit}
+      onChange={() => onDirtyChange(true)}
+    >
+      <fieldset disabled={!!pending} className="settings-section">
+        <legend>Identity</legend>
+        <p className="muted">
+          Account name is your local label. Your name appears in outgoing From
+          headers.
+        </p>
+        <AccountIdentityFields value={identity} onChange={setIdentity} />
+      </fieldset>
+      <fieldset disabled={!!pending} className="settings-connection-fields">
+        <AccountConnectionFields
+          useImapCredentials={useImapCredentials}
+          onUseImapCredentialsChange={setUseImapCredentials}
+        />
+      </fieldset>
       <SentCopyPolicyFields
         policy={sentCopyPolicy}
         onChange={setSentCopyPolicy}
-        sentRole={sentRole}
         disabled={!!pending}
       />
       {report ? (
@@ -184,11 +138,8 @@ export function AccountForm({
           {pending === "test" ? "Testing…" : "Test connection"}
         </button>
         <button type="submit" className="button" disabled={!!pending}>
-          {pending === "save" ? "Saving…" : "Save"}
+          {pending === "save" ? "Saving…" : "Create account"}
         </button>
-        <Link className="button-link secondary" href="/">
-          Cancel
-        </Link>
       </div>
     </form>
   );

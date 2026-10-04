@@ -6,7 +6,8 @@ import { SettingsShell } from "@/components/settings-shell";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+const router = vi.hoisted(() => ({ refresh: vi.fn(), replace: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/components/rich-composer", () => ({
   RichComposer: () => <div>Signature editor</div>,
 }));
@@ -58,7 +59,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-async function mount() {
+async function mount(initialAddAccount = false, oauthConfigured = true) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fetcher = vi.fn(async (url: string) =>
     url === "/api/signatures"
@@ -99,7 +100,8 @@ async function mount() {
         signatureCatalog={catalog}
         conversationEnabled={true}
         trustedSenders={[{ address: "trusted@example.com" }]}
-        oauthConfigured={true}
+        oauthConfigured={oauthConfigured}
+        initialAddAccount={initialAddAccount}
         oauthResult={{}}
       />,
     ),
@@ -138,9 +140,11 @@ it("navigates existing preferences with a persistent grouped rail", async () => 
   expect(
     host.querySelector('[aria-label="Settings navigation"]')?.textContent,
   ).toContain("General");
-  expect(host.querySelector('[href="/accounts/new"]')?.textContent).toBe(
-    "+ Add account",
-  );
+  expect(
+    [...host.querySelectorAll("nav button")].find(
+      (b) => b.textContent === "+ Add account",
+    )?.textContent,
+  ).toBe("+ Add account");
   const dark = host.querySelector<HTMLButtonElement>(
     '[aria-label="Dark theme"]',
   )!;
@@ -284,4 +288,156 @@ it("protects an active signature editor when switching settings", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(false);
   await click("Mail");
   expect(host.textContent).toContain("Signature editor");
+});
+
+it("keeps one Add action and only configured accounts under Accounts; providers live in the content pane", async () => {
+  await mount();
+  const group = [...host.querySelectorAll(".settings-nav-group")].find(
+    (g) => g.querySelector("h2")?.textContent === "Accounts",
+  )!;
+  expect(
+    [...group.querySelectorAll("button")].map(
+      (b) => b.querySelector("span")?.textContent ?? b.textContent,
+    ),
+  ).toEqual(["DPoczta", "Microsoft", "+ Add account"]);
+  expect(group.querySelectorAll("a")).toHaveLength(0);
+  expect(host.textContent).not.toContain("Connect Microsoft account");
+  await click("+ Add account");
+  const pane = host.querySelector(".settings-pane")!;
+  expect(pane.querySelector("h2")?.textContent).toBe("Add email account");
+  const list = pane.querySelector(".account-provider-list")!;
+  expect(
+    [...list.children].map((row) => row.querySelector("strong")?.textContent),
+  ).toEqual(["Microsoft", "Google", "Other email"]);
+  expect(list.querySelector("a")?.getAttribute("href")).toBe(
+    "/api/oauth/microsoft/start",
+  );
+  const google = list.children[1] as HTMLButtonElement;
+  expect(google.disabled).toBe(true);
+  expect(google.textContent).toContain("Coming soon");
+  await act(async () => google.click());
+  expect(pane.querySelector(".account-provider-list")).toBeTruthy();
+  await act(async () => (list.children[2] as HTMLButtonElement).click());
+  expect(pane.querySelector("form")).toBeTruthy();
+  expect(host.querySelector(".settings-nav")).toBeTruthy();
+  await click("Back");
+  expect(pane.querySelector(".account-provider-list")).toBeTruthy();
+});
+
+it("opens deep-linked onboarding and displays unconfigured Microsoft without starting OAuth", async () => {
+  await mount(true, false);
+  const rows = host.querySelector(".account-provider-list")!.children;
+  expect((rows[0] as HTMLButtonElement).disabled).toBe(true);
+  expect(rows[0].textContent).toContain("Not configured");
+  expect(host.querySelector('[href="/api/oauth/microsoft/start"]')).toBeNull();
+});
+
+async function openCreate() {
+  await click("+ Add account");
+  await act(async () =>
+    host
+      .querySelector<HTMLButtonElement>(
+        ".account-provider-list button:last-child",
+      )!
+      .click(),
+  );
+}
+async function fillCreate() {
+  for (const [name, value] of Object.entries({
+    displayName: "New mail",
+    senderDisplayName: "Sender",
+    email: "new@example.com",
+    imapHost: "imap.example.com",
+    imapUsername: "new",
+    imapPassword: "private-password",
+    smtpHost: "smtp.example.com",
+  }))
+    await input(name, value);
+}
+
+it("shares create/edit identity and connection controls, tests without persisting, and opens the created account", async () => {
+  await mount();
+  await click("DPoczta");
+  const identityNames = [
+    ...host.querySelectorAll("#panel-General input[name]"),
+  ].map((e) => e.getAttribute("name"));
+  await click("IMAP");
+  const connectionNames = [
+    ...host.querySelectorAll(
+      "#panel-IMAP .settings-connection-fields input[name], #panel-IMAP .settings-connection-fields select[name]",
+    ),
+  ]
+    .map((e) => e.getAttribute("name"))
+    .filter((name) => name !== "sentCopyPolicy");
+  await openCreate();
+  expect(
+    [
+      ...host.querySelectorAll(".settings-create-form .settings-fields input"),
+    ].map((e) => e.getAttribute("name")),
+  ).toEqual(identityNames);
+  expect(
+    [
+      ...host.querySelectorAll(
+        ".settings-create-form .settings-connection-fields input[name], .settings-create-form .settings-connection-fields select[name]",
+      ),
+    ].map((e) => e.getAttribute("name")),
+  ).toEqual(connectionNames);
+  expect(
+    host.querySelector<HTMLInputElement>('[name="imapPassword"]')!.required,
+  ).toBe(true);
+  await fillCreate();
+  await click("Test connection");
+  expect(host.textContent).toContain("IMAP connection successful");
+  expect(fetcher.mock.calls.some(([url]) => url === "/api/accounts")).toBe(
+    false,
+  );
+  const created = {
+    ...accounts[0],
+    id: "new-id",
+    displayName: "New mail",
+    email: "new@example.com",
+  };
+  fetcher.mockResolvedValueOnce(
+    Response.json({ account: created }, { status: 201 }),
+  );
+  await click("Create account");
+  const call = fetcher.mock.calls.find(([url]) => url === "/api/accounts")!;
+  expect(call[1].method).toBe("POST");
+  expect(JSON.parse(call[1].body)).toMatchObject({
+    displayName: "New mail",
+    senderDisplayName: "Sender",
+    email: "new@example.com",
+    imap: { password: "private-password" },
+    smtp: { useImapCredentials: true },
+  });
+  expect(router.replace).toHaveBeenCalledWith("/accounts?account=new-id");
+  expect(host.querySelector(".settings-pane h2")?.textContent).toBe("New mail");
+  expect(
+    host.querySelector('nav [aria-current="page"]')?.textContent,
+  ).toContain("New mail");
+  await click("IMAP");
+  expect(
+    host.querySelector<HTMLInputElement>('[name="imapPassword"]')!.value,
+  ).toBe("");
+  expect(host.innerHTML).not.toContain("private-password");
+});
+
+it("protects dirty onboarding and recovers from failed requests without losing credentials", async () => {
+  await mount();
+  await openCreate();
+  await fillCreate();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await click("Back");
+  expect(confirm).toHaveBeenCalled();
+  expect(host.querySelector(".settings-create-form")).toBeTruthy();
+  fetcher.mockRejectedValueOnce(new Error("private-password"));
+  await click("Test connection");
+  expect(host.textContent).toContain("Check your connection");
+  expect(host.textContent).not.toContain("private-password");
+  expect(
+    host.querySelector<HTMLInputElement>('[name="imapPassword"]')!.value,
+  ).toBe("private-password");
+  confirm.mockReturnValue(true);
+  await click("Back");
+  expect(host.querySelector(".account-provider-list")).toBeTruthy();
 });
