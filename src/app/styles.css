@@ -1216,3 +1216,30 @@ label.checkbox input {
     transition-duration: 0.01ms !important;
   }
 }
+
+.local-draft-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.local-draft-row .mail-list-row {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.local-draft-row > .icon-button {
+  margin-right: 12px;
+  color: var(--muted);
+}
+.composer-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer-save-status {
+  margin-left: auto;
+  min-width: 80px;
+  text-align: right;
+  color: var(--muted);
+  flex-shrink: 0;
+}

@@ -1,4 +1,7 @@
 "use client";
+import { DraftList } from "./draft-list";
+import type { DraftView } from "@/modules/mail/domain/draft";
+
 import { AttachmentList } from "./attachment-list";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
 
@@ -107,6 +110,9 @@ export function MailClient({
   mailboxesByAccount: Record<string, MailboxView[]>;
   rolesByAccount: Record<string, MailboxRoleView[]>;
 }) {
+  const [showDrafts, setShowDrafts] = useState(false);
+  const [draft, setDraft] = useState<DraftView | undefined>();
+  const [draftListGeneration, setDraftListGeneration] = useState(0);
   const first = accounts[0];
   const [prefill, setPrefill] = useState<ComposePrefill | undefined>();
   const [preparingState, setPreparing] = useState(false);
@@ -268,6 +274,7 @@ export function MailClient({
         if (!response.ok)
           throw Error(result.error ?? "Message could not be prepared.");
         if (result.status === "ready" && result.prefill) {
+          setDraft(undefined);
           setPrefill(result.prefill);
           setComposing(true);
           return;
@@ -788,6 +795,7 @@ export function MailClient({
               onClick={() => {
                 preparationGeneration.current++;
                 setPreparing(false);
+                setDraft(undefined);
                 setPrefill(undefined);
                 setComposing(true);
               }}
@@ -796,6 +804,17 @@ export function MailClient({
               Compose
             </button>
             <nav className="mail-folders" aria-label="Mailboxes">
+              <button
+                className={showDrafts ? "active" : ""}
+                aria-current={showDrafts ? "page" : undefined}
+                onClick={() => {
+                  setShowDrafts(true);
+                  setDraftListGeneration((n) => n + 1);
+                }}
+              >
+                <Mail size={16} />
+                <span className="folder-name">Local drafts</span>
+              </button>
               {visibleFolders.map((item) => {
                 const inbox = item.remotePath.toUpperCase() === "INBOX";
                 const Icon = inbox ? Inbox : Archive;
@@ -820,10 +839,15 @@ export function MailClient({
                 return (
                   <button
                     key={item.id}
-                    className={item.id === mailboxId ? "active" : ""}
+                    className={
+                      !showDrafts && item.id === mailboxId ? "active" : ""
+                    }
                     title={item.remotePath}
-                    aria-current={item.id === mailboxId ? "page" : undefined}
+                    aria-current={
+                      !showDrafts && item.id === mailboxId ? "page" : undefined
+                    }
                     onClick={() => {
+                      setShowDrafts(false);
                       if (item.id === mailboxId) return;
                       setMessages([]);
                       setNextCursor(null);
@@ -878,18 +902,20 @@ export function MailClient({
       <section className="mail-list-pane" aria-label="Messages">
         <header className="mail-pane-header">
           <div>
-            <h1>{folder?.name ?? "Mail"}</h1>
+            <h1>{showDrafts ? "Local drafts" : (folder?.name ?? "Mail")}</h1>
             <small>
-              {folder
-                ? formatCount(folder.synchronizedMessageCount) +
-                  " synchronized messages"
-                : "Select a mailbox"}
+              {showDrafts
+                ? "Stored in Maildock only"
+                : folder
+                  ? formatCount(folder.synchronizedMessageCount) +
+                    " synchronized messages"
+                  : "Select a mailbox"}
             </small>
           </div>
           <button
             className="icon-button"
             onClick={() => void refresh()}
-            disabled={refreshing || !mailboxId}
+            disabled={showDrafts || refreshing || !mailboxId}
             title="Sync mailbox"
             aria-label="Sync mailbox"
           >
@@ -901,113 +927,128 @@ export function MailClient({
             {error}
           </p>
         ) : null}
-        <div className="mail-rows" ref={listRef}>
-          {loadingMessages && mailboxId
-            ? Array.from({ length: 5 }, (_, index) => (
-                <div className="skeleton-row" key={index}>
-                  <div
-                    className="skeleton"
-                    style={{ width: "55%", height: 12 }}
-                  />
-                  <div
-                    className="skeleton"
-                    style={{ width: "80%", height: 10 }}
-                  />
-                  <div
-                    className="skeleton"
-                    style={{ width: "35%", height: 9 }}
-                  />
-                </div>
-              ))
-            : messages.map((message) => (
-                <button
-                  key={message.id}
-                  className={
-                    "mail-list-row " +
-                    (selectedId === message.id ? "selected " : "") +
-                    (!message.seen ? "unread" : "")
-                  }
-                  aria-current={selectedId === message.id ? "true" : undefined}
-                  onClick={() => {
-                    if (selectedId === message.id) return;
-                    setDetail(null);
-                    setLoadingDetail(true);
-                    setError("");
-                    setSelectedId(message.id);
-                  }}
-                >
-                  <span className="mail-row-top">
-                    <span className="mail-row-marker">
-                      {!message.seen ? (
-                        <span className="unread-dot" aria-label="Unread" />
+        {showDrafts ? (
+          <DraftList
+            disabled={composing}
+            refreshKey={draftListGeneration}
+            onResume={(value) => {
+              if (composing) return;
+              setDraft(value);
+              setPrefill(undefined);
+              setComposing(true);
+            }}
+          />
+        ) : (
+          <div className="mail-rows" ref={listRef}>
+            {loadingMessages && mailboxId
+              ? Array.from({ length: 5 }, (_, index) => (
+                  <div className="skeleton-row" key={index}>
+                    <div
+                      className="skeleton"
+                      style={{ width: "55%", height: 12 }}
+                    />
+                    <div
+                      className="skeleton"
+                      style={{ width: "80%", height: 10 }}
+                    />
+                    <div
+                      className="skeleton"
+                      style={{ width: "35%", height: 9 }}
+                    />
+                  </div>
+                ))
+              : messages.map((message) => (
+                  <button
+                    key={message.id}
+                    className={
+                      "mail-list-row " +
+                      (selectedId === message.id ? "selected " : "") +
+                      (!message.seen ? "unread" : "")
+                    }
+                    aria-current={
+                      selectedId === message.id ? "true" : undefined
+                    }
+                    onClick={() => {
+                      if (selectedId === message.id) return;
+                      setDetail(null);
+                      setLoadingDetail(true);
+                      setError("");
+                      setSelectedId(message.id);
+                    }}
+                  >
+                    <span className="mail-row-top">
+                      <span className="mail-row-marker">
+                        {!message.seen ? (
+                          <span className="unread-dot" aria-label="Unread" />
+                        ) : null}
+                      </span>
+                      <strong>
+                        {message.from[0]?.name ||
+                          message.from[0]?.address ||
+                          "Unknown sender"}
+                      </strong>
+                      <time dateTime={message.date}>
+                        {new Date(message.date).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year:
+                            new Date(message.date).getFullYear() ===
+                            new Date().getFullYear()
+                              ? undefined
+                              : "numeric",
+                        })}
+                      </time>
+                    </span>
+                    <span className="mail-row-subject">
+                      {message.subject || "(No subject)"}
+                    </span>
+                    <span className="mail-row-bottom">
+                      {message.hasAttachments ? (
+                        <>
+                          <Paperclip size={12} /> Attachment
+                        </>
                       ) : null}
                     </span>
-                    <strong>
-                      {message.from[0]?.name ||
-                        message.from[0]?.address ||
-                        "Unknown sender"}
-                    </strong>
-                    <time dateTime={message.date}>
-                      {new Date(message.date).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        year:
-                          new Date(message.date).getFullYear() ===
-                          new Date().getFullYear()
-                            ? undefined
-                            : "numeric",
-                      })}
-                    </time>
-                  </span>
-                  <span className="mail-row-subject">
-                    {message.subject || "(No subject)"}
-                  </span>
-                  <span className="mail-row-bottom">
-                    {message.hasAttachments ? (
-                      <>
-                        <Paperclip size={12} /> Attachment
-                      </>
-                    ) : null}
-                  </span>
-                </button>
-              ))}
-          {!loadingMessages && nextCursor ? (
-            <div
-              className="mail-load-more"
-              ref={loadMoreRef}
-              aria-live="polite"
-            >
-              {paginationError ? (
-                <>
-                  <span>{paginationError}</span>
-                  <button
-                    className="button secondary"
-                    onClick={() => setPaginationError("")}
-                  >
-                    Retry
                   </button>
-                </>
-              ) : loadingMore ? (
-                <span>Loading older messages…</span>
-              ) : (
-                <span>Scroll for older messages</span>
-              )}
-            </div>
-          ) : null}
-          {!loadingMessages && !messages.length && !error ? (
-            <div className="pane-empty">
-              <MailOpen size={26} strokeWidth={1.5} />
-              <strong>
-                {mailboxId ? "Nothing here yet" : "No mailbox selected"}
-              </strong>
-              <p>
-                {mailboxId
-                  ? "Messages will appear here when synchronized."
-                  : "Choose a mailbox from the sidebar."}
-              </p>
-            </div>
-          ) : null}
-        </div>
+                ))}
+            {!loadingMessages && nextCursor ? (
+              <div
+                className="mail-load-more"
+                ref={loadMoreRef}
+                aria-live="polite"
+              >
+                {paginationError ? (
+                  <>
+                    <span>{paginationError}</span>
+                    <button
+                      className="button secondary"
+                      onClick={() => setPaginationError("")}
+                    >
+                      Retry
+                    </button>
+                  </>
+                ) : loadingMore ? (
+                  <span>Loading older messages…</span>
+                ) : (
+                  <span>Scroll for older messages</span>
+                )}
+              </div>
+            ) : null}
+            {!loadingMessages && !messages.length && !error ? (
+              <div className="pane-empty">
+                <MailOpen size={26} strokeWidth={1.5} />
+                <strong>
+                  {mailboxId ? "Nothing here yet" : "No mailbox selected"}
+                </strong>
+                <p>
+                  {mailboxId
+                    ? "Messages will appear here when synchronized."
+                    : "Choose a mailbox from the sidebar."}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        )}
       </section>
       <section
         className={`mail-detail-pane${!composing && detail ? " mail-reader" : ""}`}
@@ -1045,16 +1086,25 @@ export function MailClient({
         ))}
         {composing ? (
           <MailComposer
+            key={draft?.id ?? "compose"}
+            draft={draft}
             accounts={accounts}
             accountId={prefill?.accountId ?? accountId}
             prefill={prefill}
-            onClose={() => setComposing(false)}
+            onSaved={() => setDraftListGeneration((n) => n + 1)}
+            onClose={() => {
+              setComposing(false);
+              setDraft(undefined);
+              setDraftListGeneration((n) => n + 1);
+            }}
             onQueued={(id) => {
               setOutgoing((current) => ({
                 ...current,
                 [id]: { status: "queued" },
               }));
               setComposing(false);
+              setDraft(undefined);
+              setDraftListGeneration((n) => n + 1);
             }}
           />
         ) : (

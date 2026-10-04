@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
+  draftAttachments,
   blobs,
   mailAccounts,
   mailboxes,
@@ -305,6 +306,12 @@ export class AttachmentService {
           .update(messageAttachments)
           .set({ status: "ready", blobId, error: null, updatedAt: new Date() })
           .where(eq(messageAttachments.id, id));
+        await db
+          .update(draftAttachments)
+          .set({ blobId })
+          .where(
+            and(eq(draftAttachments.id, id), isNull(draftAttachments.blobId)),
+          );
       } catch (error) {
         if (error instanceof MailboxEpochChangedError) stale = true;
         const reason =

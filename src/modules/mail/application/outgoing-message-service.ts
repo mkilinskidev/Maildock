@@ -1,3 +1,5 @@
+import { DraftConflictError } from "../domain/draft";
+import { z } from "zod";
 import { threading } from "../domain/reply-forward";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
@@ -16,6 +18,8 @@ import { loadOutgoingMime } from "./outgoing-mime-storage";
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
+  drafts,
+  draftAttachments,
   mailAccounts,
   outgoingMessages,
   messages,
@@ -52,27 +56,75 @@ export class OutgoingMessageService {
     private readonly limits: AttachmentLimits = DEFAULT_ATTACHMENT_LIMITS,
   ) {}
 
-  async create(input: unknown) {
-    let values;
-    try {
-      const parsed = composeInput.parse(input);
-      values = {
-        ...parsed,
-        to: parseOutgoingAddresses(parsed.to),
-        cc: parseOutgoingAddresses(parsed.cc),
-        bcc: parseOutgoingAddresses(parsed.bcc),
-      };
-      const count = values.to.length + values.cc.length + values.bcc.length;
-      if (count < 1 || count > 100) throw Error();
-    } catch {
-      throw new OutgoingValidationError(
-        "Check the recipients, subject and message size. At least one valid recipient is required.",
-      );
-    }
-    const id = randomUUID();
+  async create(
+    input: unknown,
+    draft?: { id: string; expectedRevision: number },
+  ) {
+    let id: string = randomUUID();
+    let resultStatus = "queued";
     const createdAt = new Date();
     const messageId = `<${randomUUID()}@maildock.invalid>`;
     await this.db.transaction(async (tx) => {
+      if (draft) {
+        const [row] = await tx
+          .select()
+          .from(drafts)
+          .where(eq(drafts.id, draft.id))
+          .for("update");
+        if (!row) throw new DraftConflictError();
+        if (row.status === "consumed" && row.outgoingMessageId) {
+          id = row.outgoingMessageId;
+          const [existing] = await tx
+            .select()
+            .from(outgoingMessages)
+            .where(eq(outgoingMessages.id, id));
+          resultStatus = existing.status;
+          return;
+        }
+        if (row.status !== "active" || row.revision !== draft.expectedRevision)
+          throw new DraftConflictError();
+        const selection = await tx
+          .select()
+          .from(draftAttachments)
+          .where(eq(draftAttachments.draftId, row.id))
+          .orderBy(draftAttachments.position);
+        input = {
+          accountId: row.accountId,
+          to: row.to,
+          cc: row.cc,
+          bcc: row.bcc,
+          subject: row.subject,
+          plainText: row.plainText,
+          ...(row.source ? { source: row.source } : {}),
+          attachments: selection.map((a) => ({
+            id: a.id,
+            kind: a.blobId ? "draft" : "incoming",
+          })),
+        };
+      }
+      let values;
+      try {
+        const schema = draft
+          ? composeInput.extend({
+              attachments: z.array(
+                z.object({ id: z.uuid(), kind: z.enum(["draft", "incoming"]) }),
+              ),
+            })
+          : composeInput;
+        const parsed = schema.parse(input);
+        values = {
+          ...parsed,
+          to: parseOutgoingAddresses(parsed.to),
+          cc: parseOutgoingAddresses(parsed.cc),
+          bcc: parseOutgoingAddresses(parsed.bcc),
+        };
+        const count = values.to.length + values.cc.length + values.bcc.length;
+        if (count < 1 || count > 100) throw Error();
+      } catch {
+        throw new OutgoingValidationError(
+          "Check the recipients, subject and message size. At least one valid recipient is required.",
+        );
+      }
       const [account] = await tx
         .select()
         .from(mailAccounts)
@@ -128,7 +180,23 @@ export class OutgoingMessageService {
       let total = 0;
       for (const selected of selection) {
         let blob, filename, contentType;
-        if (selected.kind === "staged") {
+        if (selected.kind === "draft" && draft) {
+          const [saved] = await tx
+            .select({ a: draftAttachments, blob: blobs })
+            .from(draftAttachments)
+            .innerJoin(blobs, eq(blobs.id, draftAttachments.blobId))
+            .where(
+              and(
+                eq(draftAttachments.draftId, draft.id),
+                eq(draftAttachments.id, selected.id),
+              ),
+            );
+          if (!saved)
+            throw new OutgoingValidationError("Draft attachment unavailable.");
+          blob = saved.blob;
+          filename = saved.a.filename;
+          contentType = saved.a.contentType;
+        } else if (selected.kind === "staged") {
           const [staged] = await tx
             .select({ staged: stagedAttachments, blob: blobs })
             .from(stagedAttachments)
@@ -248,23 +316,30 @@ export class OutgoingMessageService {
         sentCopyPolicy: account.sentCopyPolicy,
       });
       if (attachments.length)
+        await tx.insert(outgoingMessageAttachments).values(
+          attachments.map((attachment, position) => ({
+            blobId: attachment.blobId,
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            sha256: attachment.sha256,
+            outgoingMessageId: id,
+            position,
+          })),
+        );
+      if (draft)
         await tx
-          .insert(outgoingMessageAttachments)
-          .values(
-            attachments.map((attachment, position) => ({
-              blobId: attachment.blobId,
-              filename: attachment.filename,
-              contentType: attachment.contentType,
-              size: attachment.size,
-              sha256: attachment.sha256,
-              outgoingMessageId: id,
-              position,
-            })),
-          );
+          .update(drafts)
+          .set({
+            status: "consumed",
+            outgoingMessageId: id,
+            updatedAt: new Date(),
+          })
+          .where(eq(drafts.id, draft.id));
     });
     // The row is the source of truth; a queue outage leaves a repairable message.
     await this.enqueue(id).catch(() => undefined);
-    return { id, status: "queued" };
+    return { id, status: resultStatus };
   }
 
   async status(id: string) {

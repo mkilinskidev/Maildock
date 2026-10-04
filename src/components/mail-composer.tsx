@@ -1,5 +1,6 @@
 "use client";
 
+import type { DraftView } from "@/modules/mail/domain/draft";
 import type { ComposePrefill } from "@/modules/mail/domain/compose-source";
 import { useEffect, useRef, useState } from "react";
 import { Send, X, Paperclip } from "lucide-react";
@@ -32,13 +33,17 @@ export function MailComposer({
   accounts,
   accountId,
   prefill,
+  draft,
   onQueued,
+  onSaved,
   onClose,
 }: {
   prefill?: ComposePrefill;
+  draft?: DraftView;
   accounts: MailAccountView[];
   accountId: string;
   onQueued: (id: string) => void;
+  onSaved?: () => void;
   onClose: () => void;
 }) {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -48,23 +53,249 @@ export function MailComposer({
   }, []);
   const usable = accounts.filter(sendingAccountAvailable);
   const [from, setFrom] = useState(
-    usable.find((account) => account.id === accountId)?.id ??
+    draft?.accountId ??
+      usable.find((account) => account.id === accountId)?.id ??
       usable[0]?.id ??
       "",
   );
-  const [to, setTo] = useState(prefill?.to ?? "");
-  const [cc, setCc] = useState(prefill?.cc ?? "");
-  const [bcc, setBcc] = useState("");
-  const [subject, setSubject] = useState(prefill?.subject ?? "");
-  const [plainText, setPlainText] = useState(prefill?.plainText ?? "");
+  const selectable = [
+    ...usable,
+    ...accounts.filter(
+      (account) => account.id === from && !sendingAccountAvailable(account),
+    ),
+  ];
+  const [to, setTo] = useState(draft?.to ?? prefill?.to ?? "");
+  const [cc, setCc] = useState(draft?.cc ?? prefill?.cc ?? "");
+  const [bcc, setBcc] = useState(draft?.bcc ?? "");
+  const [subject, setSubject] = useState(
+    draft?.subject ?? prefill?.subject ?? "",
+  );
+  const [plainText, setPlainText] = useState(
+    draft?.plainText ?? prefill?.plainText ?? "",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<
-    (AttachmentView & { kind: "incoming" | "staged" })[]
-  >(() =>
-    (prefill?.attachments ?? []).map((a) => ({ ...a, kind: "incoming" })),
+    (AttachmentView & { kind: "incoming" | "staged" | "draft" })[]
+  >(
+    () =>
+      draft?.attachments ??
+      (prefill?.attachments ?? []).map((a) => ({ ...a, kind: "incoming" })),
   );
+  const source = draft?.source ?? prefill?.source;
+  const draftId = useRef(draft?.id ?? crypto.randomUUID());
+  const revision = useRef(draft?.revision ?? 0);
+  const [saveState, setSaveState] = useState(draft?.revision ? "Saved" : "");
+  const conflict = useRef(false);
+  const stopped = useRef(false);
+  const saving = useRef<Promise<void> | null>(null);
+  const snapshot = JSON.stringify({
+    accountId: from,
+    to,
+    cc,
+    bcc,
+    subject,
+    plainText,
+    attachments: attachments
+      .filter(
+        (a) =>
+          a.status !== "uploading" &&
+          !(a.kind === "staged" && a.status === "failed"),
+      )
+      .map(({ id, kind }) => ({ id, kind })),
+  });
+  const latest = useRef(snapshot);
+  latest.current = snapshot;
+  const saved = useRef(draft?.revision && !draft.recovery ? snapshot : "");
+  const recovery = useRef<DraftView | null>(null);
+  recovery.current = {
+    id: draftId.current,
+    accountId: from,
+    to,
+    cc,
+    bcc,
+    subject,
+    plainText,
+    source: source ?? null,
+    composeMode: source?.mode ?? "new",
+    revision: revision.current,
+    status: "active",
+    outgoingMessageId: null,
+    recovery: true,
+    attachments: attachments.filter(
+      (a) =>
+        a.status !== "uploading" &&
+        !(a.kind === "staged" && a.status === "failed"),
+    ),
+  };
+  function meaningful() {
+    const value = JSON.parse(latest.current);
+    return (
+      revision.current > 0 ||
+      Boolean(source) ||
+      [value.to, value.cc, value.bcc, value.subject, value.plainText].some(
+        (v) => v.length,
+      ) ||
+      attachments.length > 0
+    );
+  }
+  function backup() {
+    if (!meaningful()) {
+      try {
+        localStorage.removeItem(`maildock-draft:${draftId.current}`);
+      } catch {}
+      return;
+    }
+    if (
+      meaningful() &&
+      saved.current !== latest.current &&
+      !stopped.current &&
+      recovery.current
+    ) {
+      try {
+        localStorage.setItem(
+          `maildock-draft:${draftId.current}`,
+          JSON.stringify({ ...recovery.current, revision: revision.current }),
+        );
+      } catch {
+        /* Server autosave remains available. */
+      }
+    }
+  }
+  async function save() {
+    if (saving.current) return saving.current;
+    if (
+      stopped.current ||
+      conflict.current ||
+      !meaningful() ||
+      saved.current === latest.current
+    )
+      return;
+    saving.current = (async () => {
+      try {
+        while (!stopped.current && saved.current !== latest.current) {
+          const state = latest.current;
+          setSaveState("Saving…");
+          backup();
+          const response = await fetch(
+            revision.current ? `/api/drafts/${draftId.current}` : "/api/drafts",
+            {
+              method: revision.current ? "PATCH" : "POST",
+              headers: { "Content-Type": "application/json" },
+              keepalive: state.length < 60000,
+              body: JSON.stringify({
+                ...JSON.parse(state),
+                ...(revision.current
+                  ? { expectedRevision: revision.current }
+                  : { id: draftId.current, ...(source ? { source } : {}) }),
+              }),
+            },
+          );
+          const result = (await response.json()) as DraftView & {
+            error?: string;
+          };
+          if (response.status === 409) {
+            conflict.current = true;
+            throw Error(result.error);
+          }
+          if (!response.ok || !result.id || !result.revision)
+            throw Error(result.error ?? "Draft could not be saved.");
+          const requested = JSON.parse(state);
+          const sameContent =
+            ["accountId", "to", "cc", "bcc", "subject", "plainText"].every(
+              (key) => requested[key] === result[key as keyof DraftView],
+            ) &&
+            JSON.stringify(
+              requested.attachments.map((a: { id: string }) => a.id),
+            ) === JSON.stringify(result.attachments.map((a) => a.id));
+          if (!revision.current && result.revision > 1 && !sameContent) {
+            conflict.current = true;
+            throw Error(
+              "This draft changed in another tab. Reopen it from Local drafts.",
+            );
+          }
+          revision.current = result.revision;
+          saved.current = sameContent ? state : "";
+          backup();
+        }
+        setSaveState("Saved");
+        setError("");
+        try {
+          localStorage.removeItem(`maildock-draft:${draftId.current}`);
+        } catch {}
+        onSaved?.();
+      } catch (failure) {
+        setSaveState("Save failed");
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Draft could not be saved.",
+        );
+        throw failure;
+      } finally {
+        saving.current = null;
+      }
+    })();
+    return saving.current;
+  }
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const backupRef = useRef(backup);
+  backupRef.current = backup;
+  useEffect(() => {
+    backupRef.current();
+    const timer = setTimeout(() => {
+      void saveRef.current().catch(() => undefined);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [snapshot]);
+  useEffect(() => {
+    const flush = () => {
+      backupRef.current();
+      void saveRef.current().catch(() => undefined);
+    };
+    const hidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", hidden);
+      flush();
+    };
+  }, []);
+  async function close() {
+    try {
+      await save();
+      onClose();
+    } catch {
+      /* Keep unsaved editor open. */
+    }
+  }
+  async function discard() {
+    stopped.current = true;
+    try {
+      await saving.current?.catch(() => undefined);
+      if (revision.current) {
+        const response = await fetch(`/api/drafts/${draftId.current}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expectedRevision: revision.current }),
+        });
+        if (!response.ok)
+          throw Error(
+            (await response.json()).error ?? "Draft could not be discarded.",
+          );
+      }
+      localStorage.removeItem(`maildock-draft:${draftId.current}`);
+      onClose();
+    } catch (failure) {
+      stopped.current = false;
+      setError(failure instanceof Error ? failure.message : "Discard failed.");
+    }
+  }
   const attachmentsBlocked = attachments.some((a) => a.status !== "ready");
   useEffect(() => {
     const pending = attachments.filter(
@@ -229,25 +460,19 @@ export function MailComposer({
     setSubmitting(true);
     setError("");
     try {
-      const response = await fetch("/api/outgoing", {
+      await save();
+      if (!revision.current || conflict.current)
+        throw Error("Save the draft before sending.");
+      const response = await fetch(`/api/drafts/${draftId.current}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountId: from,
-          ...(prefill ? { source: prefill.source } : {}),
-          to,
-          cc,
-          bcc,
-          subject,
-          plainText,
-          ...(attachments.length
-            ? { attachments: attachments.map(({ kind, id }) => ({ kind, id })) }
-            : {}),
-        }),
+        body: JSON.stringify({ expectedRevision: revision.current }),
       });
       const result = (await response.json()) as { id?: string; error?: string };
       if (!response.ok || !result.id)
         throw Error(result.error ?? "Message could not be queued.");
+      stopped.current = true;
+      localStorage.removeItem(`maildock-draft:${draftId.current}`);
       onQueued(result.id);
     } catch (failure) {
       setError(
@@ -262,9 +487,9 @@ export function MailComposer({
     <form className="mail-composer" onSubmit={(event) => void send(event)}>
       <div className="mail-detail-header composer-heading">
         <h2>
-          {prefill
+          {source
             ? { reply: "Reply", reply_all: "Reply all", forward: "Forward" }[
-                prefill.source.mode
+                source.mode
               ]
             : "New message"}
         </h2>
@@ -272,8 +497,10 @@ export function MailComposer({
           className="icon-button"
           type="button"
           aria-label="Close composer"
-          disabled={submitting}
-          onClick={onClose}
+          disabled={
+            submitting || attachments.some((a) => a.status === "uploading")
+          }
+          onClick={() => void close()}
         >
           <X size={18} />
         </button>
@@ -287,8 +514,8 @@ export function MailComposer({
             onChange={(event) => setFrom(event.target.value)}
             required
           >
-            {usable.length ? (
-              usable.map((account) => (
+            {selectable.length ? (
+              selectable.map((account) => (
                 <option key={account.id} value={account.id}>
                   {account.displayName} &lt;{account.email}&gt;
                 </option>
@@ -405,14 +632,36 @@ export function MailComposer({
             {error}
           </p>
         ) : null}
-        <button
-          className="button"
-          type="submit"
-          disabled={submitting || !from || attachmentsBlocked}
-        >
-          <Send size={15} />
-          {submitting ? "Queueing…" : "Send"}
-        </button>
+        <div className="composer-footer-actions">
+          <button
+            className="button secondary"
+            type="button"
+            disabled={submitting}
+            onClick={() => void discard()}
+          >
+            Discard
+          </button>
+          {saveState === "Save failed" && !conflict.current ? (
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void save().catch(() => undefined)}
+            >
+              Retry save
+            </button>
+          ) : null}
+          <button
+            className="button"
+            type="submit"
+            disabled={submitting || !from || attachmentsBlocked}
+          >
+            <Send size={15} />
+            {submitting ? "Queueing…" : "Send"}
+          </button>
+          <small className="composer-save-status" role="status">
+            {saveState}
+          </small>
+        </div>
       </div>
     </form>
   );

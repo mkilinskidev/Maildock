@@ -1,3 +1,5 @@
+import { DraftList } from "@/components/draft-list";
+import type { DraftView } from "@/modules/mail/domain/draft";
 import type { ComposePrefill } from "@/modules/mail/domain/compose-source";
 // @vitest-environment jsdom
 import { act } from "react";
@@ -41,16 +43,33 @@ const accounts = [
     smtp: { host: "smtp.example.com" },
   },
 ] as MailAccountView[];
+function savedDraftResponse(url: unknown, init?: RequestInit) {
+  if (String(url).startsWith("/api/drafts") && !String(url).endsWith("/send")) {
+    const body = JSON.parse(init?.body as string);
+    return Response.json({
+      ...body,
+      id: body.id ?? String(url).split("/").pop(),
+      revision: (body.expectedRevision ?? 0) + 1,
+      attachments: body.attachments ?? [],
+    });
+  }
+  return null;
+}
 describe("compose UI", () => {
   let root: Root | undefined;
   let host: HTMLDivElement;
   afterEach(async () => {
     if (root) await act(async () => root!.unmount());
     document.body.innerHTML = "";
+    localStorage.clear();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
-  async function render(onQueued = vi.fn(), prefill?: ComposePrefill) {
+  async function render(
+    onQueued = vi.fn(),
+    prefill?: ComposePrefill,
+    draft?: DraftView,
+  ) {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     host = document.createElement("div");
     document.body.append(host);
@@ -60,6 +79,7 @@ describe("compose UI", () => {
         <MailComposer
           accounts={accounts}
           prefill={prefill}
+          draft={draft}
           accountId="second"
           onQueued={onQueued}
           onClose={vi.fn()}
@@ -224,10 +244,12 @@ describe("compose UI", () => {
   }
   it("blocks Forward Send while preparing, polls readiness, then sends selected incoming IDs", async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
-      String(url) === "/api/outgoing"
-        ? Response.json({ id: "queued" })
-        : Response.json({ status: "ready", size: "100", error: null }),
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async (url, init) =>
+        savedDraftResponse(url, init) ??
+        (String(url).endsWith("/send")
+          ? Response.json({ id: "queued" })
+          : Response.json({ status: "ready", size: "100", error: null })),
     );
     vi.stubGlobal("fetch", fetch);
     await render(vi.fn(), forwardPrefill());
@@ -243,7 +265,7 @@ describe("compose UI", () => {
     ).toBe(false);
     await submit();
     const send = fetch.mock.calls.find(
-      ([url]) => String(url) === "/api/outgoing",
+      ([url]) => String(url) === "/api/drafts",
     )!;
     expect(JSON.parse(send[1]!.body as string).attachments).toEqual([
       { kind: "incoming", id: "incoming" },
@@ -251,11 +273,13 @@ describe("compose UI", () => {
   });
   it("shows failed Forward preparation and excludes removed incoming attachments without deleting cached data", async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn(async () =>
-      Response.json({
-        status: "failed",
-        error: "Remote attachment is unavailable.",
-      }),
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async (url, init) =>
+        savedDraftResponse(url, init) ??
+        Response.json({
+          status: "failed",
+          error: "Remote attachment is unavailable.",
+        }),
     );
     vi.stubGlobal("fetch", fetch);
     await render(vi.fn(), forwardPrefill());
@@ -274,14 +298,20 @@ describe("compose UI", () => {
     expect(
       host.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled,
     ).toBe(false);
-    expect(fetch.mock.calls).toHaveLength(1);
+    expect(
+      fetch.mock.calls.filter(([url]) =>
+        String(url).startsWith("/api/attachments/"),
+      ),
+    ).toHaveLength(1);
     expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
       "Quoted",
     );
   });
   it("defaults to the relevant account, allows only configured account selection and queues all compose fields", async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
-      Response.json({ id: "durable-id", status: "queued" }, { status: 202 }),
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async (url, init) =>
+        savedDraftResponse(url, init) ??
+        Response.json({ id: "durable-id", status: "queued" }, { status: 202 }),
     );
     vi.stubGlobal("fetch", fetch);
     const onQueued = await render();
@@ -306,6 +336,8 @@ describe("compose UI", () => {
       bcc: "hidden@example.com",
       subject: "Cześć",
       plainText: "Zażółć gęślą jaźń",
+      id: expect.any(String),
+      attachments: [],
     });
     expect(body).not.toHaveProperty("from");
     expect(onQueued).toHaveBeenCalledExactlyOnceWith("durable-id");
@@ -314,8 +346,10 @@ describe("compose UI", () => {
   it.each(["reply", "reply_all", "forward"] as const)(
     "edits prepared %s defaults and sends only source context through the usual endpoint",
     async (mode) => {
-      const fetch = vi.fn<typeof globalThis.fetch>(async () =>
-        Response.json({ id: "queued" }, { status: 202 }),
+      const fetch = vi.fn<typeof globalThis.fetch>(
+        async (url, init) =>
+          savedDraftResponse(url, init) ??
+          Response.json({ id: "queued" }, { status: 202 }),
       );
       vi.stubGlobal("fetch", fetch);
       const source = {
@@ -356,7 +390,7 @@ describe("compose UI", () => {
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
       await submit();
-      expect(fetch.mock.calls[0][0]).toBe("/api/outgoing");
+      expect(fetch.mock.calls[0][0]).toBe("/api/drafts");
       expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual({
         accountId: "first",
         to: "edited@example.com",
@@ -364,6 +398,8 @@ describe("compose UI", () => {
         bcc: "private@example.com",
         subject: "Edited",
         plainText: "Edited body",
+        id: expect.any(String),
+        attachments: [],
         source,
       });
     },
@@ -387,6 +423,361 @@ describe("compose UI", () => {
     ).toBe("hidden@example.com");
     expect(host.textContent).toContain("Invalid recipient address.");
     expect(onQueued).not.toHaveBeenCalled();
+  });
+
+  it("debounces meaningful changes, creates once during slow create, and patches the same draft without identical saves", async () => {
+    vi.useFakeTimers();
+    let finish!: (response: Response) => void;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+      String(url) === "/api/drafts"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : savedDraftResponse(url, init)!,
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await input("Subject", "Temporary");
+    await input("Subject", "");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(
+      Object.keys(localStorage).some((k) => k.startsWith("maildock-draft:")),
+    ).toBe(false);
+    await input("To", "jan@");
+    await input("Subject", "First");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain("Saving");
+    await input("Message body", "Newer");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    const create = JSON.parse(fetch.mock.calls[0][1]!.body as string);
+    await act(async () => finish(Response.json({ ...create, revision: 1 })));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toBe(`/api/drafts/${create.id}`);
+    expect(JSON.parse(fetch.mock.calls[1][1]!.body as string)).toMatchObject({
+      to: "jan@",
+      plainText: "Newer",
+      expectedRevision: 1,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain("Saved");
+  });
+  it.each(["reply", "reply_all", "forward"] as const)(
+    "restores all %s fields and saved quote exactly once without prepare requests",
+    async (mode) => {
+      const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+        savedDraftResponse(url, init)!,
+      );
+      vi.stubGlobal("fetch", fetch);
+      vi.useFakeTimers();
+      const draft: DraftView = {
+        id: "draft-id",
+        accountId: "first",
+        to: "to@",
+        cc: "cc@",
+        bcc: "bcc@",
+        subject: "Saved subject",
+        plainText: "My edit\nQuoted once",
+        composeMode: mode,
+        source: {
+          accountId: "second",
+          mailboxId: "box",
+          messageId: "message",
+          mode,
+        },
+        revision: 5,
+        status: "active",
+        outgoingMessageId: null,
+        attachments:
+          mode === "forward"
+            ? [{ ...forwardPrefill("ready").attachments![0], kind: "draft" }]
+            : [],
+      };
+      await render(vi.fn(), undefined, draft);
+      expect(host.querySelector<HTMLSelectElement>("select")!.value).toBe(
+        "first",
+      );
+      for (const [label, value] of [
+        ["To", draft.to],
+        ["Cc", draft.cc],
+        ["Bcc", draft.bcc],
+        ["Subject", draft.subject],
+        ["Message body", draft.plainText],
+      ])
+        expect(
+          host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+            .value,
+        ).toBe(value);
+      if (mode === "forward") expect(host.textContent).toContain("invoice.pdf");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+  it("shows two-tab conflict and blocks sending stale content", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+      String(url) === "/api/drafts"
+        ? savedDraftResponse(url, init)!
+        : Response.json(
+            { error: "This draft changed in another tab." },
+            { status: 409 },
+          ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    await input("To", "to@example.com");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await input("Subject", "Stale");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(host.textContent).toContain("Save failed");
+    expect(host.textContent).toContain("another tab");
+    await submit();
+    expect(
+      fetch.mock.calls.some(([url]) => String(url).endsWith("/send")),
+    ).toBe(false);
+  });
+
+  it("retries a lost Send response with the same draft and revision without recreating", async () => {
+    let sends = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      const draftResponse = savedDraftResponse(url, init);
+      if (draftResponse) return draftResponse;
+      if (++sends === 1) throw Error("Network interrupted");
+      return Response.json({ id: "same-outgoing", status: "queued" });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const queued = await render();
+    await input("To", "to@example.com");
+    await submit();
+    expect(queued).not.toHaveBeenCalled();
+    await submit();
+    const calls = fetch.mock.calls.filter(([url]) =>
+      String(url).endsWith("/send"),
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(calls[1]);
+    expect(
+      fetch.mock.calls.filter(([url]) => String(url) === "/api/drafts"),
+    ).toHaveLength(1);
+    expect(queued).toHaveBeenCalledExactlyOnceWith("same-outgoing");
+  });
+  it("keeps newer edits after retrying a lost initial create response", async () => {
+    vi.useFakeTimers();
+    let first: Record<string, unknown> | undefined;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      if (String(url) === "/api/drafts") {
+        if (!first) {
+          first = JSON.parse(init?.body as string);
+          throw Error("Lost response");
+        }
+        return Response.json({ ...first, revision: 1 });
+      }
+      return savedDraftResponse(url, init)!;
+    });
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    await input("To", "jan@");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await input("Message body", "Newer edit");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(fetch.mock.calls).toHaveLength(3);
+    const bodies = fetch.mock.calls.map(([, init]) =>
+      JSON.parse(init!.body as string),
+    );
+    expect(bodies[0].id).toBe(bodies[1].id);
+    expect(bodies[2]).toMatchObject({
+      plainText: "Newer edit",
+      expectedRevision: 1,
+    });
+    expect(host.textContent).toContain("Saved");
+    expect(host.textContent).not.toContain("Lost response");
+  });
+  it("close saves without deleting, while Discard explicitly deletes the durable association", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : savedDraftResponse(url, init)!,
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    await input("To", "jan@");
+    await act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Close composer"]')!
+        .click();
+    });
+    expect(
+      fetch.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(0);
+    await act(async () => {
+      [...host.querySelectorAll("button")]
+        .find((b) => b.textContent === "Discard")!
+        .click();
+    });
+    expect(
+      fetch.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(1);
+  });
+  it("stores changes before debounce for reload recovery and resumes those unsaved fields", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+      savedDraftResponse(url, init)!,
+    );
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    await input("To", "jan@");
+    await input("Message body", "Last second edit");
+    expect(fetch).not.toHaveBeenCalled();
+    const key = Object.keys(localStorage).find((k) =>
+      k.startsWith("maildock-draft:"),
+    )!;
+    const recovery = JSON.parse(localStorage.getItem(key)!) as DraftView;
+    expect(recovery).toMatchObject({
+      to: "jan@",
+      plainText: "Last second edit",
+      revision: 0,
+      recovery: true,
+    });
+    await act(async () => {
+      root!.unmount();
+    });
+    root = undefined;
+    await render(vi.fn(), undefined, recovery);
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(
+      "Last second edit",
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(
+      fetch.mock.calls
+        .filter(([url]) => String(url) === "/api/drafts")
+        .every(
+          ([, init]) => JSON.parse(init!.body as string).id === recovery.id,
+        ),
+    ).toBe(true);
+  });
+
+  async function renderDraftList(onResume = vi.fn()) {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<DraftList onResume={onResume} />));
+    return onResume;
+  }
+  const restoredDraft = (): DraftView => ({
+    id: "saved-draft",
+    accountId: "first",
+    to: "to@",
+    cc: "cc@",
+    bcc: "private@",
+    subject: "Local only",
+    plainText: "Saved body",
+    revision: 4,
+    composeMode: "new",
+    source: null,
+    status: "active",
+    outgoingMessageId: null,
+    attachments: [],
+  });
+  it("lists local drafts, fetches the saved body on resume and discards with revision without touching blobs", async () => {
+    const row = restoredDraft();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : Response.json(String(url) === "/api/drafts" ? [row] : row),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const resumed = await renderDraftList();
+    expect(host.textContent).toContain("Local only");
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>(".mail-list-row")!.click(),
+    );
+    expect(resumed).toHaveBeenCalledExactlyOnceWith(row);
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Discard Local only"]')!
+        .click(),
+    );
+    expect(
+      fetch.mock.calls.find(([, init]) => init?.method === "DELETE"),
+    ).toEqual([
+      "/api/drafts/saved-draft",
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedRevision: 4 }),
+      },
+    ]);
+    expect(
+      fetch.mock.calls.some(([url]) => String(url).includes("attachments")),
+    ).toBe(false);
+    expect(host.textContent).toContain("No local drafts");
+  });
+  it("detects stale browser recovery and can explicitly reopen the server version", async () => {
+    const row = restoredDraft();
+    localStorage.setItem(
+      `maildock-draft:${row.id}`,
+      JSON.stringify({
+        ...row,
+        revision: 3,
+        plainText: "Unsaved recovery",
+        recovery: true,
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async (url) =>
+        Response.json(String(url) === "/api/drafts" ? [row] : row),
+      ),
+    );
+    const resumed = await renderDraftList();
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>(".mail-list-row")!.click(),
+    );
+    expect(resumed).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("another tab");
+    expect(localStorage.getItem(`maildock-draft:${row.id}`)).toContain(
+      "Unsaved recovery",
+    );
+    await act(async () =>
+      [...host.querySelectorAll("button")]
+        .find((b) => b.textContent === "Reopen saved draft")!
+        .click(),
+    );
+    expect(resumed).toHaveBeenCalledExactlyOnceWith(row);
+    expect(localStorage.getItem(`maildock-draft:${row.id}`)).toBeNull();
   });
   it.each([
     ["queued", "Sending…"],
@@ -414,7 +805,9 @@ describe("compose UI", () => {
       vi.useFakeTimers();
       vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
       const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
-        if (String(url) === "/api/outgoing" && init?.method === "POST")
+        const draftResponse = savedDraftResponse(url, init);
+        if (draftResponse) return draftResponse;
+        if (String(url).endsWith("/send") && init?.method === "POST")
           return Response.json(
             { id: "durable-id", status: "queued" },
             { status: 202 },

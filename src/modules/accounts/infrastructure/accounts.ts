@@ -1,3 +1,4 @@
+import { DraftService } from "@/modules/mail/application/draft-service";
 import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
 import { AttachmentService } from "@/modules/mail/application/attachment-service";
 import { PgBossAttachmentScheduler } from "@/modules/mail/infrastructure/attachment-jobs";
@@ -84,3 +85,5 @@ export const composePreparationService = new ComposePreparationService(
   messageContentService,
   attachmentService,
 );
+
+export const draftService = new DraftService(db);

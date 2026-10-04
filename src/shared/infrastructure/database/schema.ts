@@ -897,3 +897,74 @@ export const schema = {
   messageRelations,
   mailboxMessageRelations,
 };
+
+export const drafts = pgTable(
+  "drafts",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "restrict" }),
+    composeMode: text("compose_mode").notNull(),
+    source:
+      jsonb("source").$type<
+        import("../../../modules/mail/domain/compose-source").SourceContext
+      >(),
+    to: text("to").default("").notNull(),
+    cc: text("cc").default("").notNull(),
+    bcc: text("bcc").default("").notNull(),
+    subject: text("subject").default("").notNull(),
+    plainText: text("plain_text").default("").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    status: text("status").default("active").notNull(),
+    outgoingMessageId: uuid("outgoing_message_id").references(
+      () => outgoingMessages.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    check(
+      "drafts_mode",
+      sql`${t.composeMode} in ('new', 'reply', 'reply_all', 'forward')`,
+    ),
+    check("drafts_status", sql`${t.status} in ('active', 'consumed')`),
+    check("drafts_revision", sql`${t.revision} > 0`),
+    check(
+      "drafts_handoff",
+      sql`(${t.status} = 'consumed') = (${t.outgoingMessageId} is not null)`,
+    ),
+    check(
+      "drafts_source",
+      sql`(${t.composeMode} = 'new' and ${t.source} is null) or (${t.composeMode} <> 'new' and ${t.source} is not null and ${t.source}->>'mode' = ${t.composeMode})`,
+    ),
+    index("drafts_active_updated_idx").on(t.status, t.updatedAt),
+  ],
+);
+export const draftAttachments = pgTable(
+  "draft_attachments",
+  {
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    id: uuid("id").notNull(),
+    kind: text("kind").notNull(),
+    blobId: uuid("blob_id").references(() => blobs.id, {
+      onDelete: "restrict",
+    }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.draftId, t.id] }),
+    uniqueIndex("draft_attachments_position").on(t.draftId, t.position),
+    check("draft_attachments_kind", sql`${t.kind} in ('staged', 'incoming')`),
+    index("draft_attachments_blob_idx").on(t.blobId),
+  ],
+);
