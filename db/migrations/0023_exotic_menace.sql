@@ -1,0 +1,1 @@
+ALTER TABLE "instance_state" ADD COLUMN "auto_read" jsonb DEFAULT '{"mode":"after","seconds":2}'::jsonb NOT NULL;

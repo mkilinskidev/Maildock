@@ -2137,3 +2137,127 @@ label.checkbox input {
   font-size: 11px;
   font-weight: 400;
 }
+
+/* Phase 3D mail interactions */
+.mail-interaction-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mail-interaction-toolbar .icon-button {
+  padding: 0;
+  cursor: pointer;
+}
+.mail-interaction-toolbar .icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.mail-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mail-toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  flex: none;
+}
+.mail-selectable-row {
+  display: flex;
+  align-items: center;
+}
+.mail-selectable-row > input {
+  margin: 0 0.5rem;
+  flex-shrink: 0;
+}
+.mail-selectable-row > .mail-list-row {
+  flex: 1;
+  min-width: 0;
+}
+/* Reserve the selection gutter in every state; reveal controls without moving text. */
+.mail-selectable-row > input {
+  opacity: 0;
+  accent-color: var(--accent);
+}
+.mail-selectable-row:hover > input,
+.mail-selectable-row:has(:focus-visible) > input,
+.selection-mode .mail-selectable-row > input {
+  opacity: 1;
+}
+.mail-pane-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.mail-select-all {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.mail-select-all:hover {
+  background: var(--hover);
+}
+.mail-select-all input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.mail-preferences .mail-preferences-heading {
+  margin-bottom: 0;
+}
+.mail-preference-description {
+  margin: 6px 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--secondary);
+}
+.mail-preference-options {
+  display: grid;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.mail-preference-option,
+.auto-read-after {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.mail-preference-option {
+  cursor: pointer;
+}
+.mail-preference-option input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+.auto-read-after input.auto-read-seconds {
+  width: 64px;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+.auto-read-seconds:disabled {
+  opacity: 0.55;
+}
+.mail-preferences .preference-save-status {
+  margin-left: 0;
+}

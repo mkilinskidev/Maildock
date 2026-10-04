@@ -88,7 +88,13 @@ const roles = {
       source: "manual" as const,
     },
   ],
-  b: [],
+  b: ["archive", "trash"].map((role) => ({
+    role: role as "archive" | "trash",
+    available: true,
+    mailboxId: `b-${role}`,
+    mailboxName: role,
+    source: "manual" as const,
+  })),
 };
 const cross = {
   id: "cross",
@@ -129,7 +135,7 @@ async function mount(conversation = false, multiple = false) {
       if (url.endsWith("/mailboxes"))
         return Response.json({
           mailboxes: url.includes("/accounts/b/") ? boxes.b : boxes.a,
-          roles: url.includes("/accounts/b/") ? [] : roles.a,
+          roles: url.includes("/accounts/b/") ? roles.b : roles.a,
         });
       if (url.includes("/conversations/"))
         return Response.json({ items: [cross] });

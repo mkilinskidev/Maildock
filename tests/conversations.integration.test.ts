@@ -1,3 +1,4 @@
+import { MailPreferencesService } from "@/modules/mail/application/mail-preferences-service";
 import { randomUUID } from "node:crypto";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
@@ -177,6 +178,25 @@ describe("Phase 2G conversation graph and queries", () => {
   afterAll(async () => {
     await database?.client.end();
     await container?.stop();
+  });
+
+  it("persists automatic read preferences alongside existing singleton settings", async () => {
+    const preferences = new MailPreferencesService(database.db);
+    expect(await preferences.autoRead()).toEqual({ mode: "after", seconds: 2 });
+    await service.setEnabled(true);
+    await preferences.setAutoRead({ mode: "after", seconds: 5 });
+    expect(await new MailPreferencesService(database.db).autoRead()).toEqual({
+      mode: "after",
+      seconds: 5,
+    });
+    expect(await service.enabled()).toBe(true);
+    await service.setEnabled(false);
+    expect(await preferences.autoRead()).toEqual({ mode: "after", seconds: 5 });
+    await preferences.setAutoRead({ mode: "manually", seconds: 2 });
+    expect(await preferences.autoRead()).toEqual({
+      mode: "manually",
+      seconds: 2,
+    });
   });
 
   it.each([false, true])(

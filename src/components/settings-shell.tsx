@@ -1,4 +1,6 @@
 "use client";
+import { AutoReadSettings } from "./auto-read-settings";
+import type { AutoReadPreference } from "@/modules/mail/domain/mail-interactions";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -29,6 +31,7 @@ export function SettingsShell({
   rolesByAccount,
   signatureCatalog,
   conversationEnabled,
+  autoReadPreference,
   trustedSenders,
   oauthConfigured,
   oauthResult,
@@ -40,6 +43,7 @@ export function SettingsShell({
   rolesByAccount: Record<string, MailboxRoleView[]>;
   signatureCatalog: SignatureCatalog;
   conversationEnabled: boolean;
+  autoReadPreference?: AutoReadPreference;
   trustedSenders: { address: string }[];
   oauthConfigured: boolean;
   oauthResult: { oauth?: string; oauth_error?: string };
@@ -333,9 +337,13 @@ export function SettingsShell({
             <>
               <header className="settings-pane-header">
                 <h2>Mail</h2>
-                <p>Preferences for reading mail. Changes apply immediately.</p>
+                <p>
+                  Preferences for reading mail. Saved preferences apply to all
+                  accounts.
+                </p>
               </header>
               <ConversationViewSettings initialEnabled={conversationEnabled} />
+              <AutoReadSettings initialValue={autoReadPreference} />
             </>
           ) : null}
           {section === "signatures" ? (

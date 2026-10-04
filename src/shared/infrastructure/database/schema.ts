@@ -247,6 +247,10 @@ export const instanceState = pgTable(
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
     passwordAlgorithm: text("password_algorithm"),
     conversationView: boolean("conversation_view").default(false).notNull(),
+    autoRead: jsonb("auto_read")
+      .$type<{ mode: "immediately" | "after" | "manually"; seconds: number }>()
+      .default({ mode: "after", seconds: 2 })
+      .notNull(),
     passwordParameters: jsonb("password_parameters").$type<
       Record<string, number>
     >(),

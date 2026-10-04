@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MessagesSquare } from "lucide-react";
 
 export function ConversationViewSettings({
   initialEnabled,
@@ -44,11 +43,19 @@ export function ConversationViewSettings({
   }
 
   return (
-    <section className="mail-preferences" aria-label="Mail preferences">
+    <section
+      className="mail-preferences"
+      aria-labelledby="conversation-view-heading"
+    >
       <div className="mail-preferences-heading">
-        <MessagesSquare size={19} aria-hidden="true" />
-        <h2>Mail preferences</h2>
+        <h2 id="conversation-view-heading">Conversation view</h2>
       </div>
+      <p
+        id="conversation-view-description"
+        className="mail-preference-description"
+      >
+        Group related messages in the message list. Applies to all accounts.
+      </p>
       <label className="conversation-preference">
         <input
           type="checkbox"
@@ -58,12 +65,7 @@ export function ConversationViewSettings({
           aria-describedby="conversation-view-description"
           onChange={(event) => void save(event.target.checked)}
         />
-        <span>
-          <strong>Conversation view</strong>
-          <span id="conversation-view-description">
-            Group related messages in the message list. Applies to all accounts.
-          </span>
-        </span>
+        <span>Enable conversation view</span>
       </label>
       <p className="preference-save-status" role="status">
         {pending ? "Saving…" : status}

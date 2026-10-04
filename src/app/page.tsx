@@ -1,3 +1,4 @@
+import { MailPreferencesService } from "@/modules/mail/application/mail-preferences-service";
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/auth/application/session";
 import { isInstanceInitialized } from "@/modules/auth/application/instance-auth";
@@ -32,6 +33,7 @@ export default async function HomePage() {
     <MailClient
       contentPollIntervalMs={getConfig().contentPollIntervalMs}
       initialConversationView={await new ConversationService(db).enabled()}
+      initialAutoRead={await new MailPreferencesService(db).autoRead()}
       accounts={accounts}
       mailboxesByAccount={Object.fromEntries(entries)}
       rolesByAccount={Object.fromEntries(roleEntries)}

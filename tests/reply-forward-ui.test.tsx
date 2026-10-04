@@ -191,6 +191,7 @@ describe("reader reply and forward actions", () => {
     await act(async () =>
       root!.render(
         <MailClient
+          initialAutoRead={{ mode: "manually", seconds: 2 }}
           initialConversationView={grouped}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
@@ -320,6 +321,7 @@ describe("reader reply and forward actions", () => {
     await act(async () =>
       root!.render(
         <MailClient
+          initialAutoRead={{ mode: "manually", seconds: 2 }}
           initialConversationView={false}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}

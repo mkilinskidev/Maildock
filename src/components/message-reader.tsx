@@ -1,16 +1,6 @@
 "use client";
-import {
-  Reply,
-  ReplyAll,
-  Forward,
-  Archive,
-  Trash2,
-  Star,
-  Eye,
-  EyeOff,
-  MailOpen,
-  CircleAlert,
-} from "lucide-react";
+import { MailOpen, CircleAlert } from "lucide-react";
+import { MailToolbar } from "./mail-toolbar";
 import { RichEmailBody } from "./rich-email-body";
 import { AttachmentList } from "./attachment-list";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
@@ -48,6 +38,7 @@ function address(values: Address[]) {
 export type MessageAction =
   "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "unflag";
 export function MessageReader({
+  hideActions = false,
   selectedId,
   detail,
   loadingDetail,
@@ -62,6 +53,7 @@ export function MessageReader({
   renderUrl,
   contentPollIntervalMs,
 }: {
+  hideActions?: boolean;
   selectedId: string;
   detail: MessageDetail | null;
   loadingDetail: boolean;
@@ -98,80 +90,18 @@ export function MessageReader({
       ) : null}
       {detail ? (
         <>
+          {!hideActions ? (
+            <MailToolbar
+              count={0}
+              seen={selectedMessage?.seen ?? detail.seen}
+              flagged={selectedMessage?.flagged ?? detail.flagged}
+              preparing={preparing}
+              prepare={prepare}
+              act={act}
+              moveAvailable={moveAvailable}
+            />
+          ) : null}
           <header className="mail-detail-header">
-            <div
-              className="message-actions"
-              role="toolbar"
-              aria-label="Message actions"
-            >
-              {(
-                [
-                  { mode: "reply", label: "Reply", Icon: Reply },
-                  {
-                    mode: "reply_all",
-                    label: "Reply All",
-                    Icon: ReplyAll,
-                  },
-                  { mode: "forward", label: "Forward", Icon: Forward },
-                ] as const
-              ).map(({ mode, label, Icon }) => (
-                <button
-                  key={mode}
-                  className="icon-button"
-                  title={label}
-                  aria-label={label}
-                  disabled={preparing}
-                  onClick={() => void prepare(mode)}
-                >
-                  <Icon size={17} />
-                </button>
-              ))}
-              <button
-                className="icon-button"
-                title="Archive"
-                aria-label="Archive"
-                disabled={!moveAvailable("archive")}
-                onClick={() => void act("archive")}
-              >
-                <Archive size={17} />
-              </button>
-              <button
-                className="icon-button"
-                title="Move to Trash"
-                aria-label="Move to Trash"
-                disabled={!moveAvailable("trash")}
-                onClick={() => void act("trash")}
-              >
-                <Trash2 size={17} />
-              </button>
-              <button
-                className="icon-button"
-                title={selectedMessage?.seen ? "Mark unread" : "Mark read"}
-                aria-label={selectedMessage?.seen ? "Mark unread" : "Mark read"}
-                onClick={() =>
-                  void act(selectedMessage?.seen ? "mark_unread" : "mark_read")
-                }
-              >
-                {selectedMessage?.seen ? (
-                  <EyeOff size={17} />
-                ) : (
-                  <Eye size={17} />
-                )}
-              </button>
-              <button
-                className="icon-button"
-                title={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                aria-label={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                onClick={() =>
-                  void act(selectedMessage?.flagged ? "unflag" : "flag")
-                }
-              >
-                <Star
-                  size={17}
-                  fill={selectedMessage?.flagged ? "currentColor" : "none"}
-                />
-              </button>
-            </div>
             {preparing ? <p role="status">Preparing message…</p> : null}
             {prepareError ? (
               <p role="alert" className="error">
