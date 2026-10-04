@@ -206,7 +206,6 @@ export class MicrosoftOAuthService {
         .update(mailAccounts)
         .set({
           email,
-          displayName: result.account.name || email,
           imapUsername: email,
           oauthCache: encrypted,
           oauthHomeAccountId: result.account.homeAccountId,
@@ -230,6 +229,7 @@ export class MicrosoftOAuthService {
       await this.database.insert(mailAccounts).values({
         id,
         displayName: result.account.name || email,
+        senderDisplayName: result.account.name || email,
         email,
         enabled: true,
         providerType: "imap_smtp",

@@ -384,6 +384,7 @@ export const mailAccounts = pgTable(
   {
     id: uuid("id").primaryKey(),
     displayName: text("display_name").notNull(),
+    senderDisplayName: text("sender_display_name").default("").notNull(),
     email: text("email").notNull(),
     enabled: boolean("enabled").default(true).notNull(),
     sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),

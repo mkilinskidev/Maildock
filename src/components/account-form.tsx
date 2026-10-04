@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AccountConnectionFields } from "./account-connection-fields";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -39,6 +40,7 @@ export function AccountForm({
     return {
       ...(account ? {} : { id }),
       displayName: data.get("displayName"),
+      senderDisplayName: data.get("senderDisplayName"),
       email: data.get("email"),
       enabled: data.get("enabled") === "on",
       sentCopyPolicy,
@@ -106,12 +108,20 @@ export function AccountForm({
     <form className="account-form" onSubmit={submit}>
       <div className="form-grid">
         <label>
-          Display name
+          Account name
           <input
             name="displayName"
             required
             maxLength={100}
             defaultValue={account?.displayName}
+          />
+        </label>
+        <label>
+          Your name
+          <input
+            name="senderDisplayName"
+            maxLength={200}
+            defaultValue={account?.senderDisplayName}
           />
         </label>
         <label>
@@ -133,123 +143,11 @@ export function AccountForm({
         Enabled
       </label>
 
-      <fieldset>
-        <legend>IMAP</legend>
-        <div className="form-grid">
-          <label>
-            Host
-            <input name="imapHost" required defaultValue={account?.imap.host} />
-          </label>
-          <label>
-            Port
-            <input
-              name="imapPort"
-              type="number"
-              min="1"
-              max="65535"
-              required
-              defaultValue={account?.imap.port ?? 993}
-            />
-          </label>
-          <label>
-            Security
-            <select
-              name="imapSecurity"
-              defaultValue={account?.imap.security ?? "tls"}
-            >
-              <option value="tls">TLS from connection start</option>
-              <option value="starttls">Required STARTTLS</option>
-            </select>
-          </label>
-          <label>
-            Username
-            <input
-              name="imapUsername"
-              required
-              defaultValue={account?.imap.username}
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Password
-            <input
-              name="imapPassword"
-              type="password"
-              required={!account}
-              placeholder={
-                account ? "Stored credential — leave blank to keep" : undefined
-              }
-              autoComplete="new-password"
-            />
-          </label>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>SMTP</legend>
-        <div className="form-grid">
-          <label>
-            Host
-            <input name="smtpHost" required defaultValue={account?.smtp.host} />
-          </label>
-          <label>
-            Port
-            <input
-              name="smtpPort"
-              type="number"
-              min="1"
-              max="65535"
-              required
-              defaultValue={account?.smtp.port ?? 465}
-            />
-          </label>
-          <label>
-            Security
-            <select
-              name="smtpSecurity"
-              defaultValue={account?.smtp.security ?? "tls"}
-            >
-              <option value="tls">TLS from connection start</option>
-              <option value="starttls">Required STARTTLS</option>
-            </select>
-          </label>
-        </div>
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={useImapCredentials}
-            onChange={(event) => setUseImapCredentials(event.target.checked)}
-          />{" "}
-          Use IMAP credentials for SMTP
-        </label>
-        {!useImapCredentials ? (
-          <div className="form-grid">
-            <label>
-              SMTP username
-              <input
-                name="smtpUsername"
-                required
-                defaultValue={account?.smtp.username}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              SMTP password
-              <input
-                name="smtpPassword"
-                type="password"
-                required={!account || account.smtp.useImapCredentials}
-                placeholder={
-                  account && !account.smtp.useImapCredentials
-                    ? "Stored credential — leave blank to keep"
-                    : undefined
-                }
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
-        ) : null}
-      </fieldset>
+      <AccountConnectionFields
+        account={account}
+        useImapCredentials={useImapCredentials}
+        onUseImapCredentialsChange={setUseImapCredentials}
+      />
 
       <SentCopyPolicyFields
         policy={sentCopyPolicy}

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   accountCredentialContext,
+  accountIdentitySchema,
   createAccountInputSchema,
   updateAccountInputSchema,
   sentCopyPolicyUpdateSchema,
@@ -41,6 +42,7 @@ type AccountRow = typeof mailAccounts.$inferSelect;
 export type MailAccountView = Readonly<{
   id: string;
   displayName: string;
+  senderDisplayName: string;
   email: string;
   enabled: boolean;
   sentCopyPolicy: SentCopyPolicy;
@@ -88,6 +90,7 @@ function toView(row: AccountRow): MailAccountView {
   return {
     id: row.id,
     displayName: row.displayName,
+    senderDisplayName: row.senderDisplayName,
     email: row.email,
     enabled: row.enabled,
     sentCopyPolicy: row.sentCopyPolicy as SentCopyPolicy,
@@ -165,6 +168,7 @@ export class AccountsService {
       .values({
         id: parsed.id,
         displayName: parsed.displayName,
+        senderDisplayName: parsed.senderDisplayName ?? parsed.displayName,
         email: parsed.email.toLowerCase(),
         enabled: parsed.enabled,
         sentCopyPolicy: parsed.sentCopyPolicy ?? "server",
@@ -239,6 +243,8 @@ export class AccountsService {
       .update(mailAccounts)
       .set({
         displayName: parsed.displayName,
+        senderDisplayName:
+          parsed.senderDisplayName ?? current.senderDisplayName,
         email: parsed.email.toLowerCase(),
         enabled: parsed.enabled,
         sentCopyPolicy: parsed.sentCopyPolicy ?? current.sentCopyPolicy,
@@ -272,6 +278,40 @@ export class AccountsService {
     if (!updated) throw new MailAccountNotFoundError();
     if (updated.enabled) await this.scheduleDiscovery(updated.id);
     return updated.enabled ? this.get(updated.id) : toView(updated);
+  }
+
+  async updateIdentity(
+    id: string,
+    input: unknown,
+    database = this.database,
+  ): Promise<void> {
+    const parsed = accountIdentitySchema.parse(input);
+    const [current] = await database
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, id))
+      .for("update");
+    if (!current) throw new MailAccountNotFoundError();
+    if (
+      current.authMethod === "oauth2" &&
+      parsed.email.toLowerCase() !== current.email.toLowerCase()
+    ) {
+      throw new z.ZodError([
+        {
+          code: "custom",
+          path: ["email"],
+          message: "Microsoft identity is managed by the provider.",
+        },
+      ]);
+    }
+    await database
+      .update(mailAccounts)
+      .set({
+        ...parsed,
+        email: parsed.email.toLowerCase(),
+        updatedAt: new Date(),
+      })
+      .where(eq(mailAccounts.id, id));
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<MailAccountView> {

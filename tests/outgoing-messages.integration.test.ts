@@ -224,6 +224,8 @@ describe("durable outgoing mail", () => {
       .update(mailAccounts)
       .set({
         enabled: true,
+        displayName: "Łukasz Żółć",
+        senderDisplayName: "Łukasz Żółć",
         smtpHost: "smtp.example.com",
         sentCopyPolicy: "server",
       })
@@ -481,6 +483,31 @@ describe("durable outgoing mail", () => {
     expect((await service.status(created.id))!).not.toHaveProperty(
       "mimeBase64",
     );
+  });
+  it("uses the persisted human sender name rather than the local account label in From", async () => {
+    await accounts.updateIdentity(accountId, {
+      displayName: "DPoczta",
+      senderDisplayName: "Mateusz Kiliński",
+      email: "owner@example.com",
+    });
+    const created = await service.create(input());
+    const saved = await row(created.id);
+    expect(saved.from).toEqual({
+      address: "owner@example.com",
+      name: "Mateusz Kiliński",
+    });
+    const mime = await simpleParser(
+      await loadOutgoingMime(
+        database.db,
+        storage,
+        saved,
+        DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes,
+      ),
+    );
+    expect(mime.from?.value).toEqual([
+      { address: "owner@example.com", name: "Mateusz Kiliński" },
+    ]);
+    expect(mime.from?.text).not.toContain("DPoczta");
   });
   it.each([
     { to: "", cc: "", bcc: "" },

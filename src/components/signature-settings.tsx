@@ -26,7 +26,13 @@ type EditSignature = {
   revision?: number;
   richDocument: RichDocument;
 };
-export function SignatureSettings() {
+export function SignatureSettings({
+  onDirtyChange,
+  onBusyChange,
+}: {
+  onDirtyChange?: (value: boolean) => void;
+  onBusyChange?: (value: boolean) => void;
+} = {}) {
   const router = useRouter();
   const [catalog, setCatalog] = useState<SignatureCatalog>();
   const [edit, setEdit] = useState<EditSignature>();
@@ -34,6 +40,14 @@ export function SignatureSettings() {
   const [valid, setValid] = useState(true);
   const [pending, setPending] = useState(false);
   const [uploads, setUploads] = useState(0);
+  useEffect(() => {
+    onDirtyChange?.(!!edit);
+    return () => onDirtyChange?.(false);
+  }, [edit, onDirtyChange]);
+  useEffect(() => {
+    onBusyChange?.(pending || uploads > 0);
+    return () => onBusyChange?.(false);
+  }, [pending, uploads, onBusyChange]);
   const editId = edit?.id;
   const updateDocument = useCallback(
     (richDocument: RichDocument) =>

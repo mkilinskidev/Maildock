@@ -332,11 +332,14 @@ export class OutgoingMessageService {
         const addresses = parseOutgoingAddresses(account.email);
         if (
           addresses.length !== 1 ||
-          /[\x00-\x1f\x7f]/.test(account.displayName) ||
-          account.displayName.length > 200
+          /[\x00-\x1f\x7f]/.test(account.senderDisplayName) ||
+          account.senderDisplayName.length > 200
         )
           throw Error();
-        from = { address: addresses[0].address, name: account.displayName };
+        from = {
+          address: addresses[0].address,
+          name: account.senderDisplayName,
+        };
         mime = await buildOutgoingMime({
           ...snapshot,
           html: body.html,
