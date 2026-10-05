@@ -13,7 +13,6 @@ import { AccountIdentityFields } from "./account-identity-fields";
 import { accountConnectionPayload } from "./account-connection-payload";
 import { AccountConnectionFields } from "./account-connection-fields";
 import { SentCopyPolicyFields } from "./sent-copy-settings";
-import { MessageList } from "./message-list";
 
 const folderLabels = {
   sent: "Sent",
@@ -546,6 +545,12 @@ export function AccountSettings({
       >
         <section className="settings-section">
           <h3>Connection and synchronization</h3>
+          <a
+            className="button-link secondary"
+            href={`/accounts?section=application-logs&account=${encodeURIComponent(account.id)}`}
+          >
+            View related application logs
+          </a>
           <dl className="settings-facts">
             <dt>Provider</dt>
             <dd>
@@ -643,7 +648,7 @@ export function AccountSettings({
           )}
         </section>
         <details className="settings-section">
-          <summary>Protocol details and message inspection</summary>
+          <summary>Protocol details</summary>
           {mailboxes.map((m) => (
             <div key={m.id}>
               <p>
@@ -655,12 +660,6 @@ export function AccountSettings({
                 {m.highestModseq ?? "n/a"} · historical frontier{" "}
                 {m.backfill.frontierUid ?? "n/a"}
               </p>
-              {m.selectable ? (
-                <details>
-                  <summary>Inspect {m.name} messages</summary>
-                  <MessageList accountId={account.id} mailbox={m} />
-                </details>
-              ) : null}
             </div>
           ))}
         </details>

@@ -1,3 +1,5 @@
+import { ApplicationEventService } from "../../diagnostics/application/application-event-service";
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { DraftService } from "@/modules/mail/application/draft-service";
 import { SignatureService } from "@/modules/mail/application/signature-service";
 import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
@@ -55,6 +57,7 @@ export const accountsService = new AccountsService(
   new ImapSmtpMailProvider(),
   new PgBossMailboxDiscoveryScheduler(config),
   microsoftOAuth,
+  new ApplicationEventService(db, createLogger(config)),
 );
 
 export const mailboxService = new MailboxService(db);

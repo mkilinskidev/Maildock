@@ -1,3 +1,5 @@
+import type { ApplicationEventName } from "../../diagnostics/domain/application-event";
+import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { DraftConflictError } from "../domain/draft";
 import { z } from "zod";
 import { threading } from "../domain/reply-forward";
@@ -60,6 +62,7 @@ export class OutgoingMessageService {
     private readonly enqueueSentCopy?: (id: string) => Promise<void>,
     private readonly storage?: BlobStorage,
     private readonly limits: AttachmentLimits = DEFAULT_ATTACHMENT_LIMITS,
+    private readonly events?: ApplicationEventService,
   ) {}
 
   async create(
@@ -478,6 +481,7 @@ export class OutgoingMessageService {
         accountFailed = true;
       }
     }
+    let diagnosticEvent: ApplicationEventName | undefined;
     await this.lock(id, async (db) => {
       const [row] = await db
         .select()
@@ -515,6 +519,7 @@ export class OutgoingMessageService {
               eq(outgoingMessages.status, "queued"),
             ),
           );
+        diagnosticEvent = "mail.send_failed";
         return;
       }
       if (!account) return; // Another attempt just returned to queued; poll again.
@@ -541,6 +546,7 @@ export class OutgoingMessageService {
               eq(outgoingMessages.status, "queued"),
             ),
           );
+        diagnosticEvent = "mail.send_failed";
         return;
       }
       const [claimed] = await db
@@ -615,8 +621,21 @@ export class OutgoingMessageService {
             eq(outgoingMessages.status, "sending"),
           ),
         );
+      if (update.status !== "queued")
+        diagnosticEvent =
+          update.status === "sent"
+            ? "mail.sent"
+            : update.status === "uncertain"
+              ? "mail.send_uncertain"
+              : "mail.send_failed";
       if (result.outcome === "accepted" && row.sentCopyPolicy === "maildock")
         await this.enqueueSentCopy?.(id).catch(() => undefined);
     });
+    // Release the reserved delivery connection before diagnostic writes.
+    // A one-connection pool must still be able to send mail.
+    if (diagnosticEvent)
+      await this.events?.record(diagnosticEvent, {
+        accountId: candidate.accountId,
+      });
   }
 }

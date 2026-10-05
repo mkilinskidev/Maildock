@@ -1,3 +1,4 @@
+import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { randomUUID } from "node:crypto";
 import { ConversationService } from "./conversation-service";
 import { persistAttachmentMetadata } from "./attachment-metadata";
@@ -146,6 +147,7 @@ export class MessageService {
     private readonly backfillScheduler?: {
       schedule(accountId: string, mailboxId: string): Promise<boolean>;
     },
+    private readonly events?: ApplicationEventService,
   ) {}
 
   async requestSync(accountId: string, mailboxId: string): Promise<boolean> {
@@ -328,6 +330,11 @@ export class MessageService {
           updatedAt: completedAt,
         })
         .where(eq(mailboxes.id, mailboxId));
+      await this.events?.record("mail.recent_sync_completed", {
+        accountId,
+        mailboxId,
+        details: { mailboxPath: mailbox.remotePath },
+      });
       if (this.backfillScheduler)
         await this.backfillScheduler.schedule(accountId, mailboxId);
     } catch (error) {
@@ -343,6 +350,16 @@ export class MessageService {
         .where(
           and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)),
         );
+      await this.events?.record("mail.recent_sync_failed", {
+        accountId,
+        mailboxId,
+        details: {
+          category:
+            error instanceof MailProviderOperationError
+              ? error.category
+              : "internal_error",
+        },
+      });
       throw error;
     }
   }

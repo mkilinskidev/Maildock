@@ -63,6 +63,8 @@ export class IdleWatcherManager {
       const eligible = await this.database
         .select({
           accountId: mailAccounts.id,
+          accountName: mailAccounts.displayName,
+          accountEmail: mailAccounts.email,
           mailboxId: mailboxes.id,
           remotePath: mailboxes.remotePath,
           capabilities: mailAccounts.imapCapabilities,
@@ -92,7 +94,13 @@ export class IdleWatcherManager {
         if (!this.watches.has(row.mailboxId))
           this.watches.set(
             row.mailboxId,
-            this.watch(row.accountId, row.mailboxId, row.remotePath),
+            this.watch(
+              row.accountId,
+              row.mailboxId,
+              row.remotePath,
+              row.accountName,
+              row.accountEmail,
+            ),
           );
     } finally {
       this.refreshing = false;
@@ -103,6 +111,8 @@ export class IdleWatcherManager {
     accountId: string,
     mailboxId: string,
     remotePath: string,
+    accountName: string,
+    accountEmail: string,
   ): Watch {
     let cancelled = false;
     let client: IdleClient | undefined;
@@ -149,7 +159,14 @@ export class IdleWatcherManager {
           await active.mailboxOpen(remotePath, { readOnly: true });
           await enqueueDelta(this.boss, accountId, mailboxId, "idle");
           this.logger.info(
-            { event: "mail.idle_connected", accountId, mailboxId },
+            {
+              event: "mail.idle_connected",
+              accountId,
+              mailboxId,
+              accountName,
+              accountEmail,
+              mailboxPath: remotePath,
+            },
             "IDLE watcher connected",
           );
           backoff = 1_000;
@@ -160,6 +177,9 @@ export class IdleWatcherManager {
               event: "mail.idle_disconnected",
               accountId,
               mailboxId,
+              accountName,
+              accountEmail,
+              mailboxPath: remotePath,
               category: "connection_failed",
             },
             "IDLE watcher disconnected",

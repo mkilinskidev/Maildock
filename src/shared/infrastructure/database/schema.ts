@@ -1167,3 +1167,43 @@ export const accountSignatureDefaults = pgTable("account_signature_defaults", {
     onDelete: "set null",
   }),
 });
+
+export const applicationEvents = pgTable(
+  "application_events",
+  {
+    id: uuid("id").primaryKey(),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 3 })
+      .defaultNow()
+      .notNull(),
+    level: text("level").notNull(),
+    area: text("area").notNull(),
+    event: text("event")
+      .$type<
+        import("../../../modules/diagnostics/domain/application-event").ApplicationEventName
+      >()
+      .notNull(),
+    accountId: uuid("account_id").references(() => mailAccounts.id, {
+      onDelete: "set null",
+    }),
+    mailboxId: uuid("mailbox_id").references(() => mailboxes.id, {
+      onDelete: "set null",
+    }),
+    message: text("message").notNull(),
+    details:
+      jsonb("details").$type<
+        import("../../../modules/diagnostics/domain/application-event").DiagnosticDetails
+      >(),
+  },
+  (t) => [
+    check(
+      "application_events_level",
+      sql`${t.level} in ('info','warning','error')`,
+    ),
+    check(
+      "application_events_area",
+      sql`${t.area} in ('system','account','sync','imap','smtp','jobs')`,
+    ),
+    index("application_events_recent_idx").on(t.createdAt, t.id),
+    index("application_events_account_idx").on(t.accountId, t.createdAt, t.id),
+  ],
+);

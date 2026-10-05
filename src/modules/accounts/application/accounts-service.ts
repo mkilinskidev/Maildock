@@ -1,3 +1,4 @@
+import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -146,6 +147,7 @@ export class AccountsService {
     private readonly provider: MailProvider,
     private readonly discoveryScheduler?: MailboxDiscoveryScheduler,
     private readonly oauth?: MicrosoftOAuthService,
+    private readonly events?: ApplicationEventService,
   ) {}
 
   async list(): Promise<MailAccountView[]> {
@@ -366,6 +368,19 @@ export class AccountsService {
         updatedAt: new Date(),
       })
       .where(eq(mailAccounts.id, id));
+    await this.events?.record(
+      bothSuccessful ? "account.connected" : "account.connection_failed",
+      {
+        accountId: id,
+        details: {
+          category: !report.imap.success
+            ? report.imap.category
+            : !report.smtp.success
+              ? report.smtp.category
+              : undefined,
+        },
+      },
+    );
     return report;
   }
 

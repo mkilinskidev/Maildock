@@ -1,4 +1,5 @@
 "use client";
+import { ApplicationLogs } from "./application-logs";
 import { AutoReadSettings } from "./auto-read-settings";
 import { NotificationSettings } from "./notification-settings";
 import { DesktopNotifications } from "./desktop-notifications";
@@ -22,6 +23,7 @@ import { RemoteContentSettings } from "./remote-content-settings";
 import { AccountSettings } from "./account-settings";
 
 type Section =
+  | "application-logs"
   | "add-account"
   | "add-imap"
   | "appearance"
@@ -43,6 +45,7 @@ export function SettingsShell({
   oauthResult,
   initialAccountId,
   initialAddAccount = false,
+  initialApplicationLogs = false,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
@@ -56,6 +59,7 @@ export function SettingsShell({
   oauthResult: { oauth?: string; oauth_error?: string };
   initialAccountId?: string;
   initialAddAccount?: boolean;
+  initialApplicationLogs?: boolean;
 }) {
   const router = useRouter();
   const [notifications, setNotifications] = useState(notificationPreferences);
@@ -69,6 +73,7 @@ export function SettingsShell({
   if (createdAccount && accounts.some((a) => a.id === createdAccount.id))
     setCreatedAccount(undefined);
   const [section, setSection] = useState<Section>(() => {
+    if (initialApplicationLogs) return "application-logs";
     const selected = accounts.find((a) => a.id === initialAccountId);
     return selected
       ? `account:${selected.id}`
@@ -214,6 +219,10 @@ export function SettingsShell({
             <h2>Privacy</h2>
             {item("remote-images", "Remote images")}
           </div>
+          <div className="settings-nav-group">
+            <h2>Diagnostics</h2>
+            {item("application-logs", "Application logs")}
+          </div>
         </nav>
         <section className="settings-pane" aria-label="Settings content">
           {oauthResult.oauth === "connected" ? (
@@ -330,6 +339,12 @@ export function SettingsShell({
                 new one.
               </p>
             </>
+          ) : null}
+          {section === "application-logs" ? (
+            <ApplicationLogs
+              accounts={accountItems}
+              initialAccountId={initialAccountId}
+            />
           ) : null}
           {section === "appearance" ? (
             <>

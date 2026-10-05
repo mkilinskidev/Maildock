@@ -1,3 +1,6 @@
+import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
+import { applicationEvents } from "@/shared/infrastructure/database/schema";
+import { createLogger } from "@/shared/infrastructure/logging/logger";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -94,6 +97,11 @@ describe("durable outgoing mail", () => {
       lock,
       enqueueCopy,
       storage,
+      DEFAULT_ATTACHMENT_LIMITS,
+      new ApplicationEventService(
+        database.db,
+        createLogger({ logLevel: "fatal" }),
+      ),
     );
   const copies = () =>
     new SentCopyService(
@@ -217,6 +225,7 @@ describe("durable outgoing mail", () => {
       });
   });
   beforeEach(async () => {
+    await database.db.delete(applicationEvents);
     await database.db.delete(outgoingMessages);
     await database.db.delete(mailboxes);
     await database.db.delete(messages);
@@ -254,6 +263,52 @@ describe("durable outgoing mail", () => {
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
   });
 
+  it("Phase 3F persists successful send and permanent failure without message content", async () => {
+    const sent = await service.create(input());
+    await service.run(sent.id);
+    deliver.mockResolvedValueOnce({
+      outcome: "definite_failure",
+      retryable: false,
+      message: "secret provider payload",
+    });
+    const failed = await service.create(input());
+    await service.run(failed.id);
+    const events = await database.db.select().from(applicationEvents);
+    expect(events.map((e) => e.event).sort()).toEqual([
+      "mail.send_failed",
+      "mail.sent",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("secret provider payload");
+    expect(events.every((e) => e.accountId === accountId)).toBe(true);
+  });
+  it("Phase 3F diagnostic persistence failure cannot fail successful SMTP delivery", async () => {
+    const diagnostics = new ApplicationEventService(
+      {
+        insert: () => {
+          throw Error("diagnostic database unavailable");
+        },
+        delete: () => {
+          throw Error();
+        },
+      } as unknown as typeof database.db,
+      createLogger({ logLevel: "fatal" }),
+    );
+    const sender = new OutgoingMessageService(
+      database.db,
+      enqueue,
+      accounts,
+      provider,
+      lock,
+      enqueueCopy,
+      storage,
+      DEFAULT_ATTACHMENT_LIMITS,
+      diagnostics,
+    );
+    const created = await sender.create(input());
+    await expect(sender.run(created.id)).resolves.toBeUndefined();
+    expect((await row(created.id)).status).toBe("sent");
+    expect(deliver).toHaveBeenCalledOnce();
+  });
   async function replyFixture(
     status = "ready",
     plainText: string | null = "Original body",
@@ -733,6 +788,11 @@ describe("durable outgoing mail", () => {
         createOutgoingLock(single.client),
         undefined,
         storage,
+        DEFAULT_ATTACHMENT_LIMITS,
+        new ApplicationEventService(
+          single.db,
+          createLogger({ logLevel: "fatal" }),
+        ),
       );
       const created = await sender.create(input());
       await sender.run(created.id);

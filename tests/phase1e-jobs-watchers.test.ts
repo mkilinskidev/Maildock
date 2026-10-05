@@ -103,6 +103,54 @@ afterEach(() => {
 });
 
 describe("Phase 1E delta scheduling and IDLE", () => {
+  it("Phase 3F IDLE logs carry account and mailbox context without persistent writes", async () => {
+    vi.useFakeTimers();
+    const client = new FakeIdleClient();
+    const rows = [
+      {
+        accountId,
+        mailboxId,
+        remotePath: "INBOX",
+        capabilities: ["IDLE"],
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+      },
+    ];
+    const { manager, writes } = watchers(rows, () => client);
+    await manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "mail.idle_connected",
+        accountId,
+        mailboxId,
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+        mailboxPath: "INBOX",
+      }),
+      expect.any(String),
+    );
+    expect(writes.insert).not.toHaveBeenCalled();
+    await manager.stop();
+    const failed = new FakeIdleClient();
+    failed.connect.mockRejectedValueOnce(Error("secret"));
+    const next = watchers(rows, () => failed);
+    await next.manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "mail.idle_disconnected",
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+        mailboxPath: "INBOX",
+        accountId,
+        mailboxId,
+      }),
+      expect.any(String),
+    );
+    expect(next.writes.insert).not.toHaveBeenCalled();
+    await next.manager.stop();
+  });
   it("uses a mailbox singleton key to reject duplicate pending delta jobs", async () => {
     const jobs = boss();
     expect(await enqueueDelta(jobs.value, accountId, mailboxId, "poll")).toBe(

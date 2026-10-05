@@ -441,3 +441,24 @@ it("protects dirty onboarding and recovers from failed requests without losing c
   await click("Back");
   expect(host.querySelector(".account-provider-list")).toBeTruthy();
 });
+
+it("Phase 3F preserves health and protocol diagnostics while removing message inspection", async () => {
+  await mount();
+  await click("DPoczta");
+  await click("Diagnostics");
+  const panel = host.querySelector("#panel-Diagnostics")!;
+  expect(panel.textContent).toContain("Last successful sync");
+  expect(panel.textContent).toContain("UIDVALIDITY");
+  expect(panel.textContent).toContain("UIDNEXT");
+  expect(panel.textContent).toContain("HIGHESTMODSEQ");
+  expect(panel.textContent).not.toContain("Inspect");
+  expect(panel.textContent).not.toContain("message inspection");
+  expect(
+    panel.querySelector(
+      'a[href="/accounts?section=application-logs&account=a"]',
+    )?.textContent,
+  ).toBe("View related application logs");
+  expect(host.querySelector(".settings-nav")?.textContent).toContain(
+    "Diagnostics",
+  );
+});

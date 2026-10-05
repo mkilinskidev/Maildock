@@ -2261,3 +2261,45 @@ label.checkbox input {
 .mail-preferences .preference-save-status {
   margin-left: 0;
 }
+
+.application-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  margin-bottom: 1.5rem;
+}
+.application-log-filters label {
+  display: grid;
+  gap: 0.35rem;
+}
+.application-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.application-log-list > li {
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.application-log-list p {
+  margin: 0.5rem 0;
+}
+.application-log-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.application-log-level.error {
+  color: #d33b3b;
+}
+.application-log-level.warning {
+  color: #b5790d;
+}
+.application-log-level.info {
+  color: #3679bb;
+}
+.application-log-list summary {
+  cursor: pointer;
+}

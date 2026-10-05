@@ -1,3 +1,4 @@
+import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 
@@ -27,6 +28,7 @@ export class DeltaSyncService {
     private readonly messages: MessageService,
     private readonly batchSize: number,
     private readonly logger?: Logger,
+    private readonly events?: ApplicationEventService,
   ) {}
 
   async run(
@@ -42,7 +44,11 @@ export class DeltaSyncService {
       )
       .limit(1);
     const [accountRow] = await this.database
-      .select({ enabled: mailAccounts.enabled })
+      .select({
+        enabled: mailAccounts.enabled,
+        accountName: mailAccounts.displayName,
+        accountEmail: mailAccounts.email,
+      })
       .from(mailAccounts)
       .where(eq(mailAccounts.id, accountId))
       .limit(1);
@@ -54,6 +60,13 @@ export class DeltaSyncService {
       mailbox.recentSyncStatus !== "success"
     )
       return;
+    const context = {
+      accountId,
+      mailboxId,
+      accountName: accountRow.accountName,
+      accountEmail: accountRow.accountEmail,
+      mailboxPath: mailbox.remotePath,
+    };
     const startedAt = new Date();
     await this.database
       .update(mailboxes)
@@ -286,8 +299,7 @@ export class DeltaSyncService {
       this.logger?.info(
         {
           event: "mail.delta_sync_completed",
-          accountId,
-          mailboxId,
+          ...context,
           reason,
           durationMs: Date.now() - startedAt.valueOf(),
           newCount,
@@ -300,18 +312,27 @@ export class DeltaSyncService {
       return;
     } catch (error) {
       if (error instanceof MailboxEpochChangedError) {
+        await this.events?.record("mail.epoch_reset", {
+          accountId,
+          mailboxId,
+          details: {
+            mailboxPath: mailbox.remotePath,
+            uidValidity: epoch?.toString(),
+          },
+        });
         await this.messages.requestRecentSync(accountId, mailboxId);
         return;
       }
       const failedAt = new Date();
+      const failureMessage =
+        error instanceof MailProviderOperationError
+          ? error.message
+          : "Mailbox delta synchronization failed.";
       await this.database
         .update(mailboxes)
         .set({
           deltaSyncStatus: "failed",
-          deltaSyncError:
-            error instanceof MailProviderOperationError
-              ? error.message
-              : "Mailbox delta synchronization failed.",
+          deltaSyncError: failureMessage,
           deltaSyncCompletedAt: failedAt,
           updatedAt: failedAt,
         })
@@ -319,8 +340,7 @@ export class DeltaSyncService {
       this.logger?.warn(
         {
           event: "mail.delta_sync_failed",
-          accountId,
-          mailboxId,
+          ...context,
           reason,
           category:
             error instanceof MailProviderOperationError
@@ -329,6 +349,21 @@ export class DeltaSyncService {
         },
         "Mailbox delta synchronization failed",
       );
+      if (
+        mailbox.deltaSyncStatus !== "failed" ||
+        mailbox.deltaSyncError !== failureMessage
+      )
+        await this.events?.record("mail.sync_failed", {
+          accountId,
+          mailboxId,
+          details: {
+            mailboxPath: mailbox.remotePath,
+            category:
+              error instanceof MailProviderOperationError
+                ? error.category
+                : "internal_error",
+          },
+        });
       throw error;
     }
   }

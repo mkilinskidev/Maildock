@@ -12,6 +12,16 @@ describe("OAuth log redaction", () => {
     const safeLogger = createLogger({ logLevel: "info" }, stream);
     safeLogger.info(
       {
+        accountId: "account-id",
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+        mailboxId: "mailbox-id",
+        mailboxPath: "INBOX",
+        password: "password-secret",
+        req: {
+          headers: { authorization: "auth-secret", cookie: "cookie-secret" },
+        },
+        credentialsEncryption: { keys: "envelope-secret" },
         accessToken: "access-secret",
         refreshToken: "refresh-secret",
         clientSecret: "client-secret",
@@ -21,9 +31,16 @@ describe("OAuth log redaction", () => {
       "OAuth event",
     );
     expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      accountName: "Hotmail",
+      accountEmail: "owner@example.test",
+      mailboxPath: "INBOX",
+      accountId: "account-id",
+      mailboxId: "mailbox-id",
+    });
     expect(lines[0]).toContain("[REDACTED]");
     expect(lines.join("\n")).not.toMatch(
-      /access-secret|refresh-secret|client-secret|code-secret/,
+      /access-secret|refresh-secret|client-secret|code-secret|password-secret|auth-secret|cookie-secret|envelope-secret/,
     );
   });
 });

@@ -23,6 +23,7 @@ export default async function AccountsPage({
     oauth_error?: string;
     account?: string;
     add?: string;
+    section?: string;
   }>;
 }) {
   if (!(await getCurrentSession())) redirect("/login");
@@ -43,6 +44,7 @@ export default async function AccountsPage({
   const params = await searchParams;
   return (
     <SettingsShell
+      key={`${params.section ?? ""}:${params.account ?? ""}`}
       notificationPreferences={await new NotificationService(db).preferences()}
       autoReadPreference={await new MailPreferencesService(db).autoRead()}
       accounts={accounts}
@@ -52,6 +54,7 @@ export default async function AccountsPage({
       oauthConfigured={microsoftOAuth.configured}
       oauthResult={params}
       initialAccountId={params.account}
+      initialApplicationLogs={params.section === "application-logs"}
       initialAddAccount={params.add === "1" || !!params.oauth_error}
       conversationEnabled={await new ConversationService(db).enabled()}
       trustedSenders={await new RemoteContentSenderService(db).list()}

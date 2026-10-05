@@ -1,8 +1,11 @@
+import { MailProviderOperationError } from "@/modules/accounts/domain/mail-provider";
+import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
+import { applicationEvents } from "@/shared/infrastructure/database/schema";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { randomUUID } from "node:crypto";
 import { NotificationService } from "@/modules/mail/application/notification-service";
 import { defaultNotificationPreferences } from "@/modules/mail/domain/notifications";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   GenericContainer,
   Wait,
@@ -82,6 +85,11 @@ describe("Phase 1E persisted delta state", () => {
   let accounts: AccountsService;
   let messagesService: MessageService;
   let delta: DeltaSyncService;
+  let events: ApplicationEventService;
+  const operationalLogger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+  } as unknown as Logger;
   let runProvider: (sink: DeltaMailboxSyncSink) => Promise<void>;
   let recentRequests: string[];
 
@@ -146,10 +154,21 @@ describe("Phase 1E persisted delta state", () => {
         return true;
       },
     });
-    delta = new DeltaSyncService(db, accounts, provider, messagesService, 2);
+    events = new ApplicationEventService(db, operationalLogger);
+    delta = new DeltaSyncService(
+      db,
+      accounts,
+      provider,
+      messagesService,
+      2,
+      operationalLogger,
+      events,
+    );
   });
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    await db.delete(applicationEvents);
     await db.delete(outgoingMessages);
     await db.delete(mailAccounts);
     await db.delete(instanceState);
@@ -264,6 +283,165 @@ describe("Phase 1E persisted delta state", () => {
     });
     return id;
   }
+  it("Phase 3F enriches operational polling logs without persisting successful polls", async () => {
+    await sync();
+    expect(operationalLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "mail.delta_sync_completed",
+        accountId,
+        mailboxId: (await mailbox()).id,
+        accountName: "Phase 1E",
+        accountEmail: "phase1e@example.test",
+        mailboxPath: "INBOX",
+        reason: "poll",
+        newCount: 0,
+      }),
+      expect.any(String),
+    );
+    expect(await db.select().from(applicationEvents)).toHaveLength(0);
+  });
+  it("Phase 3F persists safe failures and retains human context in Pino", async () => {
+    runProvider = async () => {
+      throw Error("password=DO_NOT_PERSIST");
+    };
+    await expect(sync()).rejects.toThrow("DO_NOT_PERSIST");
+    expect(operationalLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountName: "Phase 1E",
+        accountEmail: "phase1e@example.test",
+        mailboxPath: "INBOX",
+        accountId,
+        mailboxId: (await mailbox()).id,
+        category: "internal_error",
+      }),
+      expect.any(String),
+    );
+    const rows = await db.select().from(applicationEvents);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].event).toBe("mail.sync_failed");
+    expect(JSON.stringify(rows)).not.toContain("DO_NOT_PERSIST");
+    await expect(sync()).rejects.toThrow("DO_NOT_PERSIST");
+    expect(await db.select().from(applicationEvents)).toHaveLength(1);
+  });
+  it("Phase 3F retains existing authentication categories without persisting exception messages", async () => {
+    runProvider = async () => {
+      throw new MailProviderOperationError({
+        success: false,
+        category: "authentication_rejected",
+        message: "SECRET_SERVER_PAYLOAD",
+      });
+    };
+    await expect(sync()).rejects.toThrow("SECRET_SERVER_PAYLOAD");
+    const rows = await db.select().from(applicationEvents);
+    expect(rows[0].details?.category).toBe("authentication_rejected");
+    expect(rows[0].message).toBe("Mailbox synchronization failed");
+    expect(JSON.stringify(rows)).not.toContain("SECRET_SERVER_PAYLOAD");
+  });
+  it("Phase 3F keeps mail operations working when event persistence fails", async () => {
+    const broken = new ApplicationEventService(
+      {
+        insert: () => {
+          throw Error("database unavailable");
+        },
+        delete: () => {
+          throw Error();
+        },
+      } as unknown as Database,
+      operationalLogger,
+    );
+    const boxId = (await mailbox()).id;
+    runProvider = async (sink) => {
+      await sink.selected("11");
+    };
+    const failingDiagnostics = new DeltaSyncService(
+      db,
+      accounts,
+      {} as MailProvider,
+      messagesService,
+      2,
+      operationalLogger,
+      broken,
+    );
+    await expect(
+      failingDiagnostics.run(accountId, boxId, "poll"),
+    ).rejects.toThrow("Delta provider is unavailable");
+    // A UIDVALIDITY reset is a recoverable successful operation even if diagnostics fail.
+    const epochDelta = new DeltaSyncService(
+      db,
+      accounts,
+      {
+        synchronizeDeltaMailbox: async (_a, _p, _n, sink) => runProvider(sink),
+      } as MailProvider,
+      messagesService,
+      2,
+      operationalLogger,
+      broken,
+    );
+    await expect(
+      epochDelta.run(accountId, boxId, "poll"),
+    ).resolves.toBeUndefined();
+    expect(recentRequests).toContain(boxId);
+  });
+  it("Phase 3F records epoch reset and applies retention, filters, safe serialization and bounded cursors", async () => {
+    runProvider = async (sink) => {
+      await sink.selected("11");
+    };
+    await sync();
+    expect((await db.select().from(applicationEvents))[0].event).toBe(
+      "mail.epoch_reset",
+    );
+    await db.delete(applicationEvents);
+    await events.record("mail.sent", { accountId });
+    await events.record("mail.sync_failed", {
+      accountId,
+      details: {
+        category: "authentication_rejected",
+        password: "SECRET",
+        stack: "SECRET",
+      } as never,
+    });
+    await db.insert(applicationEvents).values({
+      id: randomUUID(),
+      createdAt: new Date(Date.now() - 31 * 86400_000),
+      level: "info",
+      area: "smtp",
+      event: "mail.sent",
+      message: "Outgoing message sent",
+    });
+    await events.cleanup();
+    expect(await db.select().from(applicationEvents)).toHaveLength(2);
+    const filtered = await events.list({
+      accountId,
+      area: "sync",
+      level: "error",
+      limit: 1,
+    });
+    expect(filtered.events).toHaveLength(1);
+    expect(filtered.events[0].accountName).toBe("Phase 1E");
+    expect(JSON.stringify(filtered)).not.toContain("SECRET");
+    const first = await events.list({ limit: 1 });
+    expect(first.nextCursor).toBeTruthy();
+    const second = await events.list({ limit: 1, cursor: first.nextCursor! });
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0].id).not.toBe(first.events[0].id);
+    expect(second.nextCursor).toBeNull();
+    expect(first.events[0].createdAt >= second.events[0].createdAt).toBe(true);
+  });
+
+  it("Phase 3F bounds retained history to the most recent ten thousand events", async () => {
+    await db.execute(sql`insert into application_events (id, created_at, level, area, event, message)
+      select gen_random_uuid(), now() - n * interval '1 millisecond', 'info', 'smtp', 'mail.sent', 'Outgoing message sent'
+      from generate_series(1, 10001) as n`);
+    const newest = await events.list({ limit: 1 });
+    await events.cleanup();
+    const [count] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(applicationEvents);
+    expect(count.count).toBe(10000);
+    expect((await events.list({ limit: 1 })).events[0].id).toBe(
+      newest.events[0].id,
+    );
+  });
   it("Phase 3E publishes only actual delta inserts, never recent/backfill, duplicate observations, flags or removals", async () => {
     await seed(1);
     const box = await mailbox();

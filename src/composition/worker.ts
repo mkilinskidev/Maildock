@@ -1,3 +1,4 @@
+import { ApplicationEventService } from "../modules/diagnostics/application/application-event-service";
 import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
 import { AttachmentService } from "../modules/mail/application/attachment-service";
 import { createAttachmentLock } from "../modules/mail/infrastructure/attachment-lock";
@@ -49,6 +50,7 @@ export function createWorkerComposition() {
   const config = getConfig();
   const logger = createLogger(config);
   const database = createWorkerDatabase(config);
+  const events = new ApplicationEventService(database.db, logger);
   const provider = new ImapSmtpMailProvider();
   const encryption = new AesGcmSecretEncryption(
     config.credentialsEncryption.activeKeyId,
@@ -60,6 +62,7 @@ export function createWorkerComposition() {
     provider,
     undefined,
     new MicrosoftOAuthService(database.db, encryption, config),
+    events,
   );
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
@@ -85,6 +88,7 @@ export function createWorkerComposition() {
       schedule: (accountId, mailboxId) =>
         enqueueBackfill(jobs.boss, accountId, mailboxId),
     },
+    events,
   );
   const blobStorage = new LocalBlobStorage(config.attachmentsPath);
   const attachments = new AttachmentService(
@@ -121,6 +125,7 @@ export function createWorkerComposition() {
     (id) => enqueueSentCopy(jobs.boss, id),
     blobStorage,
     config,
+    events,
   );
   const commands = new MessageCommandService(
     database.db,
@@ -132,6 +137,7 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    events,
     attachments,
     attachmentPoller: new AttachmentPoller(attachments),
     outgoing,
@@ -152,6 +158,7 @@ export function createWorkerComposition() {
       messages,
       config.messageFetchBatchSize,
       logger,
+      events,
     ),
     poller: new DeltaPoller(
       database.db,

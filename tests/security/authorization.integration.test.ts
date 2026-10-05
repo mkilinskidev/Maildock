@@ -1,3 +1,4 @@
+import { GET as applicationLogs } from "../../src/app/api/application-events/route";
 import { randomUUID } from "node:crypto";
 import { SignatureService } from "../../src/modules/mail/application/signature-service";
 import { plainTextDocument } from "../../src/modules/mail/domain/rich-document";
@@ -307,6 +308,13 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       .where(eq(messageAttachments.id, part.id));
     return blobId;
   }
+  it("Phase 3F protects diagnostic history with real owner sessions", async () => {
+    expect((await applicationLogs(req("GET", "", false))).status).toBe(401);
+    const response = await applicationLogs(req("GET"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect((await response.json()).events).toEqual([]);
+  });
   it("protects notification settings and durable consumption using real owner sessions and Origin checks", async () => {
     expect((await notificationSettings(req("GET", "", false))).status).toBe(
       401,
