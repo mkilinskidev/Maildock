@@ -15,8 +15,7 @@ import {
   user,
 } from "@/shared/infrastructure/database/schema";
 
-export const setupInputSchema = z.object({
-  bootstrapSecret: z.string().length(44),
+const ownerCredentialsSchema = z.object({
   username: z
     .string()
     .trim()
@@ -53,7 +52,7 @@ async function reserveSetupAttempt(database: Database, authorized: boolean) {
   if (rows[0].count > max) throw new SetupThrottledError();
 }
 
-export async function authorizeBootstrap(
+async function authorizeBootstrap(
   database: Database,
   supplied: unknown,
   config: Pick<AppConfig, "bootstrapSecretDigest">,
@@ -92,13 +91,28 @@ export async function isInstanceInitialized(
 
 export async function initializeOwner(
   database: Database,
-  input: z.infer<typeof setupInputSchema>,
+  input: unknown,
   config: Pick<AppConfig, "bootstrapSecretDigest">,
 ): Promise<void> {
   if (await isInstanceInitialized(database))
     throw new InstanceAlreadyInitializedError();
-  await authorizeBootstrap(database, input.bootstrapSecret, config);
-  const parsed = setupInputSchema.parse(input);
+  await authorizeBootstrap(
+    database,
+    input && typeof input === "object" && "bootstrapSecret" in input
+      ? input.bootstrapSecret
+      : undefined,
+    config,
+  );
+  // Zod strips the bootstrap field. Only credentials cross into owner creation.
+  const parsed = ownerCredentialsSchema.parse(input);
+  return createOwner(database, parsed);
+}
+
+// Private: every caller must pass through initializeOwner's provisioning boundary.
+async function createOwner(
+  database: Database,
+  parsed: z.infer<typeof ownerCredentialsSchema>,
+): Promise<void> {
   const normalizedUsername = parsed.username.toLowerCase();
   await reserveSetupAttempt(database, true);
 
@@ -112,7 +126,6 @@ export async function initializeOwner(
     if (await isInstanceInitialized(transaction))
       throw new InstanceAlreadyInitializedError();
     const passwordHash = await hashPassword(parsed.password);
-    await transaction.execute(sql`select pg_advisory_xact_lock(1296125003)`);
 
     const [state] = await transaction
       .select({ initializedAt: instanceState.initializedAt })

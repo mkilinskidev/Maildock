@@ -3,8 +3,6 @@ import {
   initializeOwner,
   InstanceAlreadyInitializedError,
   isInstanceInitialized,
-  setupInputSchema,
-  authorizeBootstrap,
   BootstrapAuthorizationError,
   SetupThrottledError,
 } from "@/modules/auth/application/instance-auth";
@@ -104,15 +102,7 @@ export async function POST(request: Request) {
     } catch {
       throw new InvalidSetupRequest();
     }
-    await authorizeBootstrap(
-      db,
-      rawInput && typeof rawInput === "object" && "bootstrapSecret" in rawInput
-        ? rawInput.bootstrapSecret
-        : undefined,
-      config,
-    );
-    const input = setupInputSchema.parse(rawInput);
-    await initializeOwner(db, input, config);
+    await initializeOwner(db, rawInput, config);
     if (submittedAsForm)
       return Response.redirect(new URL("/login", request.url), 303);
     return Response.json({ initialized: true }, { status: 201 });

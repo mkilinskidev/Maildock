@@ -17,6 +17,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { sql } from "drizzle-orm";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
   parseConfig,
@@ -31,6 +32,45 @@ import {
 import { createLogger } from "@/shared/infrastructure/logging/logger";
 import * as passwords from "@/modules/auth/infrastructure/password";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
+import {
+  initializeOwner,
+  BootstrapAuthorizationError,
+} from "@/modules/auth/application/instance-auth";
+
+// Capture the real Argon2 implementation before test spies are installed.
+const realHashPassword = passwords.hashPassword;
+
+async function provisionInChild(databaseUrl: string): Promise<string> {
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "tests/security/bootstrap-process.ts"],
+    {
+      env: { ...process.env, BOOTSTRAP_TEST_DATABASE_URL: databaseUrl },
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      windowsHide: true,
+    },
+  );
+  let status: string | undefined;
+  const timer = setTimeout(() => child.kill(), 30_000);
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      child.on("message", (message: { status: string }) => {
+        status = message.status;
+      });
+      child.once("error", reject);
+      child.once("exit", (code) => {
+        if (code === 0 && status) resolve(status);
+        else
+          reject(
+            new Error("Bootstrap child process did not complete successfully."),
+          );
+      });
+    });
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null) child.kill();
+  }
+}
 
 const runtime = vi.hoisted(() => ({
   db: undefined as unknown,
@@ -125,6 +165,44 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     expect((await POST(request())).status).toBe(403);
     expect(hash).not.toHaveBeenCalled();
   });
+  it.each([undefined, "wrong"])(
+    "internal calls cannot bypass bootstrap authorization: %s",
+    async (secret) => {
+      await expect(
+        initializeOwner(
+          database.db,
+          { ...credentials, bootstrapSecret: secret },
+          config,
+        ),
+      ).rejects.toBeInstanceOf(BootstrapAuthorizationError);
+      expect(hash).not.toHaveBeenCalled();
+      expect(await database.db.select().from(user)).toHaveLength(0);
+    },
+  );
+  it("internal calls validate credentials after authorization", async () => {
+    await expect(
+      initializeOwner(
+        database.db,
+        { ...credentials, password: "short" },
+        config,
+      ),
+    ).rejects.toThrow();
+    expect(hash).not.toHaveBeenCalled();
+  });
+  it("holds setup admission across a real Argon2 job and a separate application process", async () => {
+    hash.mockImplementationOnce(async (password) => {
+      const [passwordHash, status] = await Promise.all([
+        realHashPassword(password),
+        provisionInChild(config.databaseUrl),
+      ]);
+      expect(status).toBe("busy");
+      return passwordHash;
+    });
+    expect((await POST(request())).status).toBe(201);
+    expect(hash).toHaveBeenCalledTimes(1);
+    expect(await database.db.select().from(user)).toHaveLength(1);
+    expect(await database.db.select().from(account)).toHaveLength(1);
+  });
   it("creates owner without leaking secret and preserves normal login", async () => {
     const response = await POST(request());
     expect(response.status).toBe(201);
@@ -133,6 +211,18 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     expect(await database.db.select().from(user)).toHaveLength(1);
     expect(await database.db.select().from(account)).toHaveLength(1);
     const auth = createAuth(config, database.db);
+    const persisted = JSON.stringify(
+      await Promise.all([
+        database.db.select().from(user),
+        database.db.select().from(account),
+        database.db.select().from(instanceState),
+        database.db.select().from(rateLimit),
+      ]),
+      (_key, value: unknown) =>
+        typeof value === "bigint" ? value.toString() : value,
+    );
+    expect(persisted).not.toContain(bootstrapSecret);
+    expect(persisted).not.toContain(config.bootstrapSecretDigest);
     const login = await auth.handler(
       new Request(`${origin}/api/auth/sign-in/username`, {
         method: "POST",
