@@ -874,7 +874,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
         method: "DELETE",
         headers: { Origin: config.appOrigin },
       }),
-      true,
     );
     expect(unauthenticated?.status).toBe(401);
 
@@ -900,7 +899,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
         method: "DELETE",
         headers: { cookie, Origin: "http://evil.test" },
       }),
-      true,
     );
     expect(wrongOrigin?.status).toBe(403);
     const authorized = await checkOwnerApiAccess(
@@ -910,7 +908,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
         method: "DELETE",
         headers: { cookie, Origin: config.appOrigin },
       }),
-      true,
     );
     expect(authorized).toBeNull();
   });

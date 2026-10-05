@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { db } from "@/shared/infrastructure/database/runtime-database";
@@ -5,8 +6,10 @@ import { NotificationService } from "@/modules/mail/application/notification-ser
 
 // Polling consumes a durable owner checkpoint, so it is a protected mutation.
 export async function POST(request: Request) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   const input = z
     .object({ action: z.enum(["start", "poll"]) })
     .strict()

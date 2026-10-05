@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { signatureService } from "@/modules/accounts/infrastructure/accounts";
 import {
@@ -7,7 +8,7 @@ import {
 import { z } from "zod";
 type Context = { params: Promise<{ id: string }> };
 export async function GET(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, false);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     return Response.json(
@@ -19,8 +20,10 @@ export async function GET(request: Request, context: Context) {
   }
 }
 export async function PATCH(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const { expectedRevision, ...values } = z
       .object({
@@ -42,8 +45,10 @@ export async function PATCH(request: Request, context: Context) {
   }
 }
 export async function DELETE(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const { expectedRevision } = z
       .object({ expectedRevision: z.number().int().positive() })

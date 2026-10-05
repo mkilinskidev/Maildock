@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { signatureService } from "@/modules/accounts/infrastructure/accounts";
 import {
@@ -6,7 +7,7 @@ import {
 } from "@/modules/mail/application/draft-api";
 import { z } from "zod";
 export async function GET(request: Request) {
-  const denied = await requireOwnerApiAccess(request, false);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     return Response.json(await signatureService.catalog(), {
@@ -17,8 +18,10 @@ export async function GET(request: Request) {
   }
 }
 export async function POST(request: Request) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const { id, ...values } = z
       .object({ id: z.uuid(), name: z.string(), richDocument: z.unknown() })

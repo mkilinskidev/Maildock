@@ -1,10 +1,13 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { outgoingMessageService } from "@/modules/accounts/infrastructure/accounts";
 import { OutgoingValidationError } from "@/modules/mail/application/outgoing-message-service";
 
 export async function POST(request: Request) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     // Bound the request before parsing, including requests without Content-Length.
     const reader = request.body?.getReader();

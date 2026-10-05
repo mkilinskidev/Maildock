@@ -82,7 +82,7 @@ describe("local draft API", () => {
     get.mockResolvedValue({ id, revision: 1 });
     const req = request("POST", JSON.stringify({ id, to: "jan@" }));
     expect((await POST(req)).status).toBe(201);
-    expect(access).toHaveBeenLastCalledWith(req, true);
+    expect(access).toHaveBeenLastCalledWith(req);
     expect((await LIST(request())).headers.get("Cache-Control")).toContain(
       "no-store",
     );
@@ -113,7 +113,7 @@ describe("local draft API", () => {
       id,
       expectedRevision: 6,
     });
-    expect(access).toHaveBeenLastCalledWith(send, true);
+    expect(access).toHaveBeenLastCalledWith(send);
   });
   it("reports safe 409/400/500 errors and bounds bodies before service calls", async () => {
     update.mockRejectedValue(new DraftConflictError());

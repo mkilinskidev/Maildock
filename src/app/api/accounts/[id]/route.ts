@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 
 import { MailAccountNotFoundError } from "@/modules/accounts/application/accounts-service";
@@ -38,8 +39,10 @@ export async function GET(request: Request, context: Context) {
 }
 
 export async function PUT(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const account = await accountsService.update(
       accountId.parse((await context.params).id),
@@ -52,7 +55,7 @@ export async function PUT(request: Request, context: Context) {
 }
 
 export async function DELETE(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     await accountsService.delete(accountId.parse((await context.params).id));

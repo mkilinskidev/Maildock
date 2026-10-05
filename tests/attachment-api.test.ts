@@ -65,14 +65,14 @@ describe("authenticated attachment endpoints", () => {
   it("applies Origin/CSRF protection to prepare, upload and remove", async () => {
     const req = request("POST");
     await POST(req, context);
-    expect(access).toHaveBeenLastCalledWith(req, true);
+    expect(access).toHaveBeenLastCalledWith(req);
     const file = request("POST", "bytes");
     upload.mockResolvedValue({ id, status: "ready" });
     await uploadPost(file);
-    expect(access).toHaveBeenLastCalledWith(file, true);
+    expect(access).toHaveBeenLastCalledWith(file);
     const removal = request("DELETE");
     await DELETE(removal, context);
-    expect(access).toHaveBeenLastCalledWith(removal, true);
+    expect(access).toHaveBeenLastCalledWith(removal);
   });
   it("forces attachment download with safe Unicode headers and private/no-store isolation", async () => {
     download.mockResolvedValue({

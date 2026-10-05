@@ -8,6 +8,10 @@ import { getConfig } from "@/shared/infrastructure/config/config";
 
 export const dynamic = "force-dynamic";
 
+// Explicit protocol boundary: provider navigation need not carry APP_ORIGIN.
+// complete atomically consumes session/provider-bound state within 10 minutes
+// and exchanges the code using PKCE before connecting or scheduling discovery.
+
 export async function GET(request: Request) {
   const origin = getConfig().appOrigin;
   const session = await getCurrentSession();

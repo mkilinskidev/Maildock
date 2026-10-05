@@ -72,7 +72,7 @@ describe("owner-only rendering and sender preference API", () => {
       blobPath: "malicious",
     });
     const response = await POST(req, context);
-    expect(access).toHaveBeenCalledWith(req, true);
+    expect(access).toHaveBeenCalledWith(req);
     expect(render).toHaveBeenCalledWith(id, id, id, {
       loadImages: true,
       trustSender: false,
@@ -102,7 +102,7 @@ describe("owner-only rendering and sender preference API", () => {
   it("sender removals are normalized, authenticated mutations", async () => {
     const req = request("DELETE", { address: " Sender@Example.Test " });
     expect((await DELETE(req)).status).toBe(200);
-    expect(access).toHaveBeenCalledWith(req, true);
+    expect(access).toHaveBeenCalledWith(req);
     expect(remove).toHaveBeenCalledWith("sender@example.test");
   });
 });

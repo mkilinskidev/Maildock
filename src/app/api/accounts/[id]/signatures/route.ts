@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { signatureService } from "@/modules/accounts/infrastructure/accounts";
 import {
@@ -9,8 +10,10 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     return Response.json(
       await signatureService.setDefaults(

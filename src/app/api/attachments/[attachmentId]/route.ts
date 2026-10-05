@@ -29,7 +29,7 @@ export async function GET(request: Request, { params }: Context) {
   }
 }
 export async function POST(request: Request, { params }: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     await attachmentService.request(

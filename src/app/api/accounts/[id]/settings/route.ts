@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import {
@@ -14,8 +15,10 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const id = z.uuid().parse((await context.params).id);
     const account = await new AccountSettingsService(

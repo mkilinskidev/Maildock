@@ -35,7 +35,7 @@ it.each([401, 403])(
     const incoming = request({ mode: "after", seconds: 2 });
     mocks.access.mockResolvedValue(Response.json({}, { status }));
     expect((await PUT(incoming)).status).toBe(status);
-    expect(mocks.access).toHaveBeenCalledWith(incoming, true);
+    expect(mocks.access).toHaveBeenCalledWith(incoming);
     expect(mocks.save).not.toHaveBeenCalled();
     expect((await GET(new Request(incoming.url))).status).toBe(status);
     expect(mocks.read).not.toHaveBeenCalled();

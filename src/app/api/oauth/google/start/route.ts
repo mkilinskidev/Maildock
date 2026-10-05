@@ -4,6 +4,9 @@ import { getConfig } from "@/shared/infrastructure/config/config";
 
 export const dynamic = "force-dynamic";
 
+// Protocol navigation: begin creates session-bound, expiring state and S256 PKCE;
+// it does not connect an account until the validated callback completes.
+
 export async function GET(request: Request) {
   const origin = getConfig().appOrigin;
   const session = await getCurrentSession();

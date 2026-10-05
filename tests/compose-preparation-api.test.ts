@@ -34,7 +34,7 @@ describe("owner compose preparation API", () => {
       const req = request(mode);
       const response = await POST(req, { params });
       expect(response.status).toBe(200);
-      expect(access).toHaveBeenCalledWith(req, true);
+      expect(access).toHaveBeenCalledWith(req);
       expect(prepare).toHaveBeenCalledExactlyOnceWith({
         accountId: id,
         mailboxId: id,

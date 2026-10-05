@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { draftService } from "@/modules/accounts/infrastructure/accounts";
 import {
@@ -5,7 +6,7 @@ import {
   draftApiError,
 } from "@/modules/mail/application/draft-api";
 export async function GET(request: Request) {
-  const denied = await requireOwnerApiAccess(request, false);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     return Response.json(await draftService.list(), {
@@ -16,8 +17,10 @@ export async function GET(request: Request) {
   }
 }
 export async function POST(request: Request) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     return Response.json(
       await draftService.create(await readDraftRequest(request)),

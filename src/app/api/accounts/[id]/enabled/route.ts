@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 
 import { MailAccountNotFoundError } from "@/modules/accounts/application/accounts-service";
@@ -8,8 +9,10 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const { enabled } = z
       .object({ enabled: z.boolean() })

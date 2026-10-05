@@ -11,6 +11,10 @@ export const dynamic = "force-dynamic";
 
 const handler = toNextJsHandler(auth);
 
+// Explicit auth boundary: Better Auth 1.7.5 owns Origin/CSRF and JSON media-type
+// validation here (trustedOrigins = [APP_ORIGIN], neither check disabled).
+// Its login/session protocol must not pass through the owner-session guard.
+
 export async function GET(request: Request) {
   if (!new URL(request.url).pathname.endsWith("/get-session")) {
     return Response.json({ error: "Not found." }, { status: 404 });

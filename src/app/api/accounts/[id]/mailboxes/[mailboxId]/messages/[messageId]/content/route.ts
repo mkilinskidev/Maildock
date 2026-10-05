@@ -12,7 +12,7 @@ export async function POST(
     params,
   }: { params: Promise<{ id: string; mailboxId: string; messageId: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     const values = await params;

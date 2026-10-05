@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { ZodError } from "zod";
 
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
@@ -15,8 +16,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const account = await accountsService.create(await request.json());
     return Response.json({ account }, { status: 201 });

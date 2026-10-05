@@ -92,7 +92,7 @@ it.each([401, 403])(
       body: "{}",
     });
     expect((await create(request)).status).toBe(status);
-    expect(mocks.access).toHaveBeenCalledWith(request, true);
+    expect(mocks.access).toHaveBeenCalledWith(request);
     expect(mocks.create).not.toHaveBeenCalled();
   },
 );
@@ -102,6 +102,7 @@ it("does not disclose credential errors during creation", async () => {
   const response = await create(
     new Request("https://mail.example.com/api/accounts", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: "{}",
     }),
   );

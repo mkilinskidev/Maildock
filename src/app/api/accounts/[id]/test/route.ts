@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 
 import { MailAccountNotFoundError } from "@/modules/accounts/application/accounts-service";
@@ -9,8 +10,11 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  // An empty request tests the saved credentials; JSON supplies overrides.
+  const unsupported = request.body ? requireJsonMediaType(request) : null;
+  if (unsupported) return unsupported;
   try {
     const text = await request.text();
     const input = text ? JSON.parse(text) : undefined;

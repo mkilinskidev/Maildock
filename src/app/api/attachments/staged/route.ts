@@ -8,7 +8,7 @@ import { AttachmentUnavailableError } from "@/modules/mail/application/attachmen
 
 /** Raw single-file request avoids buffering multipart FormData before limits. */
 export async function POST(request: Request) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   if (!request.body)
     return Response.json({ error: "A file is required." }, { status: 400 });

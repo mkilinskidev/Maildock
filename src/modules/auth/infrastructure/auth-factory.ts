@@ -70,6 +70,10 @@ export function createAuth(config: AppConfig, database: Database) {
       },
     },
     advanced: {
+      // Keep the auth protocol's own CSRF boundary enabled in every runtime,
+      // including tests (Better Auth otherwise disables Origin checks there).
+      disableOriginCheck: false,
+      disableCSRFCheck: false,
       cookiePrefix: "maildock",
       useSecureCookies: config.environment === "production",
       defaultCookieAttributes: {

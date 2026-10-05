@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { messageCommandService } from "@/modules/accounts/infrastructure/accounts";
@@ -11,6 +12,8 @@ export async function POST(
 ) {
   const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const values = await params;
     const body = z

@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { mailboxRoleService } from "@/modules/accounts/infrastructure/accounts";
@@ -12,6 +13,8 @@ type Context = { params: Promise<{ id: string; role: string }> };
 export async function PUT(request: Request, { params }: Context) {
   const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const { id, role } = paramsSchema.parse(await params);
     const { mailboxId } = z

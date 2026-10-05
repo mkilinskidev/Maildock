@@ -98,11 +98,8 @@ vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
   },
 }));
 vi.mock("@/modules/auth/application/api-access", () => ({
-  requireOwnerApiAccess: (r: Request, mutation = false) =>
-    (runtime.guard as (r: Request, m: boolean) => Promise<Response | null>)(
-      r,
-      mutation,
-    ),
+  requireOwnerApiAccess: (r: Request) =>
+    (runtime.guard as (r: Request) => Promise<Response | null>)(r),
 }));
 import { POST } from "../../src/app/api/accounts/[id]/mailboxes/[mailboxId]/messages/[messageId]/render/route";
 import {
@@ -211,8 +208,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     runtime.content = content;
     runtime.attachments = attachments;
     runtime.signatures = new SignatureService(database.db, attachments);
-    runtime.guard = (r: Request, mutation: boolean) =>
-      checkOwnerApiAccess(auth, config, r, mutation);
+    runtime.guard = (r: Request) => checkOwnerApiAccess(auth, config, r);
   });
   afterAll(async () => {
     await database?.client.end();

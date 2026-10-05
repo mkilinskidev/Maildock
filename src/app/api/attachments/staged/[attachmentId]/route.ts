@@ -7,7 +7,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ attachmentId: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, false);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     const resource = await attachmentService.composeResource(
@@ -35,7 +35,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ attachmentId: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
   try {
     await attachmentService.removeStaged(

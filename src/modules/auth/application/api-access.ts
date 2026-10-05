@@ -4,7 +4,6 @@ import { checkOwnerApiAccess } from "@/modules/auth/application/api-access-check
 
 export async function requireOwnerApiAccess(
   request: Request,
-  mutation = false,
 ): Promise<Response | null> {
-  return checkOwnerApiAccess(auth, getConfig(), request, mutation);
+  return checkOwnerApiAccess(auth, getConfig(), request);
 }

@@ -1,3 +1,4 @@
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { db } from "@/shared/infrastructure/database/runtime-database";
@@ -14,8 +15,10 @@ export async function POST(
     params,
   }: { params: Promise<{ id: string; mailboxId: string; messageId: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
+  const denied = await requireOwnerApiAccess(request);
   if (denied) return denied;
+  const unsupported = requireJsonMediaType(request);
+  if (unsupported) return unsupported;
   try {
     const values = await params;
     const options = z
