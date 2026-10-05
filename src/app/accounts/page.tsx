@@ -1,4 +1,5 @@
 import { MailPreferencesService } from "@/modules/mail/application/mail-preferences-service";
+import { NotificationService } from "@/modules/mail/application/notification-service";
 import { SettingsShell } from "@/components/settings-shell";
 import { RemoteContentSenderService } from "@/modules/mail/application/remote-content-sender-service";
 import { redirect } from "next/navigation";
@@ -42,6 +43,7 @@ export default async function AccountsPage({
   const params = await searchParams;
   return (
     <SettingsShell
+      notificationPreferences={await new NotificationService(db).preferences()}
       autoReadPreference={await new MailPreferencesService(db).autoRead()}
       accounts={accounts}
       mailboxesByAccount={Object.fromEntries(entries)}

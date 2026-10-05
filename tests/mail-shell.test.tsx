@@ -116,8 +116,19 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
-async function mount(conversation = false, multiple = false) {
+async function mount(
+  conversation = false,
+  multiple = false,
+  notifications = false,
+  initialNotification?: {
+    accountId: string;
+    mailboxId: string;
+    messageId: string;
+  },
+) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
@@ -126,6 +137,24 @@ async function mount(conversation = false, multiple = false) {
   const fetcher = vi.fn(
     async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/api/notifications")
+        return Response.json({
+          preferences: { enabled: true, backgroundOnly: false },
+          events:
+            JSON.parse(init!.body as string).action === "start"
+              ? []
+              : [
+                  {
+                    id: "1",
+                    accountId: "b",
+                    mailboxId: "b-inbox",
+                    messageId: "cross",
+                    sender: "Sender",
+                    subject: "Cross-account mail",
+                    accountName: "Account b",
+                  },
+                ],
+        });
       if (url.endsWith("/actions"))
         return Response.json({ id: "command" }, { status: 202 });
       if (url.includes("/prepare?"))
@@ -164,11 +193,70 @@ async function mount(conversation = false, multiple = false) {
         mailboxesByAccount={boxes}
         rolesByAccount={roles}
         initialConversationView={conversation}
+        initialNotificationsEnabled={notifications}
+        initialNotification={initialNotification}
       />,
     ),
   );
   return fetcher;
 }
+it.each([false, true])(
+  "notification click opens the source account/mailbox/message from All Inboxes (conversation=%s)",
+  async (conversation) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("isSecureContext", true);
+    const notifications: { onclick?: (event: Event) => void }[] = [];
+    vi.stubGlobal(
+      "Notification",
+      class {
+        static permission = "granted";
+        onclick?: (event: Event) => void;
+        close = vi.fn();
+        constructor() {
+          notifications.push(this);
+        }
+      },
+    );
+    const focus = vi.spyOn(window, "focus").mockImplementation(() => {});
+    const fetcher = await mount(conversation, false, true);
+    await click("All Inboxes");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    const notification = notifications[0];
+    expect(notification).toBeDefined();
+    await act(async () =>
+      notification!.onclick!(new Event("click", { cancelable: true })),
+    );
+    expect(focus).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/accounts/b/mailboxes/b-inbox/messages/cross",
+      expect.anything(),
+    );
+    expect(
+      host.querySelector("[data-reader-url]")?.getAttribute("data-reader-url"),
+    ).toContain("/accounts/b/mailboxes/b-inbox/messages/cross/render");
+    expect(
+      host
+        .querySelector('[aria-label="Account b"] [title="INBOX"]')
+        ?.getAttribute("aria-current"),
+    ).toBe("page");
+  },
+);
+it("opens a notification's explicit placement supplied by navigation from Settings", async () => {
+  const fetcher = await mount(true, false, false, {
+    accountId: "b",
+    mailboxId: "b-inbox",
+    messageId: "cross",
+  });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/accounts/b/mailboxes/b-inbox/messages/cross",
+    expect.anything(),
+  );
+  expect(
+    host.querySelector("[data-reader-url]")?.getAttribute("data-reader-url"),
+  ).toContain("/accounts/b/mailboxes/b-inbox/messages/cross/render");
+});
 async function click(text: string) {
   const button = [...host.querySelectorAll("button")].find(
     (b) =>

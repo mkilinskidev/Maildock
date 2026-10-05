@@ -169,6 +169,13 @@
       "when": 1791132769271,
       "tag": "0023_exotic_menace",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791179317091,
+      "tag": "0024_bored_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

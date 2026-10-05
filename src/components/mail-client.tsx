@@ -1,5 +1,6 @@
 "use client";
 import { MailboxTree } from "./mailbox-tree";
+import { DesktopNotifications } from "./desktop-notifications";
 import { DraftList } from "./draft-list";
 import { GlobalSearchResults } from "./global-search-results";
 import type { SearchResult } from "@/modules/mail/application/search-service";
@@ -95,6 +96,8 @@ export function MailClient({
   initialConversationView = false,
   initialAutoRead = defaultAutoRead,
   contentPollIntervalMs = DEFAULT_CONTENT_POLL_INTERVAL_MS,
+  initialNotificationsEnabled = false,
+  initialNotification,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
@@ -102,6 +105,12 @@ export function MailClient({
   initialConversationView?: boolean;
   initialAutoRead?: AutoReadPreference;
   contentPollIntervalMs?: number;
+  initialNotificationsEnabled?: boolean;
+  initialNotification?: {
+    accountId: string;
+    mailboxId: string;
+    messageId: string;
+  };
 }) {
   const conversationView = initialConversationView;
   const listModeRef = useRef(conversationView);
@@ -197,7 +206,9 @@ export function MailClient({
     };
   }, [outgoing]);
   const [allInboxes, setAllInboxes] = useState(false);
-  const [accountId, setAccountId] = useState(first?.id ?? "");
+  const [accountId, setAccountId] = useState(
+    initialNotification?.accountId ?? first?.id ?? "",
+  );
   const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
     useState(mailboxesByAccount);
   const [liveRolesByAccount, setLiveRolesByAccount] = useState(rolesByAccount);
@@ -205,6 +216,7 @@ export function MailClient({
   const folders = liveMailboxesByAccount[accountId] ?? [];
   const [mailboxId, setMailboxId] = useState(
     () =>
+      initialNotification?.mailboxId ??
       folders.find((item) => item.remotePath.toUpperCase() === "INBOX")?.id ??
       folders.find((item) => item.selectable)?.id ??
       "",
@@ -221,7 +233,9 @@ export function MailClient({
   const loadingPageRef = useRef(false);
   const pageRequestIdRef = useRef(0);
   const loadedMoreRef = useRef(false);
-  const [normalSelectedId, setSelectedId] = useState("");
+  const [normalSelectedId, setSelectedId] = useState(
+    initialNotification?.messageId ?? "",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSelection, setSearchSelection] = useState<SearchResult>();
   const [searchRefresh, setSearchRefresh] = useState(0);
@@ -1303,6 +1317,20 @@ export function MailClient({
 
   return (
     <main className="mail-app">
+      {initialNotificationsEnabled ? (
+        <DesktopNotifications
+          onOpen={(event) => {
+            navigate(event.accountId, event.mailboxId);
+            setComposing(false);
+            setBulkSelection([]);
+            setSelectedId(event.messageId);
+            setMemberSelection(undefined);
+            setDetail(null);
+            setLoadingDetail(true);
+            setListReloadNonce((value) => value + 1);
+          }}
+        />
+      ) : null}
       <header className="app-bar">
         <button
           className="button compose-action"

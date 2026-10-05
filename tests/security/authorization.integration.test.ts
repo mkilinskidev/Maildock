@@ -98,6 +98,12 @@ import {
 } from "../../src/app/api/signatures/[id]/route";
 import { POST as signatureSnapshot } from "../../src/app/api/signatures/[id]/snapshot/route";
 import { PUT as signatureDefaults } from "../../src/app/api/accounts/[id]/signatures/route";
+import {
+  GET as notificationSettings,
+  PUT as saveNotificationSettings,
+} from "../../src/app/api/settings/notifications/route";
+import { POST as notificationPoll } from "../../src/app/api/notifications/route";
+import { defaultNotificationPreferences } from "../../src/modules/mail/domain/notifications";
 
 describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", () => {
   let container: StartedTestContainer;
@@ -301,6 +307,70 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       .where(eq(messageAttachments.id, part.id));
     return blobId;
   }
+  it("protects notification settings and durable consumption using real owner sessions and Origin checks", async () => {
+    expect((await notificationSettings(req("GET", "", false))).status).toBe(
+      401,
+    );
+    for (const authenticated of [false, true]) {
+      const status = authenticated ? 403 : 401;
+      const requestOrigin = authenticated ? "http://evil.test" : origin;
+      expect(
+        (
+          await saveNotificationSettings(
+            req(
+              "PUT",
+              JSON.stringify(defaultNotificationPreferences),
+              authenticated,
+              requestOrigin,
+            ),
+          )
+        ).status,
+      ).toBe(status);
+      expect(
+        (
+          await notificationPoll(
+            req("POST", '{"action":"poll"}', authenticated, requestOrigin),
+          )
+        ).status,
+      ).toBe(status);
+    }
+    const noOrigin = req("POST", '{"action":"poll"}');
+    noOrigin.headers.delete("Origin");
+    expect((await notificationPoll(noOrigin)).status).toBe(403);
+    expect(
+      (
+        await saveNotificationSettings(
+          req(
+            "PUT",
+            JSON.stringify({
+              ...defaultNotificationPreferences,
+              enabled: true,
+            }),
+          ),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await (await notificationSettings(req("GET"))).json()).enabled,
+    ).toBe(true);
+    expect(
+      (await notificationPoll(req("POST", '{"action":"start"}'))).status,
+    ).toBe(200);
+    expect(
+      (await notificationPoll(req("POST", '{"action":"poll"}'))).status,
+    ).toBe(200);
+    for (const body of [
+      "{}",
+      '{"action":"other"}',
+      '{"action":"poll","checkpoint":100}',
+      "null",
+    ]) {
+      expect((await notificationPoll(req("POST", body))).status).toBe(400);
+    }
+    expect(
+      (await saveNotificationSettings(req("PUT", '{"enabled":true}'))).status,
+    ).toBe(400);
+  });
   it("protects all signature APIs with real owner auth and mutation Origin checks", async () => {
     const id = randomUUID(),
       draftId = randomUUID();

@@ -247,6 +247,25 @@ export const instanceState = pgTable(
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
     passwordAlgorithm: text("password_algorithm"),
     conversationView: boolean("conversation_view").default(false).notNull(),
+    notificationPreferences: jsonb("notification_preferences")
+      .$type<
+        import("../../../modules/mail/domain/notifications").NotificationPreferences
+      >()
+      .default({
+        enabled: false,
+        folders: "inbox",
+        accountIds: null,
+        backgroundOnly: true,
+      })
+      .notNull(),
+    notificationSequence: bigint("notification_sequence", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    notificationCheckpoint: bigint("notification_checkpoint", {
+      mode: "bigint",
+    })
+      .default(sql`0`)
+      .notNull(),
     autoRead: jsonb("auto_read")
       .$type<{ mode: "immediately" | "after" | "manually"; seconds: number }>()
       .default({ mode: "after", seconds: 2 })
@@ -825,6 +844,37 @@ export const mailboxMessages = pgTable(
     ),
     index("mailbox_messages_mailbox_idx").on(table.mailboxId),
     index("mailbox_messages_message_idx").on(table.messageId),
+  ],
+);
+
+export const notificationEvents = pgTable(
+  "notification_events",
+  {
+    sequence: bigint("sequence", { mode: "bigint" }).primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    uidValidity: bigint("uid_validity", { mode: "bigint" }).notNull(),
+    uid: bigint("uid", { mode: "bigint" }).notNull(),
+    sender: text("sender").notNull(),
+    subject: text("subject").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("notification_events_remote_identity").on(
+      t.mailboxId,
+      t.uidValidity,
+      t.uid,
+    ),
+    index("notification_events_created_idx").on(t.createdAt),
   ],
 );
 

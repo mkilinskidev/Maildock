@@ -1,5 +1,9 @@
 "use client";
 import { AutoReadSettings } from "./auto-read-settings";
+import { NotificationSettings } from "./notification-settings";
+import { DesktopNotifications } from "./desktop-notifications";
+import { notificationHref } from "@/modules/mail/domain/desktop-notifications";
+import type { NotificationPreferences } from "@/modules/mail/domain/notifications";
 import type { AutoReadPreference } from "@/modules/mail/domain/mail-interactions";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,6 +26,7 @@ type Section =
   | "add-imap"
   | "appearance"
   | "mail"
+  | "notifications"
   | "signatures"
   | "remote-images"
   | `account:${string}`;
@@ -32,6 +37,7 @@ export function SettingsShell({
   signatureCatalog,
   conversationEnabled,
   autoReadPreference,
+  notificationPreferences,
   trustedSenders,
   oauthConfigured,
   oauthResult,
@@ -44,6 +50,7 @@ export function SettingsShell({
   signatureCatalog: SignatureCatalog;
   conversationEnabled: boolean;
   autoReadPreference?: AutoReadPreference;
+  notificationPreferences?: NotificationPreferences;
   trustedSenders: { address: string }[];
   oauthConfigured: boolean;
   oauthResult: { oauth?: string; oauth_error?: string };
@@ -51,6 +58,7 @@ export function SettingsShell({
   initialAddAccount?: boolean;
 }) {
   const router = useRouter();
+  const [notifications, setNotifications] = useState(notificationPreferences);
   const [createdAccount, setCreatedAccount] = useState<MailAccountView>();
   const accountItems =
     createdAccount && !accounts.some((a) => a.id === createdAccount.id)
@@ -161,6 +169,11 @@ export function SettingsShell({
   };
   return (
     <main className="settings-shell">
+      {notifications?.enabled ? (
+        <DesktopNotifications
+          onOpen={(event) => router.push(notificationHref(event))}
+        />
+      ) : null}
       <header className="settings-header">
         <h1>Settings</h1>
         <Link href="/" className="button-link secondary">
@@ -173,6 +186,7 @@ export function SettingsShell({
             <h2>General</h2>
             {item("appearance", "Appearance")}
             {item("mail", "Mail")}
+            {item("notifications", "Notifications")}
           </div>
           <div className="settings-nav-group">
             <h2>Accounts</h2>
@@ -350,6 +364,13 @@ export function SettingsShell({
             <SignatureSettings
               onDirtyChange={onDirtyChange}
               onBusyChange={onBusyChange}
+            />
+          ) : null}
+          {section === "notifications" ? (
+            <NotificationSettings
+              accounts={accountItems}
+              initialValue={notifications}
+              onSaved={setNotifications}
             />
           ) : null}
           {section === "remote-images" ? (

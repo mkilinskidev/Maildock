@@ -189,6 +189,8 @@ export class DeltaSyncService {
               epoch,
               batch,
               emptyBootstrap ? undefined : next,
+              undefined,
+              !emptyBootstrap,
             );
             lastSeen = next;
             newCount += batch.length;

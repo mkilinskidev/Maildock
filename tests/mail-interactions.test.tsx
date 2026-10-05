@@ -242,6 +242,7 @@ async function click(text: string) {
   const button = [...host.querySelectorAll("button")].find(
     (item) =>
       item.textContent === text ||
+      item.getAttribute("aria-label") === text ||
       (text === "All Inboxes" && item.textContent?.startsWith(text)),
   );
   expect(button).toBeDefined();
@@ -395,7 +396,7 @@ it("disables bulk moves if any selected source lacks a role and guards Delete", 
   await selectAll();
   expect(
     [...host.querySelectorAll<HTMLButtonElement>("button")].find(
-      (item) => item.textContent === "Archive",
+      (item) => item.getAttribute("aria-label") === "Archive",
     )!.disabled,
   ).toBe(true);
   await key("Delete");
@@ -435,7 +436,7 @@ it("toolbar switches between open and selected messages and reuses preparation",
   await mount({ all: true, auto: manual });
   await open();
   const toolbar = host.querySelector('[role="toolbar"]')!;
-  expect(toolbar.textContent).toContain("Reply all");
+  expect(toolbar.querySelector('[aria-label="Reply All"]')).not.toBeNull();
   await act(async () =>
     host
       .querySelector<HTMLInputElement>('[aria-label="Select second"]')!
@@ -444,9 +445,9 @@ it("toolbar switches between open and selected messages and reuses preparation",
   expect(host.querySelector('[role="toolbar"]')?.textContent).toContain(
     "1 selected",
   );
-  expect(host.querySelector('[role="toolbar"]')?.textContent).not.toContain(
-    "Reply",
-  );
+  expect(
+    host.querySelector('[role="toolbar"] [aria-label="Reply"]'),
+  ).toBeNull();
   await act(async () =>
     host
       .querySelector<HTMLInputElement>('[aria-label="Select second"]')!

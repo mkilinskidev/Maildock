@@ -18,6 +18,10 @@ import {
   mailboxes,
   messages,
   messageContents,
+  instanceState,
+  notificationEvents,
+  messageCommands,
+  outgoingMessages,
 } from "../../../shared/infrastructure/database/schema";
 import type { RecentSyncScheduler } from "./recent-sync-scheduler";
 import type { DeltaReason } from "./delta-sync-service";
@@ -350,9 +354,24 @@ export class MessageService {
     batch: readonly RemoteMessageMetadata[],
     throughUid?: bigint,
     backfillProgress?: { frontier: bigint; nextFrontier: bigint },
+    deltaArrival = false,
   ): Promise<void> {
     if (batch.length === 0 && !backfillProgress) return;
     await this.database.transaction(async (tx) => {
+      const [mailbox] = await tx
+        .select()
+        .from(mailboxes)
+        .where(
+          and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)),
+        )
+        .for("update");
+      if (!mailbox) throw new MailboxNotFoundError();
+      const publishArrival =
+        deltaArrival &&
+        !backfillProgress &&
+        mailbox.recentSyncStatus === "success" &&
+        mailbox.recentSyncUidValidity === uidValidity &&
+        mailbox.deltaUidValidity === uidValidity;
       const synchronizedAt = new Date();
       for (const remote of batch) {
         const uid = BigInt(remote.uid);
@@ -426,6 +445,113 @@ export class MessageService {
           createdAt: synchronizedAt,
           updatedAt: synchronizedAt,
         });
+        if (publishArrival) {
+          // Known command destinations use UID/epoch. Servers without COPYUID
+          // (including uncertain outcomes) use the source's metadata identity.
+          const [command] = await tx
+            .select({ id: messageCommands.id })
+            .from(messageCommands)
+            .innerJoin(messages, eq(messages.id, messageCommands.messageId))
+            .where(
+              and(
+                eq(messageCommands.accountId, accountId),
+                eq(messages.accountId, accountId),
+                eq(messageCommands.destinationMailboxId, mailboxId),
+                sql`${messageCommands.startedAt} is not null`,
+                or(
+                  and(
+                    eq(messageCommands.destinationUidValidity, uidValidity),
+                    eq(messageCommands.destinationUid, uid),
+                  ),
+                  and(
+                    sql`${messageCommands.destinationUid} is null`,
+                    or(
+                      remote.providerEmailId
+                        ? eq(messages.providerMessageId, remote.providerEmailId)
+                        : sql`false`,
+                      remote.envelope.messageId
+                        ? eq(messages.rfcMessageId, remote.envelope.messageId)
+                        : sql`false`,
+                      and(
+                        sql`${messages.providerMessageId} is null`,
+                        sql`${messages.rfcMessageId} is null`,
+                        eq(
+                          messages.internalDate,
+                          new Date(remote.internalDate),
+                        ),
+                        eq(messages.size, BigInt(remote.size)),
+                        sql`${messages.subject} is not distinct from ${remote.envelope.subject ?? null}`,
+                        sql`${messages.from} = ${JSON.stringify(remote.envelope.from)}::jsonb`,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .limit(1);
+          const [outgoing] = await tx
+            .select({ id: outgoingMessages.id })
+            .from(outgoingMessages)
+            .where(
+              and(
+                eq(outgoingMessages.accountId, accountId),
+                or(
+                  remote.envelope.messageId
+                    ? eq(outgoingMessages.messageId, remote.envelope.messageId)
+                    : sql`false`,
+                  and(
+                    eq(outgoingMessages.sentCopyMailboxId, mailboxId),
+                    eq(outgoingMessages.sentCopyUidValidity, uidValidity),
+                    eq(outgoingMessages.sentCopyUid, uid),
+                  ),
+                ),
+              ),
+            )
+            .limit(1);
+          if (!command && !outgoing) {
+            await tx
+              .insert(instanceState)
+              .values({ id: 1 })
+              .onConflictDoNothing();
+            const [state] = await tx
+              .update(instanceState)
+              .set({
+                notificationSequence: sql`${instanceState.notificationSequence} + 1`,
+              })
+              .where(eq(instanceState.id, 1))
+              .returning({ sequence: instanceState.notificationSequence });
+            const sender = remote.envelope.from[0] ?? remote.envelope.sender[0];
+            await tx
+              .insert(notificationEvents)
+              .values({
+                sequence: state.sequence,
+                accountId,
+                mailboxId,
+                messageId,
+                uidValidity,
+                uid,
+                sender: (
+                  sender?.name ||
+                  sender?.address ||
+                  "Unknown sender"
+                ).slice(0, 256),
+                subject: (remote.envelope.subject ?? "(No subject)").slice(
+                  0,
+                  512,
+                ),
+                createdAt: synchronizedAt,
+              })
+              .onConflictDoNothing();
+            await tx
+              .delete(notificationEvents)
+              .where(
+                lt(
+                  notificationEvents.createdAt,
+                  sql`now() - interval '7 days'`,
+                ),
+              );
+          }
+        }
       }
       if (throughUid !== undefined)
         await tx
