@@ -163,6 +163,86 @@
 .settings-create-form {
   max-width: 900px;
 }
+.oauth-provider-list {
+  max-width: 900px;
+}
+.oauth-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 16px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.oauth-provider-row > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.oauth-provider-row strong,
+.oauth-provider-row small {
+  display: block;
+}
+.oauth-provider-row strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+.oauth-provider-row small {
+  margin-top: 4px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.oauth-provider-status {
+  color: var(--secondary);
+  font-size: 13px;
+}
+.oauth-provider-row > svg {
+  flex-shrink: 0;
+  color: var(--secondary);
+}
+.oauth-provider-row:hover {
+  background: var(--hover);
+}
+.oauth-provider-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.oauth-provider-form {
+  margin-top: 24px;
+}
+.oauth-provider-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.oauth-provider-fields {
+  display: grid;
+  gap: 16px;
+  max-width: 620px;
+  margin: 20px 0;
+}
+.oauth-provider-redirect {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+.oauth-provider-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oauth-provider-enabled input {
+  width: auto;
+}
 .settings-create-form > .settings-connection-fields {
   border: 0;
   padding: 0;

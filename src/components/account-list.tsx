@@ -69,16 +69,15 @@ export function AccountList({
   const oauthErrorMessage = oauthResult.oauth_error
     ? ({
         configuration:
-          "Microsoft connection is not configured. Set the Microsoft app registration values.",
-        start: "Microsoft connection could not start. Try again.",
-        state:
-          "Microsoft sign-in expired or was invalid. Try connecting again.",
+          "OAuth is not configured. Open OAuth providers in Settings.",
+        start: "OAuth connection could not start. Try again.",
+        state: "Provider sign-in expired or was invalid. Try connecting again.",
         denied:
-          "Microsoft consent was denied. Grant the requested mail permissions to connect.",
-        identity: "Reconnect using the same Microsoft account as before.",
+          "Provider consent was denied. Grant the requested mail permissions to connect.",
+        identity: "Reconnect using the same email account as before.",
         authorization:
-          "Microsoft sign-in failed. Check consent, account access, and tenant policy, then try again.",
-      }[oauthResult.oauth_error] ?? "Microsoft connection failed. Try again.")
+          "Provider sign-in failed. Check consent, account access, and tenant policy, then try again.",
+      }[oauthResult.oauth_error] ?? "OAuth connection failed. Try again.")
     : null;
 
   const discoveryInProgress = accounts.some((account) =>
@@ -166,7 +165,7 @@ export function AccountList({
         </Link>
       </div>
       {oauthResult.oauth === "connected" ? (
-        <p className="success">Microsoft account connected.</p>
+        <p className="success">Email account connected.</p>
       ) : null}
       {oauthErrorMessage ? <p className="error">{oauthErrorMessage}</p> : null}
       {error ? (
@@ -191,7 +190,8 @@ export function AccountList({
             </div>
             <div className="account-summary">
               {account.authMethod === "oauth2"
-                ? "Microsoft OAuth · " +
+                ? (account.oauthProviderName ?? "OAuth") +
+                  " OAuth · " +
                   (account.oauthStatus === "reconnect_required"
                     ? "Reconnect required"
                     : "Connected") +
@@ -218,9 +218,9 @@ export function AccountList({
               {account.authMethod === "oauth2" ? (
                 <Link
                   className="button-link secondary"
-                  href={"/api/oauth/microsoft/start?accountId=" + account.id}
+                  href={`${account.oauthAuthorizationPath ?? `/api/oauth/${encodeURIComponent(account.oauthProviderId ?? "")}/start`}?accountId=${account.id}`}
                 >
-                  Reconnect Microsoft account
+                  Reconnect account
                 </Link>
               ) : (
                 <Link

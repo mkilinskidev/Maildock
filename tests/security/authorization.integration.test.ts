@@ -1,3 +1,9 @@
+import {
+  GET as oauthConfigRead,
+  PUT as oauthConfigSave,
+} from "../../src/app/api/settings/oauth-providers/route";
+import { createOAuthComposition } from "../../src/modules/accounts/infrastructure/oauth-composition";
+import { AesGcmSecretEncryption } from "../../src/shared/infrastructure/crypto/aes-gcm-secret-encryption";
 import { GET as applicationLogs } from "../../src/app/api/application-events/route";
 import { randomUUID } from "node:crypto";
 import { SignatureService } from "../../src/modules/mail/application/signature-service";
@@ -58,6 +64,7 @@ const runtime = vi.hoisted(() => ({
   attachments: undefined as unknown,
   signatures: undefined as unknown,
   guard: undefined as unknown,
+  oauth: undefined as unknown,
 }));
 vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   get db() {
@@ -65,6 +72,14 @@ vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   },
 }));
 vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
+  get oauthProviders() {
+    return (runtime.oauth as ReturnType<typeof createOAuthComposition>)
+      .registry;
+  },
+  get oauthProviderConfigs() {
+    return (runtime.oauth as ReturnType<typeof createOAuthComposition>)
+      .configurations;
+  },
   get messageContentService() {
     return runtime.content;
   },
@@ -163,6 +178,14 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       DEFAULT_ATTACHMENT_LIMITS,
       enqueue,
     );
+    runtime.oauth = createOAuthComposition(
+      database.db,
+      new AesGcmSecretEncryption(
+        config.credentialsEncryption.activeKeyId,
+        config.credentialsEncryption.keys,
+      ),
+      config,
+    );
     runtime.db = database.db;
     runtime.content = content;
     runtime.attachments = attachments;
@@ -198,6 +221,70 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       ...(method !== "GET" ? { body } : {}),
     });
   }
+  it("protects OAuth configuration with actual owner sessions and Origin/CSRF checks", async () => {
+    const body = JSON.stringify({
+      providerId: "microsoft",
+      clientId: "application-id",
+      clientSecret: "provider-private-secret",
+    });
+    expect((await oauthConfigRead(req("GET", "", false))).status).toBe(401);
+    expect((await oauthConfigSave(req("PUT", body, false))).status).toBe(401);
+    for (const requestOrigin of [
+      null,
+      "http://evil.test",
+      `${origin}.evil.test`,
+    ]) {
+      expect(
+        (await oauthConfigSave(req("PUT", body, true, requestOrigin))).status,
+      ).toBe(403);
+    }
+    expect(
+      (
+        await oauthConfigSave(
+          req(
+            "PUT",
+            JSON.stringify({ providerId: "unknown", clientId: "client" }),
+          ),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await oauthConfigSave(
+          req("PUT", JSON.stringify({ providerId: "microsoft", clientId: "" })),
+        )
+      ).status,
+    ).toBe(400);
+    const saved = await oauthConfigSave(req("PUT", body));
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({
+      hasClientSecret: true,
+      configured: true,
+      redirectUri: `${origin}/api/oauth/microsoft/callback`,
+    });
+    const read = await oauthConfigRead(req("GET"));
+    const data = await read.json();
+    expect(data.providers).toHaveLength(1);
+    expect(data.providers[0].id).toBe("microsoft");
+    expect(JSON.stringify(data)).not.toMatch(
+      /provider-private-secret|ciphertext|encryptedClientSecret|authTag/,
+    );
+    const kept = await oauthConfigSave(
+      req(
+        "PUT",
+        JSON.stringify({
+          providerId: "microsoft",
+          clientId: "updated-client",
+          clientSecret: "",
+        }),
+      ),
+    );
+    expect(await kept.json()).toMatchObject({
+      hasClientSecret: true,
+      configured: true,
+    });
+  });
+
   async function seed(
     html = '<p>Body</p><img src="http://127.0.0.1:54321/img">',
     resources: MimeResource[] = [],

@@ -418,6 +418,7 @@ export const mailAccounts = pgTable(
     imapUsername: text("imap_username").notNull(),
     imapPassword: jsonb("imap_password").$type<EncryptedEnvelope>(),
     authMethod: text("auth_method").default("password").notNull(),
+    oauthProviderId: text("oauth_provider_id"),
     oauthCache: jsonb("oauth_cache").$type<EncryptedEnvelope>(),
     oauthHomeAccountId: text("oauth_home_account_id"),
     oauthStatus: text("oauth_status"),
@@ -507,14 +508,34 @@ export const mailAccounts = pgTable(
     ),
     check(
       "mail_accounts_auth_credential",
-      sql`(${table.authMethod} = 'password' and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthHomeAccountId} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
+      sql`(${table.authMethod} = 'password' and ${table.oauthProviderId} is null and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.oauthProviderId} is not null and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
     ),
     index("mail_accounts_enabled_idx").on(table.enabled),
     index("mail_accounts_email_idx").on(table.email),
   ],
 );
 
+export const oauthProviderConfigs = pgTable("oauth_provider_configs", {
+  providerId: text("provider_id").primaryKey(),
+  enabled: boolean("enabled").default(true).notNull(),
+  clientId: text("client_id").notNull(),
+  encryptedClientSecret: jsonb(
+    "encrypted_client_secret",
+  ).$type<EncryptedEnvelope>(),
+  settings: jsonb("settings")
+    .$type<Record<string, unknown>>()
+    .default({})
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export const oauthAuthorizationStates = pgTable("oauth_authorization_states", {
+  providerId: text("provider_id").notNull(),
   stateHash: text("state_hash").primaryKey(),
   sessionId: text("session_id").notNull(),
   codeVerifier: jsonb("code_verifier").$type<EncryptedEnvelope>().notNull(),
@@ -1030,6 +1051,7 @@ export const schema = {
   loginThrottle,
   mailAccounts,
   oauthAuthorizationStates,
+  oauthProviderConfigs,
   mailboxes,
   mailboxRoles,
   messages,

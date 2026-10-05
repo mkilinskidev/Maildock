@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   session: vi.fn(),
+  configured: vi.fn(),
   redirect: vi.fn(),
   begin: vi.fn(),
   complete: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock("@/modules/auth/application/api-access", () => ({
 }));
 vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
   microsoftOAuth: {
-    configured: true,
+    isConfigured: mocks.configured,
     begin: mocks.begin,
     complete: mocks.complete,
   },
@@ -40,6 +41,7 @@ import { POST as create } from "@/app/api/accounts/route";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.session.mockResolvedValue({ session: { id: "owner-session" } });
+  mocks.configured.mockResolvedValue(true);
   mocks.redirect.mockImplementation((url) => {
     throw Error(`redirect:${url}`);
   });
@@ -127,4 +129,28 @@ it("keeps providers vertical and shares the create/edit field and payload infras
     expect(source).toContain('href="/accounts?add=1"');
     expect(source).not.toContain("Connect Microsoft account");
   }
+});
+
+it("keeps unconfigured Microsoft onboarding out of authorization", async () => {
+  mocks.configured.mockResolvedValue(false);
+  const response = await start(
+    new Request("https://mail.example.com/api/oauth/microsoft/start"),
+  );
+  expect(response.headers.get("location")).toBe(
+    "https://mail.example.com/accounts?oauth_error=configuration",
+  );
+  expect(mocks.begin).not.toHaveBeenCalled();
+});
+it("requires an owner session for Microsoft start and callback", async () => {
+  mocks.session.mockResolvedValue(null);
+  for (const route of [start, callback]) {
+    const response = await route(
+      new Request("https://mail.example.com/api/oauth/microsoft/start"),
+    );
+    expect(response.headers.get("location")).toBe(
+      "https://mail.example.com/login",
+    );
+  }
+  expect(mocks.begin).not.toHaveBeenCalled();
+  expect(mocks.complete).not.toHaveBeenCalled();
 });

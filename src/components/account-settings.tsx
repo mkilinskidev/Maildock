@@ -137,7 +137,9 @@ export function AccountSettings({
         <h2>{account.displayName}</h2>
         <p>
           {account.email} ·{" "}
-          {account.authMethod === "oauth2" ? "Microsoft OAuth" : "IMAP / SMTP"}
+          {account.authMethod === "oauth2"
+            ? `${account.oauthProviderName ?? "OAuth"} OAuth`
+            : "IMAP / SMTP"}
         </p>
       </header>
       <div
@@ -198,8 +200,8 @@ export function AccountSettings({
             />
             {account.authMethod === "oauth2" ? (
               <p className="muted">
-                Email identity is managed by Microsoft. Reconnect to refresh
-                authentication.
+                Email identity is managed by the OAuth provider. Reconnect to
+                refresh authentication.
               </p>
             ) : null}
           </fieldset>
@@ -362,10 +364,10 @@ export function AccountSettings({
       >
         {account.authMethod === "oauth2" ? (
           <section className="settings-section">
-            <h3>Microsoft authentication</h3>
+            <h3>OAuth authentication</h3>
             <dl className="settings-facts">
               <dt>Provider</dt>
-              <dd>Microsoft</dd>
+              <dd>{account.oauthProviderName ?? account.oauthProviderId}</dd>
               <dt>Authentication</dt>
               <dd>OAuth 2.0</dd>
               <dt>Status</dt>
@@ -380,9 +382,9 @@ export function AccountSettings({
             <div className="actions">
               <a
                 className="button-link secondary"
-                href={`/api/oauth/microsoft/start?accountId=${account.id}`}
+                href={`${account.oauthAuthorizationPath ?? `/api/oauth/${encodeURIComponent(account.oauthProviderId ?? "")}/start`}?accountId=${account.id}`}
               >
-                Reconnect Microsoft account
+                Reconnect account
               </a>
               <button
                 className="button secondary"
@@ -555,7 +557,7 @@ export function AccountSettings({
             <dt>Provider</dt>
             <dd>
               {account.authMethod === "oauth2"
-                ? "Microsoft OAuth"
+                ? `${account.oauthProviderName ?? "OAuth"} OAuth`
                 : "IMAP / SMTP"}
             </dd>
             <dt>Account</dt>

@@ -22,7 +22,7 @@ import type { SecretEncryption } from "../../../shared/application/secret-encryp
 import type { MailboxDiscoveryScheduler } from "./mailbox-discovery-scheduler";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import { mailAccounts } from "../../../shared/infrastructure/database/schema";
-import type { MicrosoftOAuthService } from "../infrastructure/microsoft-oauth";
+import type { OAuthProviderRegistry } from "./oauth-provider-registry";
 
 export class MailAccountNotFoundError extends Error {
   constructor() {
@@ -49,6 +49,9 @@ export type MailAccountView = Readonly<{
   sentCopyPolicy: SentCopyPolicy;
   providerType: "imap_smtp";
   authMethod: "password" | "oauth2";
+  oauthProviderId?: string | null;
+  oauthProviderName?: string | null;
+  oauthAuthorizationPath?: string | null;
   oauthStatus: "connected" | "reconnect_required" | null;
   imap: Readonly<{
     host: string;
@@ -87,7 +90,14 @@ export type MailAccountView = Readonly<{
   updatedAt: string;
 }>;
 
-function toView(row: AccountRow): MailAccountView {
+function toView(
+  row: AccountRow,
+  oauth?: OAuthProviderRegistry,
+): MailAccountView {
+  const definition = oauth
+    ?.list()
+    .find((provider) => provider.id === row.oauthProviderId)
+    ?.getDefinition();
   return {
     id: row.id,
     displayName: row.displayName,
@@ -97,6 +107,9 @@ function toView(row: AccountRow): MailAccountView {
     sentCopyPolicy: row.sentCopyPolicy as SentCopyPolicy,
     providerType: "imap_smtp",
     authMethod: row.authMethod as "password" | "oauth2",
+    oauthProviderId: row.oauthProviderId,
+    oauthProviderName: definition?.name ?? row.oauthProviderId,
+    oauthAuthorizationPath: definition?.authorizationPath ?? null,
     oauthStatus: row.oauthStatus as MailAccountView["oauthStatus"],
     imap: {
       host: row.imapHost,
@@ -146,7 +159,7 @@ export class AccountsService {
     private readonly encryption: SecretEncryption,
     private readonly provider: MailProvider,
     private readonly discoveryScheduler?: MailboxDiscoveryScheduler,
-    private readonly oauth?: MicrosoftOAuthService,
+    private readonly oauth?: OAuthProviderRegistry,
     private readonly events?: ApplicationEventService,
   ) {}
 
@@ -155,11 +168,11 @@ export class AccountsService {
       .select()
       .from(mailAccounts)
       .orderBy(mailAccounts.createdAt);
-    return rows.map(toView);
+    return rows.map((row) => toView(row, this.oauth));
   }
 
   async get(id: string): Promise<MailAccountView> {
-    return toView(await this.getRow(id));
+    return toView(await this.getRow(id), this.oauth);
   }
 
   async create(input: CreateAccountInput): Promise<MailAccountView> {
@@ -202,7 +215,7 @@ export class AccountsService {
       .returning();
     if (!created) throw new Error("Mail account was not created.");
     if (created.enabled) await this.scheduleDiscovery(created.id);
-    return created.enabled ? this.get(created.id) : toView(created);
+    return created.enabled ? this.get(created.id) : toView(created, this.oauth);
   }
 
   async update(
@@ -279,7 +292,7 @@ export class AccountsService {
       .returning();
     if (!updated) throw new MailAccountNotFoundError();
     if (updated.enabled) await this.scheduleDiscovery(updated.id);
-    return updated.enabled ? this.get(updated.id) : toView(updated);
+    return updated.enabled ? this.get(updated.id) : toView(updated, this.oauth);
   }
 
   async updateIdentity(
@@ -302,7 +315,7 @@ export class AccountsService {
         {
           code: "custom",
           path: ["email"],
-          message: "Microsoft identity is managed by the provider.",
+          message: "OAuth mailbox identity is managed by the provider.",
         },
       ]);
     }
@@ -324,7 +337,7 @@ export class AccountsService {
       .returning();
     if (!updated) throw new MailAccountNotFoundError();
     if (enabled) await this.scheduleDiscovery(id);
-    return enabled ? this.get(id) : toView(updated);
+    return enabled ? this.get(id) : toView(updated, this.oauth);
   }
 
   async delete(id: string): Promise<void> {
@@ -510,7 +523,9 @@ export class AccountsService {
         throw new Error("OAuth credential resolver is unavailable.");
       return {
         kind: "oauth2",
-        accessToken: await this.oauth.accessToken(row.id),
+        accessToken: await this.oauth
+          .get(row.oauthProviderId)
+          .accessToken(row.id),
       };
     }
     return {

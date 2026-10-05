@@ -20,6 +20,7 @@ const accounts = ["a", "b"].map((id) => ({
   enabled: true,
   providerType: "imap_smtp",
   authMethod: id === "a" ? "password" : "oauth2",
+  oauthProviderId: id === "a" ? null : "microsoft",
   oauthStatus: id === "a" ? null : "reconnect_required",
   sentCopyPolicy: "server",
   imap: {
@@ -100,7 +101,16 @@ async function mount(initialAddAccount = false, oauthConfigured = true) {
         signatureCatalog={catalog}
         conversationEnabled={true}
         trustedSenders={[{ address: "trusted@example.com" }]}
-        oauthConfigured={oauthConfigured}
+        oauthProviders={[
+          {
+            id: "microsoft",
+            name: "Microsoft",
+            description: "Outlook, Hotmail, Microsoft 365",
+            authorizationPath: "/api/oauth/microsoft/start",
+            callbackPath: "/api/oauth/microsoft/callback",
+            configured: oauthConfigured,
+          },
+        ]}
         initialAddAccount={initialAddAccount}
         oauthResult={{}}
       />,
@@ -461,4 +471,181 @@ it("Phase 3F preserves health and protocol diagnostics while removing message in
   expect(host.querySelector(".settings-nav")?.textContent).toContain(
     "Diagnostics",
   );
+});
+
+it("shows OAuth configuration under Integrations and saves a write-only blank secret", async () => {
+  await mount(true, false);
+  const group = [...host.querySelectorAll(".settings-nav-group")].find(
+    (g) => g.querySelector("h2")?.textContent === "Integrations",
+  )!;
+  expect(group.textContent).toContain("OAuth providers");
+  const provider = {
+    id: "microsoft",
+    name: "Microsoft",
+    description: "Outlook / Microsoft 365",
+    clientId: "client",
+    hasClientSecret: true,
+    enabled: true,
+    configured: true,
+    redirectUri: "https://mail.example.com/api/oauth/microsoft/callback",
+  };
+  fetcher.mockImplementation(async (_url: string, options?: RequestInit) =>
+    options?.method === "PUT"
+      ? Response.json(provider)
+      : Response.json({ providers: [provider] }),
+  );
+  await click("Configure OAuth providers");
+  expect(host.textContent).toContain("Configured");
+  expect(host.querySelector(".oauth-provider-list")).toBeTruthy();
+  expect(host.querySelector("form")).toBeNull();
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>(".oauth-provider-row")!.click(),
+  );
+  const secret = host.querySelector<HTMLInputElement>(
+    'input[name="clientSecret"]',
+  )!;
+  expect(secret.type).toBe("password");
+  expect(secret.value).toBe("");
+  expect(host.textContent).toContain("Leave blank to keep it");
+  const redirect = [...host.querySelectorAll<HTMLInputElement>("input")].find(
+    (i) => i.readOnly,
+  )!;
+  expect(redirect.value).toBe(provider.redirectUri);
+  await act(async () =>
+    host
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  const call = fetcher.mock.calls.find((c) => c[1]?.method === "PUT")!;
+  expect(JSON.parse(call[1].body as string)).toMatchObject({
+    providerId: "microsoft",
+    clientSecret: "",
+  });
+  expect(secret.value).toBe("");
+  expect(router.refresh).toHaveBeenCalled();
+});
+
+const oauthProviderFixture = {
+  id: "microsoft",
+  name: "Microsoft",
+  description: "Outlook / Microsoft 365",
+  clientId: "client",
+  hasClientSecret: true,
+  enabled: true,
+  configured: true,
+  redirectUri: "https://mail.example.com/api/oauth/microsoft/callback",
+};
+async function openOAuthProviders(providers = [oauthProviderFixture]) {
+  await mount();
+  fetcher.mockResolvedValue(Response.json({ providers }));
+  await click("OAuth providers", host.querySelector(".settings-nav")!);
+}
+async function selectOAuthProvider(index = 0) {
+  await act(async () =>
+    host
+      .querySelectorAll<HTMLButtonElement>(".oauth-provider-row")
+      [index].click(),
+  );
+}
+it("lists every API provider and opens only the selected provider detail", async () => {
+  const contributed = {
+    ...oauthProviderFixture,
+    id: "contributed",
+    name: "Contributed provider",
+    description: "Test-only provider",
+    configured: false,
+    enabled: false,
+    hasClientSecret: false,
+    clientId: "",
+    redirectUri: "https://mail.example.com/api/oauth/contributed/callback",
+  };
+  await openOAuthProviders([oauthProviderFixture, contributed]);
+  const rows = host.querySelectorAll(".oauth-provider-row");
+  expect(rows).toHaveLength(2);
+  expect(rows[0].textContent).toContain("Microsoft");
+  expect(rows[1].textContent).toContain("Contributed provider");
+  expect(rows[1].textContent).toContain("Not configured");
+  expect(host.querySelector("form")).toBeNull();
+  expect(host.querySelector('[name="clientSecret"]')).toBeNull();
+  await selectOAuthProvider(1);
+  expect(host.querySelector(".settings-pane h2")?.textContent).toBe(
+    "Contributed provider",
+  );
+  expect(
+    host.querySelector<HTMLInputElement>('[type="checkbox"]')!.checked,
+  ).toBe(false);
+  expect(
+    host.querySelector<HTMLInputElement>('[name="clientSecret"]')!.value,
+  ).toBe("");
+  expect(host.textContent).toContain("Enter the application client secret.");
+  await click("OAuth providers", host.querySelector(".settings-pane")!);
+  expect(host.querySelectorAll(".oauth-provider-row")).toHaveLength(2);
+});
+it("guards leaving edited OAuth details and clears discarded secret input", async () => {
+  await openOAuthProviders();
+  await selectOAuthProvider();
+  await input("clientSecret", "unsaved-private-secret");
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await click("OAuth providers", host.querySelector(".settings-pane")!);
+  expect(confirm).toHaveBeenCalledWith("Discard unsaved settings changes?");
+  expect(
+    host.querySelector<HTMLInputElement>('[name="clientSecret"]')!.value,
+  ).toBe("unsaved-private-secret");
+  await click("Mail", host.querySelector(".settings-nav")!);
+  expect(host.querySelector(".oauth-provider-form")).toBeTruthy();
+  confirm.mockReturnValue(true);
+  await click("OAuth providers", host.querySelector(".settings-pane")!);
+  await selectOAuthProvider();
+  expect(
+    host.querySelector<HTMLInputElement>('[name="clientSecret"]')!.value,
+  ).toBe("");
+  confirm.mockClear();
+  await click("OAuth providers", host.querySelector(".settings-pane")!);
+  expect(confirm).not.toHaveBeenCalled();
+});
+it("disables detail navigation while saving and updates list status from the saved API view", async () => {
+  await openOAuthProviders();
+  await selectOAuthProvider();
+  await act(async () =>
+    host.querySelector<HTMLInputElement>('[type="checkbox"]')!.click(),
+  );
+  let finish!: (response: Response) => void;
+  fetcher.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await act(async () =>
+    host
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  const back = [
+    ...host.querySelectorAll<HTMLButtonElement>(".settings-pane button"),
+  ].find((b) => b.textContent?.trim() === "OAuth providers")!;
+  expect(back.disabled).toBe(true);
+  await act(async () => back.click());
+  expect(host.querySelector(".oauth-provider-form")).toBeTruthy();
+  await act(async () =>
+    finish(
+      Response.json({
+        ...oauthProviderFixture,
+        enabled: false,
+        configured: false,
+      }),
+    ),
+  );
+  expect(back.disabled).toBe(false);
+  await click("OAuth providers", host.querySelector(".settings-pane")!);
+  expect(host.querySelector(".oauth-provider-row")?.textContent).toContain(
+    "Not configured",
+  );
+  await selectOAuthProvider();
+  expect(
+    host.querySelector<HTMLInputElement>('[type="checkbox"]')!.checked,
+  ).toBe(false);
+  expect(
+    host.querySelector<HTMLInputElement>('[name="clientSecret"]')!.value,
+  ).toBe("");
 });

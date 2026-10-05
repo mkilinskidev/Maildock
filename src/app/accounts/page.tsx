@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/auth/application/session";
 import { ConversationService } from "@/modules/mail/application/conversation-service";
 import { db } from "@/shared/infrastructure/database/runtime-database";
-import { microsoftOAuth } from "@/modules/accounts/infrastructure/accounts";
+import { oauthProviders } from "@/modules/accounts/infrastructure/accounts";
 import {
   accountsService,
   mailboxService,
@@ -51,9 +51,17 @@ export default async function AccountsPage({
       mailboxesByAccount={Object.fromEntries(entries)}
       rolesByAccount={Object.fromEntries(roleEntries)}
       signatureCatalog={signatureCatalog}
-      oauthConfigured={microsoftOAuth.configured}
+      oauthProviders={await Promise.all(
+        oauthProviders
+          .list()
+          .map(async (provider) => ({
+            ...provider.getDefinition(),
+            configured: await provider.isConfigured(),
+          })),
+      )}
       oauthResult={params}
       initialAccountId={params.account}
+      initialOAuthProviders={params.section === "oauth-providers"}
       initialApplicationLogs={params.section === "application-logs"}
       initialAddAccount={params.add === "1" || !!params.oauth_error}
       conversationEnabled={await new ConversationService(db).enabled()}
