@@ -3,6 +3,11 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  ownerUsernameMaxLength,
+  ownerUsernameMinLength,
+} from "@/modules/auth/domain/owner-username";
+
 export function SetupForm() {
   const router = useRouter();
   const [error, setError] = useState<string>();
@@ -63,8 +68,8 @@ export function SetupForm() {
         Username
         <input
           name="username"
-          minLength={3}
-          maxLength={64}
+          minLength={ownerUsernameMinLength}
+          maxLength={ownerUsernameMaxLength}
           required
           autoComplete="username"
         />
@@ -81,7 +86,9 @@ export function SetupForm() {
         />
       </label>
       <p className="muted auth-help">
-        Use a username of 3-64 characters and a password of 12-128 characters.
+        Use a username of {ownerUsernameMinLength}-{ownerUsernameMaxLength}{" "}
+        characters (letters, numbers, dots, underscores, or hyphens) and a
+        password of 12-128 characters.
       </p>
       {error ? (
         <p className="error" role="alert">

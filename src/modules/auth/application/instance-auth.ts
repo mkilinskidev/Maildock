@@ -4,6 +4,11 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
+  normalizeOwnerUsername,
+  ownerUsernameSchema,
+} from "@/modules/auth/domain/owner-username";
+
+import {
   argon2idParameters,
   hashPassword,
 } from "@/modules/auth/infrastructure/password";
@@ -16,15 +21,7 @@ import {
 } from "@/shared/infrastructure/database/schema";
 
 const ownerCredentialsSchema = z.object({
-  username: z
-    .string()
-    .trim()
-    .min(3)
-    .max(64)
-    .regex(
-      /^[a-zA-Z0-9_.-]+$/,
-      "Use letters, numbers, dots, underscores, or hyphens.",
-    ),
+  username: z.string().trim().pipe(ownerUsernameSchema),
   password: z.string().min(12).max(128),
 });
 
@@ -113,7 +110,7 @@ async function createOwner(
   database: Database,
   parsed: z.infer<typeof ownerCredentialsSchema>,
 ): Promise<void> {
-  const normalizedUsername = parsed.username.toLowerCase();
+  const normalizedUsername = normalizeOwnerUsername(parsed.username);
   await reserveSetupAttempt(database, true);
 
   await database.transaction(async (transaction) => {

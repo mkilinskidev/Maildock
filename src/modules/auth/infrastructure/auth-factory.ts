@@ -2,6 +2,13 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { username } from "better-auth/plugins";
 
+import {
+  isOwnerUsername,
+  normalizeOwnerUsername,
+  ownerUsernameMaxLength,
+  ownerUsernameMinLength,
+} from "@/modules/auth/domain/owner-username";
+
 import type { AppConfig } from "@/shared/infrastructure/config/config";
 import type { Database } from "@/shared/infrastructure/database/database";
 import * as authSchema from "@/shared/infrastructure/database/schema";
@@ -85,8 +92,10 @@ export function createAuth(config: AppConfig, database: Database) {
     },
     plugins: [
       username({
-        minUsernameLength: 3,
-        maxUsernameLength: 64,
+        minUsernameLength: ownerUsernameMinLength,
+        maxUsernameLength: ownerUsernameMaxLength,
+        usernameValidator: isOwnerUsername,
+        usernameNormalization: normalizeOwnerUsername,
         immutableUsername: true,
         displayUsername: true,
       }),
