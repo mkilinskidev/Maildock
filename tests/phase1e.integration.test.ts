@@ -1044,6 +1044,14 @@ describe("Phase 1E persisted delta state", () => {
       .where(eq(mailboxes.id, old.id));
     const sent: string[] = [];
     const boss = {
+      getDb: () => ({
+        beginTransaction: async () => ({
+          db: { executeSql: async () => ({ rows: [] }) },
+          commit: async () => {},
+          rollback: async () => {},
+        }),
+      }),
+      findJobs: async () => [],
       send: async (_queue: string, data: { mailboxId: string }) => {
         sent.push(data.mailboxId);
         return "job";

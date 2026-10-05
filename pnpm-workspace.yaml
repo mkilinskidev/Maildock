@@ -11,3 +11,4 @@ minimumReleaseAgeExclude:
   - prettier@3.9.9
 patchedDependencies:
   imapflow@2.0.6: patches/imapflow@2.0.6.patch
+  pg-boss@12.33.7: patches/pg-boss@12.33.7.patch

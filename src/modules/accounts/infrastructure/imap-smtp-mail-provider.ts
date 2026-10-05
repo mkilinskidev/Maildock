@@ -10,6 +10,7 @@ import {
 import nodemailer from "nodemailer";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { assertImapHealthy, guardImapClient } from "./imap-client-lifecycle";
 import { decodeAttachment } from "./decode-attachment";
 import { discoverAttachments } from "../../mail/domain/attachments";
 import { BlobLimitError } from "../../../shared/application/blob-storage";
@@ -53,6 +54,7 @@ const CONNECTION_TIMEOUT_MS = 10_000;
 const SOCKET_TIMEOUT_MS = 15_000;
 
 type ImapClient = {
+  on?(event: "error", listener: (error: unknown) => void): unknown;
   connect(): Promise<unknown>;
   list(options?: {
     statusQuery?: {
@@ -489,7 +491,7 @@ export class ImapSmtpMailProvider implements MailProvider {
     let client: ImapClient | undefined;
     let appendStarted = false;
     try {
-      client = this.factories.createImap(imapOptions(account.imap));
+      client = this.createImap(imapOptions(account.imap));
       await client.connect();
       // ImapFlow filters APPEND flags against the selected mailbox's
       // PERMANENTFLAGS. EXAMINE may report none, silently dropping \Seen.
@@ -533,7 +535,7 @@ export class ImapSmtpMailProvider implements MailProvider {
   ): Promise<SentCopyLookupResult> {
     let client: ImapClient | undefined;
     try {
-      client = this.factories.createImap(imapOptions(account.imap));
+      client = this.createImap(imapOptions(account.imap));
       await client.connect();
       const selected = await client.mailboxOpen(remotePath, { readOnly: true });
       const uids = await client.search(
@@ -671,11 +673,15 @@ export class ImapSmtpMailProvider implements MailProvider {
     private readonly factories: ProtocolClientFactories = defaultFactories,
   ) {}
 
+  private createImap(options: ImapFlowOptions): ImapClient {
+    return guardImapClient(this.factories.createImap(options));
+  }
+
   async mutateMessage(
     account: ProviderImapAccount,
     request: RemoteMutationRequest,
   ): Promise<RemoteMutationResult> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     let connected = false;
     let selected = false;
     try {
@@ -824,7 +830,7 @@ export class ImapSmtpMailProvider implements MailProvider {
   async listMailboxes(
     account: ProviderImapAccount,
   ): Promise<MailboxDiscoveryResult> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     let connected = false;
     try {
       await client.connect();
@@ -864,7 +870,7 @@ export class ImapSmtpMailProvider implements MailProvider {
     request: RecentMailboxSyncRequest,
     sink: RecentMailboxSyncSink,
   ): Promise<RecentMailboxSyncResult> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     let connected = false;
     let selected = false;
     try {
@@ -905,6 +911,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         await sink.batch(normalized);
         messageCount += normalized.length;
       }
+      assertImapHealthy(client);
       return { uidValidity, messageCount };
     } catch (error) {
       if (
@@ -937,7 +944,7 @@ export class ImapSmtpMailProvider implements MailProvider {
     request: BackfillMailboxSyncRequest,
     sink: BackfillMailboxSyncSink,
   ): Promise<void> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     let connected = false;
     let selected = false;
     try {
@@ -956,6 +963,7 @@ export class ImapSmtpMailProvider implements MailProvider {
       await sink.selected(mailbox.uidValidity.toString(), frontier.toString());
       if (frontier === 0n) {
         await sink.chunk([], "0");
+        assertImapHealthy(client);
         return;
       }
       const lower =
@@ -1012,6 +1020,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         }
       }
       await sink.chunk(messages, (lower - 1n).toString());
+      assertImapHealthy(client);
     } catch (error) {
       if (
         error instanceof MailboxEpochChangedError ||
@@ -1044,7 +1053,7 @@ export class ImapSmtpMailProvider implements MailProvider {
     batchSize: number,
     sink: DeltaMailboxSyncSink,
   ): Promise<void> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     let connected = false;
     let selected = false;
     try {
@@ -1239,6 +1248,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           : null,
         condstore,
       });
+      assertImapHealthy(client);
     } catch (error) {
       if (
         error instanceof MailProviderOperationError ||
@@ -1264,7 +1274,7 @@ export class ImapSmtpMailProvider implements MailProvider {
     },
     consume: (bytes: AsyncIterable<Uint8Array>) => Promise<T>,
   ): Promise<T> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     try {
       const uid = Number(request.uid);
       if (
@@ -1346,7 +1356,9 @@ export class ImapSmtpMailProvider implements MailProvider {
           yield chunk;
         }
       }
-      return await consume(bounded());
+      const result = await consume(bounded());
+      assertImapHealthy(client);
+      return result;
     } finally {
       await client.mailboxClose().catch(() => false);
       await client.logout().catch(() => undefined);
@@ -1358,7 +1370,7 @@ export class ImapSmtpMailProvider implements MailProvider {
     account: ProviderImapAccount,
     request: DisplayContentRequest,
   ): Promise<DisplayContentResult> {
-    const client = this.factories.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap));
     let connected = false;
     let selected = false;
     try {
@@ -1454,6 +1466,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         if (selectedPart.type === "text/plain") result.plainText = value;
         else result.html = value;
       }
+      assertImapHealthy(client);
       return result;
     } catch (error) {
       if (error instanceof MailProviderOperationError) throw error;
@@ -1481,10 +1494,11 @@ export class ImapSmtpMailProvider implements MailProvider {
   private async testImap(
     connection: ProviderConnection,
   ): Promise<ProtocolConnectionResult> {
-    const client = this.factories.createImap(imapOptions(connection));
+    const client = this.createImap(imapOptions(connection));
     try {
       await client.connect();
       await client.logout();
+      assertImapHealthy(client);
       return { success: true };
     } catch (error) {
       return sanitizeError(error, "IMAP");

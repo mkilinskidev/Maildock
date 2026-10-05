@@ -1,0 +1,23 @@
+diff --git a/dist/plans.js b/dist/plans.js
+index c00ae001fff195230c2f7a9e3b646fa05532d33b..6e2da7657177ff17c9fe3b97709717b687478bd7 100644
+--- a/dist/plans.js
++++ b/dist/plans.js
+@@ -1716,6 +1716,18 @@ export function fetchNextJob(options, noSkipLocked = false) {
+               AND b.id <> j.id
+           )`
+             : '',
++        // Stately cache entries are advisory. Check live rows so a pending
++        // successor is not repeatedly claimed while its predecessor is active.
++        // The unique policy index remains the concurrent-claim backstop.
++        policy === QUEUE_POLICIES.stately
++            ? `NOT EXISTS (
++            SELECT 1 FROM ${schema}.${table} active_job
++            WHERE active_job.name = j.name
++              AND active_job.state = '${JOB_STATES.active}'
++              AND active_job.policy = '${QUEUE_POLICIES.stately}'
++              AND COALESCE(active_job.singleton_key, '') = COALESCE(j.singleton_key, '')
++          )`
++            : '',
+         hasIgnoreSingletons ? `COALESCE(j.singleton_key, '') <> ALL(${params.ignoreSingletonsParam})` : '',
+         hasIgnoreGroups ? `(j.group_id IS NULL OR j.group_id <> ALL(${params.ignoreGroupsParam}))` : '',
+         hasMinPriority ? `j.priority >= ${params.minPriorityParam}` : '',

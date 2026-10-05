@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 
@@ -40,12 +41,12 @@ export async function enqueueDelta(
   mailboxId: string,
   reason: DeltaReason,
 ): Promise<boolean> {
-  const id = await boss.send(
+  return enqueueCoalescedSync(
+    boss,
     MAILBOX_DELTA_SYNC_QUEUE,
     { version: 1, accountId, mailboxId, reason },
     { singletonKey: mailboxId, priority: 10 },
   );
-  return id !== null;
 }
 
 export class PgBossDeltaSyncScheduler {
