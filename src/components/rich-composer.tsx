@@ -37,7 +37,11 @@ import {
   $createLinkNode,
 } from "@lexical/link";
 import { TableExtension } from "@lexical/table";
-import { $patchStyleText, $setBlocksType } from "@lexical/selection";
+import {
+  $patchStyleText,
+  $setBlocksType,
+  $getSelectionStyleValueForProperty,
+} from "@lexical/selection";
 import { mergeRegister } from "@lexical/utils";
 import {
   Undo2,
@@ -57,6 +61,7 @@ import {
   Minus,
   ImagePlus,
   Signature,
+  Ellipsis,
 } from "lucide-react";
 import {
   defineExtension,
@@ -675,6 +680,9 @@ function Toolbar({
   const [undo, setUndo] = useState(false),
     [redo, setRedo] = useState(false);
   const [formats, setFormats] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [textSize, setTextSize] = useState("16");
+  const [textColor, setTextColor] = useState("#000000");
   const [block, setBlock] = useState("paragraph");
   const [alignment, setAlignment] = useState("left");
   const [list, setList] = useState<string | null>(null);
@@ -701,6 +709,37 @@ function Toolbar({
           editorState.read(() => {
             const s = $getSelection();
             if ($isRangeSelection(s)) {
+              const size = $getSelectionStyleValueForProperty(
+                s,
+                "font-size",
+                "16px",
+              );
+              setTextSize(size ? size.replace(/px$/, "") : "");
+              const color = $getSelectionStyleValueForProperty(
+                s,
+                "color",
+                "#000000",
+              );
+              const rgb = color.match(
+                /^rgb\(\s*(\d+)[, ]+\s*(\d+)[, ]+\s*(\d+)\s*\)$/i,
+              );
+              const normalized = rgb
+                ? "#" +
+                  rgb
+                    .slice(1)
+                    .map((v) => Number(v).toString(16).padStart(2, "0"))
+                    .join("")
+                : /^#[0-9a-f]{3}$/i.test(color)
+                  ? "#" +
+                    color
+                      .slice(1)
+                      .split("")
+                      .map((v) => v + v)
+                      .join("")
+                  : color;
+              setTextColor(
+                /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : "",
+              );
               setFormats(
                 (
                   [
@@ -775,149 +814,222 @@ function Toolbar({
   );
   return (
     <div
-      className="rich-toolbar"
+      className={`rich-toolbar${expanded ? " expanded" : ""}`}
       role="toolbar"
       aria-label="Message formatting"
     >
-      {command(
-        "Undo",
-        () => editor.dispatchCommand(UNDO_COMMAND, undefined),
-        undefined,
-        !undo,
-      )}
-      {command(
-        "Redo",
-        () => editor.dispatchCommand(REDO_COMMAND, undefined),
-        undefined,
-        !redo,
-      )}
-      <select
-        aria-label="Text style"
-        disabled={disabled}
-        value={block}
-        onChange={(e) =>
-          editor.update(() => {
-            const s = $getSelection();
-            if ($isRangeSelection(s))
-              $setBlocksType(s, () =>
-                e.target.value === "paragraph"
-                  ? $createParagraphNode()
-                  : e.target.value === "quote"
-                    ? $createQuoteNode()
-                    : $createHeadingNode(e.target.value as "h1" | "h2" | "h3"),
-              );
-          })
-        }
+      <span className="rich-toolbar-group" role="group" aria-label="History">
+        {command(
+          "Undo",
+          () => editor.dispatchCommand(UNDO_COMMAND, undefined),
+          undefined,
+          !undo,
+        )}
+        {command(
+          "Redo",
+          () => editor.dispatchCommand(REDO_COMMAND, undefined),
+          undefined,
+          !redo,
+        )}
+      </span>
+      <span
+        className="rich-toolbar-group"
+        role="group"
+        aria-label="Text style and size"
       >
-        <option value="paragraph">Paragraph</option>
-        <option value="h1">Heading 1</option>
-        <option value="h2">Heading 2</option>
-        <option value="h3">Heading 3</option>
-        <option value="quote">Block quote</option>
-      </select>
-      <select
-        aria-label="Text size"
-        disabled={disabled}
-        defaultValue="16"
-        onChange={(e) =>
-          editor.update(() => {
-            const s = $getSelection();
-            if ($isRangeSelection(s))
-              $patchStyleText(s, { "font-size": `${e.target.value}px` });
-          })
-        }
-      >
-        {[10, 12, 14, 16, 18, 24, 32, 48].map((v) => (
-          <option value={v} key={v}>
-            {v}px
-          </option>
-        ))}
-      </select>
-      {(
-        ["bold", "italic", "underline", "strikethrough"] as TextFormatType[]
-      ).map((f) => (
-        <span key={f}>
-          {command(
-            f[0].toUpperCase() + f.slice(1),
-            () => editor.dispatchCommand(FORMAT_TEXT_COMMAND, f),
-            formats.includes(f),
-          )}
-        </span>
-      ))}
-      <label title="Text color">
-        <input
-          type="color"
-          aria-label="Text color"
+        <select
+          aria-label="Text style"
           disabled={disabled}
+          value={block}
           onChange={(e) =>
             editor.update(() => {
               const s = $getSelection();
               if ($isRangeSelection(s))
-                $patchStyleText(s, { color: e.target.value });
+                $setBlocksType(s, () =>
+                  e.target.value === "paragraph"
+                    ? $createParagraphNode()
+                    : e.target.value === "quote"
+                      ? $createQuoteNode()
+                      : $createHeadingNode(
+                          e.target.value as "h1" | "h2" | "h3",
+                        ),
+                );
             })
           }
-        />
-      </label>
-      {(["left", "center", "right"] as const).map((a) => (
-        <span key={a}>
+        >
+          <option value="paragraph">Paragraph</option>
+          <option value="h1">Heading 1</option>
+          <option value="h2">Heading 2</option>
+          <option value="h3">Heading 3</option>
+          <option value="quote">Block quote</option>
+        </select>
+        <select
+          aria-label="Text size"
+          disabled={disabled}
+          value={textSize}
+          onChange={(e) =>
+            editor.update(() => {
+              const s = $getSelection();
+              if ($isRangeSelection(s))
+                $patchStyleText(s, { "font-size": `${e.target.value}px` });
+            })
+          }
+        >
+          {!textSize ? (
+            <option value="">Mixed</option>
+          ) : !["10", "12", "14", "16", "18", "24", "32", "48"].includes(
+              textSize,
+            ) ? (
+            <option value={textSize}>{textSize}px</option>
+          ) : null}
+          {[10, 12, 14, 16, 18, 24, 32, 48].map((v) => (
+            <option value={v} key={v}>
+              {v}px
+            </option>
+          ))}
+        </select>
+      </span>
+      <span
+        className="rich-toolbar-group"
+        role="group"
+        aria-label="Text formatting"
+      >
+        {(["bold", "italic", "underline"] as TextFormatType[]).map((f) => (
+          <span key={f}>
+            {command(
+              f[0].toUpperCase() + f.slice(1),
+              () => editor.dispatchCommand(FORMAT_TEXT_COMMAND, f),
+              formats.includes(f),
+            )}
+          </span>
+        ))}
+      </span>
+      <span className="rich-toolbar-group" role="group" aria-label="Insert">
+        {command("Link", () => editLink(editor, onError))}
+        {signatureOptions ? (
+          <SignatureInsertion
+            options={signatureOptions}
+            draftId={draftId}
+            disabled={disabled}
+            onError={onError}
+          />
+        ) : null}
+      </span>
+      <button
+        type="button"
+        className="rich-toolbar-more"
+        aria-label="More formatting"
+        title="More formatting"
+        aria-expanded={expanded}
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <Ellipsis size={16} aria-hidden="true" />
+      </button>
+      <span className="rich-toolbar-secondary">
+        <span
+          className="rich-toolbar-group"
+          role="group"
+          aria-label="Color and additional formatting"
+        >
           {command(
-            `Align ${a}`,
-            () => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, a),
-            alignment === a,
+            "Strikethrough",
+            () => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "strikethrough"),
+            formats.includes("strikethrough"),
+          )}
+          <label
+            title={textColor ? "Text color" : "Text color (mixed or custom)"}
+          >
+            <input
+              type="color"
+              aria-label={
+                textColor ? "Text color" : "Text color (mixed or custom)"
+              }
+              value={/^#[0-9a-f]{6}$/i.test(textColor) ? textColor : "#000000"}
+              disabled={disabled}
+              onChange={(e) =>
+                editor.update(() => {
+                  const s = $getSelection();
+                  if ($isRangeSelection(s))
+                    $patchStyleText(s, { color: e.target.value });
+                })
+              }
+            />
+          </label>
+        </span>
+        <span
+          className="rich-toolbar-group"
+          role="group"
+          aria-label="Alignment"
+        >
+          {(["left", "center", "right"] as const).map((a) => (
+            <span key={a}>
+              {command(
+                `Align ${a}`,
+                () => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, a),
+                alignment === a,
+              )}
+            </span>
+          ))}
+        </span>
+        <span
+          className="rich-toolbar-group"
+          role="group"
+          aria-label="Lists and indentation"
+        >
+          {command(
+            "Numbered list",
+            () =>
+              editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined),
+            list === "number",
+          )}
+          {command(
+            "Bulleted list",
+            () =>
+              editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined),
+            list === "bullet",
+          )}
+          {command("Decrease indent", () =>
+            editor.dispatchCommand(OUTDENT_CONTENT_COMMAND, undefined),
+          )}
+          {command("Increase indent", () =>
+            editor.dispatchCommand(INDENT_CONTENT_COMMAND, undefined),
           )}
         </span>
-      ))}
-      {command(
-        "Numbered list",
-        () => editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined),
-        list === "number",
-      )}
-      {command(
-        "Bulleted list",
-        () => editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined),
-        list === "bullet",
-      )}
-      {command("Decrease indent", () =>
-        editor.dispatchCommand(OUTDENT_CONTENT_COMMAND, undefined),
-      )}
-      {command("Increase indent", () =>
-        editor.dispatchCommand(INDENT_CONTENT_COMMAND, undefined),
-      )}
-      {command("Link", () => editLink(editor, onError))}
-      {command("Horizontal rule", () =>
-        editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined),
-      )}
-      {signatureOptions ? (
-        <SignatureInsertion
-          options={signatureOptions}
-          draftId={draftId}
-          disabled={disabled}
-          onError={onError}
-        />
-      ) : null}
-      {command("Image from URL", () => {
-        const input = window.prompt(
-          "Image URL (HTTP/HTTPS; preview stays blocked)",
-        );
-        if (!input) return;
-        const url = safeRichUrl(input.trim(), true);
-        if (!url) {
-          onError("Enter an HTTP or HTTPS image URL.");
-          return;
-        }
-        editor.update(() => {
-          if (!$getSelection()) $getRoot().selectEnd();
-          $insertNodes([
-            new ComposeImageNode({
-              type: "maildock-image",
-              version: 1,
-              url,
-              alt: "Remote image",
-              width: 480,
-            }),
-          ]);
-        });
-      })}
+        <span
+          className="rich-toolbar-group"
+          role="group"
+          aria-label="Additional insertions"
+        >
+          {command("Horizontal rule", () =>
+            editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined),
+          )}
+          {command("Image from URL", () => {
+            const input = window.prompt(
+              "Image URL (HTTP/HTTPS; preview stays blocked)",
+            );
+            if (!input) return;
+            const url = safeRichUrl(input.trim(), true);
+            if (!url) {
+              onError("Enter an HTTP or HTTPS image URL.");
+              return;
+            }
+            editor.update(() => {
+              if (!$getSelection()) $getRoot().selectEnd();
+              $insertNodes([
+                new ComposeImageNode({
+                  type: "maildock-image",
+                  version: 1,
+                  url,
+                  alt: "Remote image",
+                  width: 480,
+                }),
+              ]);
+            });
+          })}
+        </span>
+      </span>
     </div>
   );
 }

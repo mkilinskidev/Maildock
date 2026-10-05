@@ -36,6 +36,48 @@ async function request(url: string, method: string, body?: unknown) {
   if (!response.ok) throw Error(result.error ?? "The account action failed.");
   return result;
 }
+function friendlyStatus(value: string) {
+  const labels: Record<string, string> = {
+    unverified: "Not run",
+    verified: "Passed",
+    error: "Failed",
+    untested: "Not run",
+    success: "Succeeded",
+    active: "Available",
+    unavailable: "Unavailable",
+    removed: "Removed",
+    missing: "Unavailable",
+    pending: "Waiting",
+    queued: "Waiting",
+    running: "In progress",
+    syncing: "Synchronizing",
+    complete: "Up to date",
+    completed: "Up to date",
+    ready: "Up to date",
+    succeeded: "Up to date",
+    failed: "Needs attention",
+    idle: "Idle",
+    not_started: "Not started",
+    paused: "Paused",
+    fetching: "In progress",
+  };
+  return (
+    labels[value] ??
+    value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())
+  );
+}
+function latestSync(mailboxes: MailboxView[]) {
+  return (
+    mailboxes
+      .flatMap((m) => [
+        m.deltaSync.lastSuccessfulAt,
+        m.recentSync.lastSuccessfulAt,
+      ])
+      .filter((v): v is string => !!v)
+      .sort()
+      .at(-1) ?? null
+  );
+}
 function date(value: string | null) {
   return value ? new Date(value).toLocaleString() : "Never";
 }
@@ -562,33 +604,52 @@ export function AccountSettings({
             </dd>
             <dt>Account</dt>
             <dd>{account.enabled ? "Enabled" : "Disabled"}</dd>
-            <dt>Connection</dt>
-            <dd>{account.connectionStatus}</dd>
-            <dt>Last successful test</dt>
-            <dd>{date(account.lastSuccessfulConnectionTestAt)}</dd>
+            <dt>Receiving mail</dt>
+            <dd>
+              {!account.enabled
+                ? "Synchronization disabled"
+                : latestSync(mailboxes)
+                  ? "Synchronization has succeeded"
+                  : "No successful synchronization recorded"}
+            </dd>
+            <dt>Manual connection test</dt>
+            <dd>{friendlyStatus(account.connectionStatus)}</dd>
+            <dt>Last successful manual test</dt>
+            <dd>
+              {account.lastSuccessfulConnectionTestAt
+                ? date(account.lastSuccessfulConnectionTestAt)
+                : "No successful test recorded"}
+            </dd>
             <dt>Mailbox discovery</dt>
-            <dd>{account.mailboxDiscovery.status}</dd>
+            <dd>{friendlyStatus(account.mailboxDiscovery.status)}</dd>
             <dt>Last successful discovery</dt>
             <dd>{date(account.mailboxDiscovery.lastSuccessfulAt)}</dd>
             <dt>Last successful sync</dt>
-            <dd>
-              {date(
-                mailboxes
-                  .flatMap((m) => [
-                    m.deltaSync.lastSuccessfulAt,
-                    m.recentSync.lastSuccessfulAt,
-                  ])
-                  .filter((v): v is string => !!v)
-                  .sort()
-                  .at(-1) ?? null,
-              )}
-            </dd>
+            <dd>{date(latestSync(mailboxes))}</dd>
             <dt>Capabilities</dt>
             <dd>
               {account.mailboxDiscovery.capabilities.join(", ") ||
                 "None reported"}
             </dd>
           </dl>
+          <p className="muted">
+            Synchronization confirms receiving mail only. Manual connection
+            tests check IMAP and SMTP separately; successful synchronization
+            does not verify sending.
+          </p>
+          <details>
+            <summary>Technical connection details</summary>
+            <dl className="settings-facts">
+              <dt>Connection test state</dt>
+              <dd>{account.connectionStatus}</dd>
+              <dt>IMAP test</dt>
+              <dd>{friendlyStatus(account.imapResult.status)}</dd>
+              <dt>SMTP test</dt>
+              <dd>{friendlyStatus(account.smtpResult.status)}</dd>
+              <dt>Discovery state</dt>
+              <dd>{account.mailboxDiscovery.status}</dd>
+            </dl>
+          </details>
           {[
             account.imapResult.error,
             account.smtpResult.error,
@@ -619,24 +680,31 @@ export function AccountSettings({
         <section className="settings-section">
           <h3>Mailbox synchronization</h3>
           {mailboxes.length === 0 ? (
-            <p>No mailboxes discovered.</p>
+            <p>
+              {account.enabled
+                ? "No folders have been discovered yet. Use Refresh mailboxes above to request them."
+                : "Synchronization is disabled. Enable this account to discover its folders."}
+            </p>
           ) : (
             <div className="settings-sync-list">
               {mailboxes.map((m) => (
                 <div key={m.id}>
                   <strong>{m.name}</strong>
                   <span>
-                    {m.lifecycleStatus} · Recent: {m.recentSync.status} · Delta:{" "}
-                    {m.deltaSync.status} · History: {m.backfill.status}
+                    {friendlyStatus(m.lifecycleStatus)} · Latest mail:{" "}
+                    {friendlyStatus(m.recentSync.status)} · Changes:{" "}
+                    {friendlyStatus(m.deltaSync.status)} · Older mail:{" "}
+                    {friendlyStatus(m.backfill.status)}
                   </span>
                   <span>
-                    Last sync:{" "}
-                    {date(
-                      m.deltaSync.lastSuccessfulAt ??
-                        m.recentSync.lastSuccessfulAt,
-                    )}{" "}
-                    · {m.synchronizedMessageCount} local messages
+                    Last sync: {date(latestSync([m]))} ·{" "}
+                    {m.synchronizedMessageCount} messages saved in Maildock
                   </span>
+                  <details>
+                    <summary>Technical sync details</summary>
+                    {m.lifecycleStatus} · Recent: {m.recentSync.status} · Delta:{" "}
+                    {m.deltaSync.status} · History: {m.backfill.status}
+                  </details>
                   {[m.recentSync.error, m.deltaSync.error, m.backfill.error]
                     .filter(Boolean)
                     .map((e, i) => (

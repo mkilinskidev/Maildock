@@ -18,6 +18,7 @@ import type { MailAccountView } from "@/modules/accounts/application/accounts-se
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import type { SignatureCatalog } from "@/modules/mail/domain/signature";
+import { MaildockBrand } from "./maildock-brand";
 import { ThemeControl } from "./theme-control";
 import { ConversationViewSettings } from "./conversation-view-settings";
 import { SignatureSettings } from "./signature-settings";
@@ -185,7 +186,10 @@ export function SettingsShell({
         />
       ) : null}
       <header className="settings-header">
-        <h1>Settings</h1>
+        <div className="settings-brand-heading">
+          <MaildockBrand />
+          <h1>Settings</h1>
+        </div>
         <Link href="/" className="button-link secondary">
           Back to mail
         </Link>

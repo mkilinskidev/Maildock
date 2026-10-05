@@ -101,7 +101,7 @@ export function AttachmentList({
             </span>
             {state.status === "ready" ? (
               <a href={`/api/attachments/${a.id}/download`} download>
-                Open
+                Download
               </a>
             ) : (
               <button
@@ -110,9 +110,9 @@ export function AttachmentList({
                 onClick={() => void prepare(a.id)}
               >
                 {preparing
-                  ? "Preparing attachment…"
+                  ? "Downloading…"
                   : state.status === "failed"
-                    ? "Retry preparation"
+                    ? "Retry download"
                     : "Download"}
               </button>
             )}

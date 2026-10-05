@@ -1,6 +1,7 @@
 "use client";
 import { MailboxTree } from "./mailbox-tree";
 import { DesktopNotifications } from "./desktop-notifications";
+import { MaildockBrand } from "./maildock-brand";
 import { DraftList } from "./draft-list";
 import { GlobalSearchResults } from "./global-search-results";
 import type { SearchResult } from "@/modules/mail/application/search-service";
@@ -25,15 +26,7 @@ import {
 import type { DraftView } from "@/modules/mail/domain/draft";
 
 import Link from "next/link";
-import {
-  Mail,
-  MailOpen,
-  Plus,
-  RefreshCw,
-  Settings2,
-  Search,
-  X,
-} from "lucide-react";
+import { MailOpen, Plus, RefreshCw, Settings2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
@@ -246,6 +239,7 @@ export function MailClient({
   const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
+  const [readerError, setReaderError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -345,6 +339,7 @@ export function MailClient({
     });
     setSelectedId(message.id);
     setDetail(null);
+    setReaderError("");
     setLoadingDetail(true);
     setError("");
   }
@@ -531,6 +526,7 @@ export function MailClient({
           setLoadingDetail(Boolean(next));
         } else setSelectedId("");
         setDetail(null);
+        setReaderError("");
         if (conversationView || searchActive || explicitTarget)
           setLoadingDetail(false);
       } else {
@@ -1066,6 +1062,7 @@ export function MailClient({
               setSelectedId("");
               setMemberSelection(undefined);
               setDetail(null);
+              setReaderError("");
               listRef.current?.scrollTo({ top: 0 });
             }
             applyFirstPage(result);
@@ -1159,7 +1156,7 @@ export function MailClient({
   }, [base, nextCursor, loadingMessages, paginationError, pageRequestVersion]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || (showDrafts && !searchActive)) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const url = `${messageBase}/${selectedId}`;
@@ -1199,7 +1196,7 @@ export function MailClient({
     function handleError(failure: unknown) {
       if (!cancelled) {
         setLoadingDetail(false);
-        setError(
+        setReaderError(
           failure instanceof Error
             ? failure.message
             : "Message could not be loaded.",
@@ -1218,12 +1215,13 @@ export function MailClient({
     retryNonce,
     contentPollIntervalMs,
     searchActive,
+    showDrafts,
   ]);
 
   async function retryContent() {
     if (!selectedId) return;
     setRetrying(true);
-    setError("");
+    setReaderError("");
     try {
       const response = await fetch(`${messageBase}/${selectedId}/content`, {
         method: "POST",
@@ -1242,7 +1240,7 @@ export function MailClient({
       );
       setRetryNonce((value) => value + 1);
     } catch (failure) {
-      setError(
+      setReaderError(
         failure instanceof Error
           ? failure.message
           : "Content could not be requested.",
@@ -1253,21 +1251,30 @@ export function MailClient({
   }
 
   async function refresh() {
-    if (!mailboxId) return;
+    if (!mailboxId || refreshing) return;
     setRefreshing(true);
     setError("");
     try {
       const response = await fetch(`${base}/refresh`, { method: "POST" });
       if (!response.ok)
         throw new Error("Synchronization could not be requested.");
-      window.setTimeout(async () => {
-        const result = await fetch(`${base}?pageSize=50`);
-        if (result.ok) applyFirstPage((await result.json()) as MessagePage);
-        setFolderReloadNonce((value) => value + 1);
-        setRefreshing(false);
-      }, 2500);
-    } catch {
-      setError("Synchronization could not be requested.");
+      setActionFeedback(
+        "Sync requested. Messages update as synchronization completes.",
+      );
+      const result = await fetch(`${base}?pageSize=50`);
+      if (!result.ok)
+        throw new Error(
+          "Sync was requested, but the message list could not be refreshed. Please retry.",
+        );
+      applyFirstPage((await result.json()) as MessagePage);
+      setFolderReloadNonce((value) => value + 1);
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Synchronization could not be requested. Please retry.",
+      );
+    } finally {
       setRefreshing(false);
     }
   }
@@ -1293,6 +1300,7 @@ export function MailClient({
     setSelectedId("");
     setMemberSelection(undefined);
     setDetail(null);
+    setReaderError("");
     setError("");
     setLoadingDetail(false);
     setLoadingMessages(all || Boolean(nextMailboxId));
@@ -1326,6 +1334,7 @@ export function MailClient({
             setSelectedId(event.messageId);
             setMemberSelection(undefined);
             setDetail(null);
+            setReaderError("");
             setLoadingDetail(true);
             setListReloadNonce((value) => value + 1);
           }}
@@ -1357,6 +1366,7 @@ export function MailClient({
               setSearchQuery(event.target.value);
               setSearchSelection(undefined);
               if (searchActive || event.target.value.trim()) setDetail(null);
+              setReaderError("");
               setError("");
               setLoadingDetail(
                 searchActive &&
@@ -1373,6 +1383,7 @@ export function MailClient({
                 setSearchQuery("");
                 setSearchSelection(undefined);
                 if (searchActive) setDetail(null);
+                setReaderError("");
                 setError("");
                 setLoadingDetail(searchActive && Boolean(normalSelectedId));
               }}
@@ -1388,8 +1399,7 @@ export function MailClient({
       </header>
       <aside className="mail-sidebar">
         <div className="sidebar-brand">
-          <Mail size={18} />
-          Maildock
+          <MaildockBrand />
         </div>
         <MailboxTree
           accounts={accounts}
@@ -1406,6 +1416,15 @@ export function MailClient({
             setSearchQuery("");
             setSearchSelection(undefined);
             setShowDrafts(true);
+            if (!composing) {
+              setSelectedId("");
+              setMemberSelection(undefined);
+              setDetail(null);
+              setReaderError("");
+              setLoadingDetail(false);
+            }
+            setReaderError("");
+            setError("");
             setDraftListGeneration((n) => n + 1);
           }}
         />
@@ -1433,7 +1452,7 @@ export function MailClient({
               {searchActive
                 ? "Search results"
                 : showDrafts
-                  ? "Local drafts"
+                  ? "Maildock drafts"
                   : allInboxes
                     ? "All Inboxes"
                     : (folder?.name ?? "Mail")}
@@ -1442,7 +1461,7 @@ export function MailClient({
               {searchActive
                 ? "All accounts · All mailboxes"
                 : showDrafts
-                  ? "Stored in Maildock only"
+                  ? "Saved in Maildock · Not synced to your email provider"
                   : allInboxes
                     ? "Enabled accounts · Inbox mailboxes"
                     : folder
@@ -1515,6 +1534,7 @@ export function MailClient({
                 return;
               setSearchSelection(item);
               setDetail(null);
+              setReaderError("");
               setLoadingDetail(true);
               setError("");
             }}
@@ -1522,6 +1542,7 @@ export function MailClient({
         ) : showDrafts ? (
           <DraftList
             disabled={composing}
+            accounts={accounts}
             refreshKey={draftListGeneration}
             onResume={(value) => {
               if (composing) return;
@@ -1603,15 +1624,54 @@ export function MailClient({
               <div className="pane-empty">
                 <MailOpen size={26} strokeWidth={1.5} />
                 <strong>
-                  {mailboxId || allInboxes
-                    ? "Nothing here yet"
+                  {!accounts.length ||
+                  !accounts.some((a) => a.enabled) ||
+                  mailboxId ||
+                  allInboxes
+                    ? !accounts.length
+                      ? "Add your first email account"
+                      : !accounts.some((a) => a.enabled)
+                        ? "All accounts are disabled"
+                        : folder &&
+                            [
+                              folder.recentSync?.status,
+                              folder.deltaSync?.status,
+                            ].includes("failed")
+                          ? "Mail could not be synchronized"
+                          : folder &&
+                              !folder.recentSync?.lastSuccessfulAt &&
+                              !folder.deltaSync?.lastSuccessfulAt
+                            ? "Waiting for mail to sync"
+                            : "No messages"
                     : "No mailbox selected"}
                 </strong>
                 <p>
-                  {mailboxId || allInboxes
-                    ? "Messages will appear here when synchronized."
+                  {!accounts.length ||
+                  !accounts.some((a) => a.enabled) ||
+                  mailboxId ||
+                  allInboxes
+                    ? !accounts.length
+                      ? "Add an account in Settings to start reading and sending mail."
+                      : !accounts.some((a) => a.enabled)
+                        ? "Enable an account in Settings to synchronize mail."
+                        : folder &&
+                            [
+                              folder.recentSync?.status,
+                              folder.deltaSync?.status,
+                            ].includes("failed")
+                          ? "Check account Diagnostics in Settings, then request sync again."
+                          : folder &&
+                              !folder.recentSync?.lastSuccessfulAt &&
+                              !folder.deltaSync?.lastSuccessfulAt
+                            ? "Messages will appear as synchronization completes."
+                            : "This mailbox has no messages to display."
                     : "Choose a mailbox from the sidebar."}
                 </p>
+                {!accounts.length ? (
+                  <Link className="button-link" href="/accounts?add=1">
+                    Add account
+                  </Link>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1706,11 +1766,33 @@ export function MailClient({
         ) : (
           <MessageReader
             hideActions
+            emptyTitle={showDrafts ? "Select a draft" : undefined}
+            emptyDescription={
+              showDrafts
+                ? "Choose a Maildock draft to continue writing."
+                : undefined
+            }
+            readerError={readerError}
+            retryMessage={() => {
+              setReaderError("");
+              setLoadingDetail(true);
+              setRetryNonce((n) => n + 1);
+            }}
+            providerDrafts={
+              !searchActive &&
+              !showDrafts &&
+              liveRolesByAccount[accountId]?.some(
+                (role) =>
+                  role.role === "drafts" &&
+                  role.available &&
+                  role.mailboxId === mailboxId,
+              )
+            }
             contentPollIntervalMs={contentPollIntervalMs}
             renderUrl={`${messageBase}/${selectedId}/render`}
-            selectedId={selectedId}
-            detail={detail}
-            loadingDetail={loadingDetail}
+            selectedId={showDrafts && !searchActive ? "" : selectedId}
+            detail={showDrafts && !searchActive ? null : detail}
+            loadingDetail={showDrafts && !searchActive ? false : loadingDetail}
             selectedMessage={selectedMessage}
             preparing={preparing}
             prepareError={prepareError}

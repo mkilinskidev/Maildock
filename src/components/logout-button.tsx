@@ -13,25 +13,35 @@ export function LogoutButton() {
     setPending(true);
     setError(undefined);
 
-    const response = await fetch("/api/auth/sign-out", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    try {
+      const response = await fetch("/api/auth/sign-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setError("Sign out failed. Please try again.");
+
+        return;
+      }
+
+      router.replace("/login");
+      router.refresh();
+    } catch {
       setError("Sign out failed. Please try again.");
+    } finally {
       setPending(false);
-      return;
     }
-
-    router.replace("/login");
-    router.refresh();
   }
 
   return (
     <>
-      {error ? <p className="error">{error}</p> : null}
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <button disabled={pending} onClick={signOut}>
         <LogOut size={15} />
         {pending ? "Signing out…" : "Sign out"}

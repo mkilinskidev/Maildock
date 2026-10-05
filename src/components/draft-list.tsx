@@ -1,4 +1,5 @@
 "use client";
+import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DraftView } from "@/modules/mail/domain/draft";
@@ -7,28 +8,38 @@ import {
   validateRichDocument,
 } from "@/modules/mail/domain/rich-document";
 export function DraftList({
+  accounts = [],
   onResume,
   disabled = false,
   refreshKey = 0,
 }: {
+  accounts?: MailAccountView[];
   onResume: (draft: DraftView) => void;
   disabled?: boolean;
   refreshKey?: number;
 }) {
   const [rows, setRows] = useState<
-    { id: string; subject: string; to: string }[]
+    { id: string; accountId?: string; subject: string; to: string }[]
   >([]);
   const [error, setError] = useState("");
   const [conflictedId, setConflictedId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  const [generation, setGeneration] = useState(refreshKey);
+  if (generation !== refreshKey) {
+    setGeneration(refreshKey);
+    setLoading(true);
+    setError("");
+  }
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const response = await fetch("/api/drafts");
-        if (!response.ok) throw Error("Local drafts could not be loaded.");
+        if (!response.ok) throw Error("Maildock drafts could not be loaded.");
         const remote = (await response.json()) as {
           id: string;
+          accountId?: string;
           subject: string;
           to: string;
         }[];
@@ -52,7 +63,7 @@ export function DraftList({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, retry]);
   async function resume(id: string) {
     try {
       const backup = localStorage.getItem(`maildock-draft:${id}`);
@@ -71,7 +82,7 @@ export function DraftList({
           if (local.revision !== remote.revision && local.revision !== 0) {
             setConflictedId(id);
             throw Error(
-              "This draft changed in another tab. Your unsaved recovery copy has been kept. Reopen the server draft to continue.",
+              "This draft changed in another tab. Your unsaved recovery copy has been kept. Reopen the saved Maildock draft to continue.",
             );
           }
         } else if (response.status === 409 && local.revision > 0)
@@ -120,21 +131,55 @@ export function DraftList({
         </p>
       ) : null}
       {conflictedId ? (
+        <div className="draft-recovery-actions">
+          <p>
+            Reopening the saved draft replaces this browser&apos;s recovery
+            copy.
+          </p>
+          <button
+            className="button secondary"
+            disabled={disabled}
+            onClick={() =>
+              void (async () => {
+                try {
+                  const response = await fetch(`/api/drafts/${conflictedId}`);
+                  if (!response.ok)
+                    throw Error(
+                      "The saved draft could not be reopened. Please retry.",
+                    );
+                  const row = (await response.json()) as DraftView;
+                  localStorage.removeItem(`maildock-draft:${conflictedId}`);
+                  onResume(row);
+                } catch (failure) {
+                  setError(
+                    failure instanceof Error
+                      ? failure.message
+                      : "The saved draft could not be reopened. Please retry.",
+                  );
+                }
+              })()
+            }
+          >
+            Reopen saved draft
+          </button>
+        </div>
+      ) : null}
+      {loading ? (
+        <p className="mail-list-status" role="status">
+          Loading Maildock drafts…
+        </p>
+      ) : null}
+      {error ? (
         <button
           className="button secondary"
-          disabled={disabled}
-          onClick={() =>
-            void (async () => {
-              const response = await fetch(`/api/drafts/${conflictedId}`);
-              if (response.ok) {
-                const row = (await response.json()) as DraftView;
-                localStorage.removeItem(`maildock-draft:${conflictedId}`);
-                onResume(row);
-              }
-            })()
-          }
+          disabled={loading || disabled}
+          onClick={() => {
+            setLoading(true);
+            setError("");
+            setRetry((n) => n + 1);
+          }}
         >
-          Reopen saved draft
+          Retry loading drafts
         </button>
       ) : null}
       {rows.map((row) => (
@@ -148,6 +193,12 @@ export function DraftList({
             <span className="mail-row-subject">
               {row.subject || "(No subject)"}
             </span>
+            {row.accountId ? (
+              <span className="mail-row-bottom">
+                {accounts.find((a) => a.id === row.accountId)?.displayName ??
+                  "Account unavailable"}
+              </span>
+            ) : null}
           </button>
           <button
             className="icon-button"
@@ -160,9 +211,13 @@ export function DraftList({
           </button>
         </div>
       ))}
-      {!loading && !rows.length ? (
+      {!loading && !error && !rows.length ? (
         <div className="pane-empty">
-          <strong>No local drafts</strong>
+          <strong>No Maildock drafts</strong>
+          <p>
+            Start a new message. Your drafts are saved in Maildock and
+            aren&apos;t synchronized to your email provider.
+          </p>
         </div>
       ) : null}
     </div>

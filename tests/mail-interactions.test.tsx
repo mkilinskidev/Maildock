@@ -427,7 +427,7 @@ it("selection is independent of opening and clears on mailbox, search and draft 
   expect(host.textContent).not.toContain("1 selected");
   await click("All Inboxes");
   await selectAll();
-  await click("Local drafts");
+  await click("Maildock drafts");
   expect(
     host.querySelector('[aria-label="Selected message actions"]'),
   ).toBeNull();
@@ -568,7 +568,7 @@ it("cancels pending auto-read on mailbox and compose navigation", async () => {
   await mount();
   await open();
   await tick(1000);
-  await click("Local drafts");
+  await click("Maildock drafts");
   await tick(3000);
   expect(mutations()).toHaveLength(0);
   await click("All Inboxes");

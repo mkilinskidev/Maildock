@@ -38,6 +38,11 @@ function address(values: Address[]) {
 export type MessageAction =
   "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "unflag";
 export function MessageReader({
+  emptyTitle = "Select a message",
+  emptyDescription = "Choose a message from the list to read it here.",
+  readerError = "",
+  retryMessage,
+  providerDrafts = false,
   hideActions = false,
   selectedId,
   detail,
@@ -53,6 +58,11 @@ export function MessageReader({
   renderUrl,
   contentPollIntervalMs,
 }: {
+  emptyTitle?: string;
+  emptyDescription?: string;
+  readerError?: string;
+  retryMessage?: () => void;
+  providerDrafts?: boolean;
   hideActions?: boolean;
   selectedId: string;
   detail: MessageDetail | null;
@@ -75,9 +85,25 @@ export function MessageReader({
       {!selectedId ? (
         <div className="pane-empty reader-empty">
           <MailOpen size={30} strokeWidth={1.4} />
-          <strong>Select a message</strong>
-          <p>Choose a message from the list to read it here.</p>
+          <strong>{emptyTitle}</strong>
+          <p>{emptyDescription}</p>
         </div>
+      ) : null}
+      {selectedId && readerError ? (
+        <div className="reader-error" role="alert">
+          <strong>Message could not be loaded</strong>
+          <p>{readerError}</p>
+          <button className="button secondary" onClick={retryMessage}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {providerDrafts ? (
+        <p className="provider-drafts-note">
+          These drafts are stored by your email provider and can be read here.
+          To continue writing, open them in your provider&apos;s app. Messages
+          you write here are saved in Maildock drafts.
+        </p>
       ) : null}
       {selectedId && loadingDetail && !detail ? (
         <div className="mail-detail-header">

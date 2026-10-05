@@ -14,6 +14,7 @@ import { MailClient } from "@/components/mail-client";
 import { ConversationService } from "@/modules/mail/application/conversation-service";
 import { getConfig } from "@/shared/infrastructure/config/config";
 
+export const metadata = { title: "Mail" };
 export const dynamic = "force-dynamic";
 export default async function HomePage({
   searchParams,

@@ -28,6 +28,7 @@ export function RichEmailBody({
   const [trustRequest, setTrustRequest] = useState(0);
   const fulfilledTrust = useRef(0);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -67,7 +68,7 @@ export function RichEmailBody({
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [url, loadImages, trustRequest, contentPollIntervalMs]);
+  }, [url, loadImages, trustRequest, contentPollIntervalMs, retry]);
   return (
     <>
       {rendering?.blocked ? (
@@ -94,7 +95,20 @@ export function RichEmailBody({
           </small>
         </div>
       ) : null}
-      {error ? <p role="status">{error}</p> : null}
+      {error ? (
+        <div className="reader-error" role="alert">
+          <p>{error}</p>
+          <button
+            className="button secondary"
+            onClick={() => {
+              setError("");
+              setRetry((n) => n + 1);
+            }}
+          >
+            Retry display
+          </button>
+        </div>
+      ) : null}
       {rendering?.document && !error ? (
         <iframe
           title="Email content"

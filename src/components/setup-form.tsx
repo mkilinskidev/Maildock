@@ -13,22 +13,27 @@ export function SetupForm() {
     setPending(true);
     setError(undefined);
     const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/setup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: data.get("username"),
-        password: data.get("password"),
-      }),
-    });
-    if (response.ok) {
-      router.replace("/login");
-      router.refresh();
-      return;
+    try {
+      const response = await fetch("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: data.get("username"),
+          password: data.get("password"),
+        }),
+      });
+      if (response.ok) {
+        router.replace("/login");
+        router.refresh();
+        return;
+      }
+      const result = (await response.json()) as { error?: string };
+      setError(result.error ?? "Setup failed.");
+    } catch {
+      setError("Setup could not be completed. Please try again.");
+    } finally {
+      setPending(false);
     }
-    const result = (await response.json()) as { error?: string };
-    setError(result.error ?? "Setup failed.");
-    setPending(false);
   }
 
   return (
@@ -59,7 +64,14 @@ export function SetupForm() {
           autoComplete="new-password"
         />
       </label>
-      {error ? <p className="error">{error}</p> : null}
+      <p className="muted auth-help">
+        Use a username of 3-64 characters and a password of 12-128 characters.
+      </p>
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <button className="button" disabled={pending}>
         {pending ? "Creating owner…" : "Create owner"}
       </button>

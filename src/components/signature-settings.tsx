@@ -35,6 +35,8 @@ export function SignatureSettings({
 } = {}) {
   const router = useRouter();
   const [catalog, setCatalog] = useState<SignatureCatalog>();
+  const [loadingCatalog, setLoadingCatalog] = useState(true);
+  const [retryCatalog, setRetryCatalog] = useState(0);
   const [edit, setEdit] = useState<EditSignature>();
   const [error, setError] = useState("");
   const [valid, setValid] = useState(true);
@@ -76,10 +78,21 @@ export function SignatureSettings({
     setCatalog(await signatureRequest("/api/signatures"));
   }
   useEffect(() => {
+    let active = true;
     void signatureRequest("/api/signatures")
-      .then(setCatalog)
-      .catch((e) => setError(e.message));
-  }, []);
+      .then((value) => {
+        if (active) setCatalog(value);
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setLoadingCatalog(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [retryCatalog]);
   async function mutate(action: () => Promise<void>) {
     setPending(true);
     setError("");
@@ -114,6 +127,24 @@ export function SignatureSettings({
           + Add signature
         </button>
       </div>
+      {loadingCatalog ? <p role="status">Loading signatures…</p> : null}
+      {!loadingCatalog && !catalog && error ? (
+        <button
+          className="button secondary"
+          onClick={() => {
+            setLoadingCatalog(true);
+            setError("");
+            setRetryCatalog((n) => n + 1);
+          }}
+        >
+          Retry loading signatures
+        </button>
+      ) : null}
+      {!loadingCatalog && catalog && !catalog.signatures.length && !edit ? (
+        <p className="muted">
+          No signatures yet. Add a signature to use when writing messages.
+        </p>
+      ) : null}
       <div className="signature-list">
         {catalog?.signatures.map((s) => (
           <div className="signature-row" key={s.id}>

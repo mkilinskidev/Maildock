@@ -14,6 +14,7 @@ import {
   signatureService,
 } from "@/modules/accounts/infrastructure/accounts";
 
+export const metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 export default async function AccountsPage({
   searchParams,
@@ -52,12 +53,10 @@ export default async function AccountsPage({
       rolesByAccount={Object.fromEntries(roleEntries)}
       signatureCatalog={signatureCatalog}
       oauthProviders={await Promise.all(
-        oauthProviders
-          .list()
-          .map(async (provider) => ({
-            ...provider.getDefinition(),
-            configured: await provider.isConfigured(),
-          })),
+        oauthProviders.list().map(async (provider) => ({
+          ...provider.getDefinition(),
+          configured: await provider.isConfigured(),
+        })),
       )}
       oauthResult={params}
       initialAccountId={params.account}

@@ -14,6 +14,7 @@ export function OAuthProviderSettings({
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true;
     void fetch("/api/settings/oauth-providers", { cache: "no-store" })
@@ -32,7 +33,7 @@ export function OAuthProviderSettings({
     return () => {
       active = false;
     };
-  }, []);
+  }, [retry]);
   const selected = providers.find((provider) => provider.id === selectedId);
   if (selected)
     return (
@@ -63,6 +64,17 @@ export function OAuthProviderSettings({
       {error ? (
         <p className="error" role="alert">
           {error}
+          <button
+            className="button secondary"
+            disabled={loading}
+            onClick={() => {
+              setLoading(true);
+              setError("");
+              setRetry((n) => n + 1);
+            }}
+          >
+            Retry
+          </button>
         </p>
       ) : null}
       {loading ? <p role="status">Loading OAuth providers...</p> : null}

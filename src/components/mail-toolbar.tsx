@@ -7,7 +7,7 @@ import {
   Trash2,
   Eye,
   EyeOff,
-  Star,
+  Flag,
 } from "lucide-react";
 import type { ComposeMode } from "@/modules/mail/domain/compose-source";
 import type { MessageAction } from "./message-reader";
@@ -117,7 +117,7 @@ export function MailToolbar({
               aria-label={flagged ? "Unflag" : "Flag"}
               onClick={() => void act(flagged ? "unflag" : "flag")}
             >
-              <Star
+              <Flag
                 size={17}
                 fill={flagged ? "currentColor" : "none"}
                 aria-hidden="true"

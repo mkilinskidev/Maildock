@@ -2383,3 +2383,184 @@ label.checkbox input {
 .application-log-list summary {
   cursor: pointer;
 }
+/* Phase 3H: shared identity and compact desktop controls. */
+.maildock-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.settings-brand-heading {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.auth-help {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mail-composer,
+.signature-editor-frame {
+  container-type: inline-size;
+}
+.rich-toolbar-group,
+.rich-toolbar-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.rich-toolbar-secondary {
+  flex-wrap: wrap;
+  flex-shrink: 1;
+}
+.rich-toolbar-group + .rich-toolbar-group {
+  margin-left: 4px;
+}
+.rich-toolbar .rich-toolbar-more {
+  display: none;
+}
+.rich-toolbar button[aria-pressed="true"] {
+  color: var(--accent-text);
+}
+.signature-editor-frame .rich-toolbar {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+.signature-editor-frame .rich-toolbar > * {
+  flex-shrink: 1;
+}
+.rich-toolbar [aria-label="Choose signature"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.rich-toolbar [aria-label="Choose signature"] button,
+.rich-toolbar button:not([aria-label]) {
+  width: auto;
+  flex-basis: auto;
+  padding-inline: 8px;
+}
+@container (max-width: 750px) {
+  .rich-toolbar .rich-toolbar-more {
+    display: inline-flex;
+  }
+  .rich-toolbar-secondary {
+    display: none;
+  }
+  .rich-toolbar.expanded .rich-toolbar-secondary {
+    display: flex;
+    width: 100%;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+}
+.mail-composer .composer-fields {
+  padding: 14px 20px;
+  gap: 8px;
+  min-width: 0;
+}
+.mail-composer .composer-fields input,
+.mail-composer .composer-fields select {
+  min-height: 32px;
+  padding-block: 5px;
+}
+.mail-composer .composer-heading {
+  padding: 16px 20px 12px;
+}
+.composer-heading h2 {
+  margin-bottom: 0;
+}
+.mail-composer .rich-editor-container {
+  min-height: 180px;
+  max-height: none;
+  overflow: visible;
+}
+.mail-composer .rich-editor {
+  min-height: 180px;
+}
+.composer-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--surface);
+  padding: 12px 20px;
+}
+.composer-footer-actions {
+  flex-wrap: wrap;
+}
+.composer-save-status {
+  font-size: 11px;
+}
+.reader-error,
+.provider-drafts-note {
+  flex: none;
+  margin: 0;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.reader-error {
+  color: var(--error);
+}
+.provider-drafts-note {
+  color: var(--secondary);
+  background: var(--bg);
+}
+.reader-error p {
+  margin-block: 6px 10px;
+}
+.tree-account-status {
+  color: var(--muted);
+  margin: 4px 10px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.mail-list-status {
+  padding: 14px 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.mail-preferences .preference-save-status {
+  min-height: 18px;
+  margin: 10px 0 0;
+}
+.mail-preferences .preference-save-status.error {
+  color: var(--error);
+}
+.settings-tabs {
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.settings-pane details {
+  margin-bottom: 16px;
+}
+.composer-send-hint {
+  margin: 0 0 8px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mail-pane-header > div:first-child {
+  min-width: 0;
+}
+.mail-list-row.selected:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+.rich-toolbar input[aria-label="Text color (mixed or custom)"] {
+  opacity: 0.45;
+}
+.folder-source {
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.draft-recovery-actions {
+  padding: 0 16px 12px;
+  color: var(--secondary);
+  font-size: 12px;
+}

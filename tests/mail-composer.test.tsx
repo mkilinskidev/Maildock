@@ -837,7 +837,7 @@ describe("compose UI", () => {
     expect(
       fetch.mock.calls.some(([url]) => String(url).includes("attachments")),
     ).toBe(false);
-    expect(host.textContent).toContain("No local drafts");
+    expect(host.textContent).toContain("No Maildock drafts");
   });
   it("detects stale browser recovery and can explicitly reopen the server version", async () => {
     const row = restoredDraft();

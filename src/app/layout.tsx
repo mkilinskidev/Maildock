@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "Maildock",
+  title: { default: "Maildock", template: "%s · Maildock" },
   description: "A self-hosted unified inbox",
 };
 

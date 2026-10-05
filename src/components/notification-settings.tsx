@@ -26,6 +26,11 @@ export function NotificationSettings({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   useEffect(() => {
+    if (status !== "Changes saved") return;
+    const timer = setTimeout(() => setStatus(""), 3000);
+    return () => clearTimeout(timer);
+  }, [status]);
+  useEffect(() => {
     const update = () => setPermission(notificationPermission());
     update();
     window.addEventListener("focus", update);
@@ -49,7 +54,7 @@ export function NotificationSettings({
       if (!response.ok) throw new Error();
       setValue(next);
       onSaved?.(next);
-      setStatus("Saved.");
+      setStatus("Changes saved");
     } catch {
       setStatus("Notification preferences could not be saved.");
     } finally {
@@ -139,11 +144,12 @@ export function NotificationSettings({
           Only notify when Maildock is in the background
         </label>
       </fieldset>
-      {status ? (
-        <p role="status" className="preference-save-status">
-          {status}
-        </p>
-      ) : null}
+      <p
+        role={status && status !== "Changes saved" ? "alert" : "status"}
+        className={`preference-save-status${status && status !== "Changes saved" ? " error" : ""}`}
+      >
+        {busy ? "Saving…" : status}
+      </p>
     </section>
   );
 }

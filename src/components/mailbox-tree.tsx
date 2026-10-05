@@ -122,6 +122,19 @@ export function MailboxTree({
           <Folder size={16} />
         )}
         <span className="folder-name">{label}</span>
+        {roles[account]?.some(
+          (role) =>
+            role.role === "drafts" &&
+            role.available &&
+            role.mailboxId === box.id,
+        ) ? (
+          <small
+            className="folder-source"
+            title="Drafts stored by your email provider"
+          >
+            Provider
+          </small>
+        ) : null}
         {count ? (
           <span className="folder-count unread" title="Unread messages">
             {new Intl.NumberFormat().format(BigInt(count))}
@@ -184,7 +197,7 @@ export function MailboxTree({
         onClick={onDrafts}
       >
         <Mail size={16} />
-        <span className="folder-name">Local drafts</span>
+        <span className="folder-name">Maildock drafts</span>
       </button>
       {accounts.map((account) => {
         const folders = boxes[account.id] ?? [];
@@ -218,6 +231,15 @@ export function MailboxTree({
                   {account.email}
                   {!account.enabled ? " · Disabled" : ""}
                 </div>
+                {!folders.length ? (
+                  <p className="tree-account-status">
+                    {!account.enabled
+                      ? "Synchronization is disabled."
+                      : account.mailboxDiscovery?.status === "failed"
+                        ? "Folders could not be loaded. Check account Diagnostics in Settings."
+                        : "Waiting for folders. Check account Diagnostics if they do not appear."}
+                  </p>
+                ) : null}
                 {special.map((box) => mailbox(account.id, box))}
                 {other.length ? (
                   <>

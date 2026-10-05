@@ -4,9 +4,10 @@ import { LoginForm } from "@/components/login-form";
 import { getCurrentSession } from "@/modules/auth/application/session";
 import { isInstanceInitialized } from "@/modules/auth/application/instance-auth";
 import { db } from "@/shared/infrastructure/database/runtime-database";
-import { Mail } from "lucide-react";
+import { MaildockBrand } from "@/components/maildock-brand";
 import { ThemeControl } from "@/components/theme-control";
 
+export const metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
@@ -16,10 +17,7 @@ export default async function LoginPage() {
     <main className="auth-page">
       <section className="auth-content">
         <div className="auth-brand">
-          <span className="brand-mark">
-            <Mail size={16} />
-          </span>
-          Maildock
+          <MaildockBrand />
         </div>
         <h1>Welcome back</h1>
         <p>Sign in to your Maildock instance.</p>
