@@ -728,16 +728,68 @@ export class ImapSmtpMailProvider implements MailProvider {
           ? "\\Seen"
           : "\\Flagged";
       const add = request.action === "mark_read" || request.action === "flag";
-      const options = {
-        uid: true as const,
-        ...(request.modseq && current.modseq && client.enabled.has("CONDSTORE")
-          ? { unchangedSince: BigInt(request.modseq) }
-          : {}),
+      if (
+        request.modseq !== undefined &&
+        client.enabled.has("CONDSTORE") &&
+        (current.modseq === undefined || mailbox.noModseq)
+      )
+        throw new Error("IMAP conditional flag update is unavailable.");
+      const conditionalModseq =
+        request.modseq !== undefined &&
+        current.modseq !== undefined &&
+        client.enabled.has("CONDSTORE")
+          ? BigInt(request.modseq)
+          : undefined;
+      const storeFlag = async (modseq: bigint | undefined) => {
+        const options = {
+          uid: true as const,
+          ...(modseq === undefined ? {} : { unchangedSince: modseq }),
+        };
+        try {
+          const changed = add
+            ? await client.messageFlagsAdd!(request.uid, [flag], options)
+            : await client.messageFlagsRemove!(request.uid, [flag], options);
+          // The patched library throws a distinct error for MODIFIED. A false
+          // return instead means STORE was not performed (e.g. rejected flag).
+          if (!changed) throw new Error("IMAP flag update was not performed.");
+          return true;
+        } catch (error) {
+          if (
+            modseq !== undefined &&
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ConditionalStoreFailed"
+          )
+            return false;
+          throw error;
+        }
       };
-      const changed = add
-        ? await client.messageFlagsAdd(request.uid, [flag], options)
-        : await client.messageFlagsRemove(request.uid, [flag], options);
-      return { outcome: changed ? "applied" : "conflict" };
+      if (await storeFlag(conditionalModseq)) return { outcome: "applied" };
+
+      // Only a genuine conditional conflict reaches here. Re-select and refetch
+      // once; never rebase MOVE, replace all flags or drop optimistic concurrency.
+      const freshMailbox = await client.mailboxOpen(request.sourcePath, {
+        readOnly: false,
+      });
+      if (freshMailbox.uidValidity.toString() !== request.uidValidity)
+        throw new MailboxEpochChangedError();
+      const fresh = await client.fetchOne(
+        request.uid,
+        { uid: true, flags: true, modseq: true },
+        { uid: true },
+      );
+      if (!fresh || fresh.uid !== uid) return { outcome: "source_missing" };
+      if (fresh.flags && fresh.flags.has(flag) === add)
+        return { outcome: "applied" };
+      if (
+        fresh.modseq === undefined ||
+        freshMailbox.noModseq ||
+        !client.enabled.has("CONDSTORE")
+      )
+        throw new Error("IMAP conditional flag update is unavailable.");
+      return {
+        outcome: (await storeFlag(fresh.modseq)) ? "applied" : "conflict",
+      };
     } catch (error) {
       if (
         error instanceof MailboxEpochChangedError ||

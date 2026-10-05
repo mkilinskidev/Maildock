@@ -110,6 +110,14 @@ async function mount(initialAddAccount = false, oauthConfigured = true) {
             callbackPath: "/api/oauth/microsoft/callback",
             configured: oauthConfigured,
           },
+          {
+            id: "google",
+            name: "Google",
+            description: "Gmail / Google Workspace",
+            authorizationPath: "/api/oauth/google/start",
+            callbackPath: "/api/oauth/google/callback",
+            configured: oauthConfigured,
+          },
         ]}
         initialAddAccount={initialAddAccount}
         oauthResult={{}}
@@ -322,11 +330,10 @@ it("keeps one Add action and only configured accounts under Accounts; providers 
   expect(list.querySelector("a")?.getAttribute("href")).toBe(
     "/api/oauth/microsoft/start",
   );
-  const google = list.children[1] as HTMLButtonElement;
-  expect(google.disabled).toBe(true);
-  expect(google.textContent).toContain("Coming soon");
-  await act(async () => google.click());
-  expect(pane.querySelector(".account-provider-list")).toBeTruthy();
+  const google = list.children[1] as HTMLAnchorElement;
+  expect(google.getAttribute("href")).toBe("/api/oauth/google/start");
+  expect(google.textContent).toContain("Continue with Google");
+  expect(google.textContent).not.toContain("Coming soon");
   await act(async () => (list.children[2] as HTMLButtonElement).click());
   expect(pane.querySelector("form")).toBeTruthy();
   expect(host.querySelector(".settings-nav")).toBeTruthy();
@@ -340,6 +347,9 @@ it("opens deep-linked onboarding and displays unconfigured Microsoft without sta
   expect((rows[0] as HTMLButtonElement).disabled).toBe(true);
   expect(rows[0].textContent).toContain("Not configured");
   expect(host.querySelector('[href="/api/oauth/microsoft/start"]')).toBeNull();
+  expect((rows[1] as HTMLButtonElement).disabled).toBe(true);
+  expect(host.querySelector('[href="/api/oauth/google/start"]')).toBeNull();
+  expect(host.textContent).toContain("Google OAuth is not configured.");
 });
 
 async function openCreate() {
@@ -535,6 +545,23 @@ const oauthProviderFixture = {
   configured: true,
   redirectUri: "https://mail.example.com/api/oauth/microsoft/callback",
 };
+it("opens Google from the API enumeration in the same generic configuration form", async () => {
+  const google = {
+    ...oauthProviderFixture,
+    id: "google",
+    name: "Google",
+    description: "Gmail / Google Workspace",
+    redirectUri: "https://mail.example.com/api/oauth/google/callback",
+  };
+  await openOAuthProviders([oauthProviderFixture, google]);
+  expect(host.querySelectorAll(".oauth-provider-row")).toHaveLength(2);
+  await selectOAuthProvider(1);
+  expect(host.querySelector(".settings-pane h2")?.textContent).toBe("Google");
+  expect(
+    host.querySelector<HTMLInputElement>('[name="clientSecret"]')!.value,
+  ).toBe("");
+  expect(host.querySelector(".oauth-provider-form")).toBeTruthy();
+});
 async function openOAuthProviders(providers = [oauthProviderFixture]) {
   await mount();
   fetcher.mockResolvedValue(Response.json({ providers }));

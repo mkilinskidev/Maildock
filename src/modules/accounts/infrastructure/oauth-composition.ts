@@ -2,6 +2,7 @@ import type { Database } from "../../../shared/infrastructure/database/database"
 import type { SecretEncryption } from "../../../shared/application/secret-encryption";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import { MicrosoftOAuthProvider } from "./microsoft-oauth";
+import { GoogleOAuthProvider } from "./google-oauth";
 import { OAuthProviderRegistry } from "../application/oauth-provider-registry";
 import { OAuthProviderConfigs } from "./oauth-provider-configs";
 export function createOAuthComposition(
@@ -10,9 +11,10 @@ export function createOAuthComposition(
   config: Pick<AppConfig, "appOrigin" | "microsoft">,
 ) {
   const microsoft = new MicrosoftOAuthProvider(database, encryption, config);
+  const google = new GoogleOAuthProvider(database, encryption, config);
   return {
     microsoft,
-    registry: new OAuthProviderRegistry([microsoft]),
+    registry: new OAuthProviderRegistry([microsoft, google]),
     configurations: new OAuthProviderConfigs(
       database,
       encryption,

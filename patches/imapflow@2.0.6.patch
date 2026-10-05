@@ -1,0 +1,88 @@
+diff --git a/dist/cjs/commands/store.js b/dist/cjs/commands/store.js
+index e61aa226f02e55076d33bb811155371a72ed457d..9e85e59de7ce189887f398195e71381c69335be8 100644
+--- a/dist/cjs/commands/store.js
++++ b/dist/cjs/commands/store.js
+@@ -65,8 +65,9 @@ async function store(connection, range, flags, options) {
+     ];
+     // CONDSTORE (RFC 7162): UNCHANGEDSINCE modifier prevents updating messages whose
+     // mod-sequence is higher than the specified value, avoiding overwriting concurrent changes.
+-    if (options.unchangedSince && connection.enabled.has('CONDSTORE') && !connection.mailbox.noModseq) {
+-        attributes.push([
++    const conditional = options.unchangedSince !== undefined && connection.enabled.has('CONDSTORE') && !connection.mailbox.noModseq;
++    if (conditional) {
++        attributes.splice(1, 0, [
+             {
+                 type: 'ATOM',
+                 value: 'UNCHANGEDSINCE'
+@@ -81,13 +82,26 @@ async function store(connection, range, flags, options) {
+     try {
+         response = await connection.exec(options.uid ? 'UID STORE' : 'STORE', attributes);
+         response.next();
++        const conflict = conditional && conditionalStoreError(response.response);
++        if (conflict) throw conflict;
+         return true;
+     }
+     catch (err) {
++        if (err.code === 'ConditionalStoreFailed') throw err;
++        // RFC 7162 also permits MODIFIED in a tagged NO response. BAD or a
++        // plain NO is a protocol failure, never an optimistic conflict.
++        const conflict = conditional && err.responseStatus === 'NO' && conditionalStoreError(err.response);
++        if (conflict) throw conflict;
+         await (0, tools_js_1.enhanceCommandError)(err);
+-        connection.log.warn({ err, cid: connection.id });
+-        return false;
++        throw err;
+     }
+ }
++
++function conditionalStoreError(response) {
++    if (!response?.attributes?.some(attribute => attribute.section?.[0]?.value?.toUpperCase() === 'MODIFIED')) return null;
++    const error = new Error('Conditional STORE failed.');
++    error.code = 'ConditionalStoreFailed';
++    return error;
++}
+ module.exports = exports.default;
+ Object.defineProperty(module.exports, 'default', { value: exports.default, enumerable: false, writable: true, configurable: true });
+diff --git a/dist/esm/commands/store.js b/dist/esm/commands/store.js
+index bd5628acf78a55fa1ba9f7e0d34cdbe42d391d13..2a4ee6befb720d3f9837ffb502833317450b7c33 100644
+--- a/dist/esm/commands/store.js
++++ b/dist/esm/commands/store.js
+@@ -62,8 +62,9 @@ export default async function store(connection, range, flags, options) {
+     ];
+     // CONDSTORE (RFC 7162): UNCHANGEDSINCE modifier prevents updating messages whose
+     // mod-sequence is higher than the specified value, avoiding overwriting concurrent changes.
+-    if (options.unchangedSince && connection.enabled.has('CONDSTORE') && !connection.mailbox.noModseq) {
+-        attributes.push([
++    const conditional = options.unchangedSince !== undefined && connection.enabled.has('CONDSTORE') && !connection.mailbox.noModseq;
++    if (conditional) {
++        attributes.splice(1, 0, [
+             {
+                 type: 'ATOM',
+                 value: 'UNCHANGEDSINCE'
+@@ -78,11 +79,24 @@ export default async function store(connection, range, flags, options) {
+     try {
+         response = await connection.exec(options.uid ? 'UID STORE' : 'STORE', attributes);
+         response.next();
++        const conflict = conditional && conditionalStoreError(response.response);
++        if (conflict) throw conflict;
+         return true;
+     }
+     catch (err) {
++        if (err.code === 'ConditionalStoreFailed') throw err;
++        // RFC 7162 also permits MODIFIED in a tagged NO response. BAD or a
++        // plain NO is a protocol failure, never an optimistic conflict.
++        const conflict = conditional && err.responseStatus === 'NO' && conditionalStoreError(err.response);
++        if (conflict) throw conflict;
+         await enhanceCommandError(err);
+-        connection.log.warn({ err, cid: connection.id });
+-        return false;
++        throw err;
+     }
+ }
++
++function conditionalStoreError(response) {
++    if (!response?.attributes?.some(attribute => attribute.section?.[0]?.value?.toUpperCase() === 'MODIFIED')) return null;
++    const error = new Error('Conditional STORE failed.');
++    error.code = 'ConditionalStoreFailed';
++    return error;
++}

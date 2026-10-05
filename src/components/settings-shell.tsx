@@ -274,6 +274,7 @@ export function SettingsShell({
                         <small>{provider.description}</small>
                       </span>
                       <ChevronRight aria-hidden="true" />
+                      <small>Continue with {provider.name}</small>
                     </a>
                   ) : (
                     <button
@@ -290,14 +291,6 @@ export function SettingsShell({
                     </button>
                   ),
                 )}
-                <button className="account-provider-row" disabled>
-                  <Mail aria-hidden="true" />
-                  <span>
-                    <strong>Google</strong>
-                    <small>Gmail and Google Workspace</small>
-                  </span>
-                  <small>Coming soon</small>
-                </button>
                 <button
                   type="button"
                   className="account-provider-row"

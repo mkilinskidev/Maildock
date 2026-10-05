@@ -264,8 +264,14 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     });
     const read = await oauthConfigRead(req("GET"));
     const data = await read.json();
-    expect(data.providers).toHaveLength(1);
+    expect(data.providers).toHaveLength(2);
     expect(data.providers[0].id).toBe("microsoft");
+    expect(data.providers[1]).toMatchObject({
+      id: "google",
+      name: "Google",
+      configured: false,
+      redirectUri: `${origin}/api/oauth/google/callback`,
+    });
     expect(JSON.stringify(data)).not.toMatch(
       /provider-private-secret|ciphertext|encryptedClientSecret|authTag/,
     );
@@ -282,6 +288,50 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     expect(await kept.json()).toMatchObject({
       hasClientSecret: true,
       configured: true,
+    });
+  });
+
+  it("secures Google DB-backed configuration with real owner auth and write-only secrets", async () => {
+    const body = JSON.stringify({
+      providerId: "google",
+      clientId: "google-id",
+      clientSecret: "google-private-secret",
+    });
+    expect((await oauthConfigSave(req("PUT", body, false))).status).toBe(401);
+    expect(
+      (await oauthConfigSave(req("PUT", body, true, "https://evil.example")))
+        .status,
+    ).toBe(403);
+    expect((await oauthConfigSave(req("PUT", body))).status).toBe(200);
+    const view = await (await oauthConfigRead(req("GET"))).json();
+    expect(view.providers.map((p: { id: string }) => p.id)).toEqual([
+      "microsoft",
+      "google",
+    ]);
+    expect(view.providers[1]).toMatchObject({
+      configured: true,
+      enabled: true,
+      hasClientSecret: true,
+      redirectUri: `${origin}/api/oauth/google/callback`,
+    });
+    expect(JSON.stringify(view)).not.toMatch(
+      /google-private-secret|ciphertext|encryptedClientSecret|authTag/,
+    );
+    const kept = await oauthConfigSave(
+      req(
+        "PUT",
+        JSON.stringify({
+          providerId: "google",
+          clientId: "google-id",
+          clientSecret: "",
+          enabled: false,
+        }),
+      ),
+    );
+    expect(await kept.json()).toMatchObject({
+      configured: false,
+      enabled: false,
+      hasClientSecret: true,
     });
   });
 

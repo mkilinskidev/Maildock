@@ -5,6 +5,7 @@ import {
 } from "@/modules/accounts/infrastructure/imap-smtp-mail-provider";
 import {
   MailboxEpochChangedError,
+  MailProviderOperationError,
   type ProviderImapAccount,
 } from "@/modules/accounts/domain/mail-provider";
 import type { FetchMessageObject } from "imapflow";
@@ -76,6 +77,17 @@ function setup(
 const base = { sourcePath: "INBOX", uidValidity: "7", uid: "42" } as const;
 
 describe("message mutation adapter", () => {
+  it("does not misclassify a false library result as a MODIFIED conflict", async () => {
+    const { provider, calls } = setup({ fail: true });
+    await expect(
+      provider.mutateMessage(account, {
+        ...base,
+        action: "mark_read",
+        modseq: "3",
+      }),
+    ).rejects.toBeInstanceOf(MailProviderOperationError);
+    expect(calls).toEqual(["add \\Seen 3"]);
+  });
   it.each([
     ["mark_read", "add \\Seen 3"],
     ["mark_unread", "remove \\Seen"],

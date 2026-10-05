@@ -11,6 +11,7 @@ import type {
   MailProvider,
   RemoteMutationResult,
 } from "@/modules/accounts/domain/mail-provider";
+import { MailProviderOperationError } from "@/modules/accounts/domain/mail-provider";
 import { MessageCommandService } from "@/modules/mail/application/message-command-service";
 import { MailboxRoleService } from "@/modules/mail/application/mailbox-role-service";
 import { createMailboxLock } from "@/modules/mail/infrastructure/mailbox-lock";
@@ -38,6 +39,7 @@ describe("durable message commands", () => {
   let calls: string[];
   let outcome: RemoteMutationResult;
   let failProvider: boolean;
+  let providerError: Error | undefined;
   let reconciled: string[];
   let queued: string[];
   let lock: ReturnType<typeof createMailboxLock>;
@@ -84,6 +86,7 @@ describe("durable message commands", () => {
       fetchMessageContent: async () => ({ plainText: null, html: null }),
       mutateMessage: async (_account, request) => {
         calls.push(request.action);
+        if (providerError) throw providerError;
         if (failProvider) throw Error("provider failure");
         return outcome;
       },
@@ -197,6 +200,7 @@ describe("durable message commands", () => {
     queued = [];
     outcome = { outcome: "applied" };
     failProvider = false;
+    providerError = undefined;
   });
   afterAll(async () => {
     await database?.client.end();
@@ -243,6 +247,49 @@ describe("durable message commands", () => {
     await service.run(created.id);
     expect(calls).toEqual(["flag", "flag"]);
     expect((await command(created.id)).status).toBe("succeeded");
+  });
+  it("terminates an exhausted conditional conflict once and schedules reconciliation", async () => {
+    const created = await service.create(
+      accountId,
+      sourceId,
+      messageId,
+      "mark_read",
+    );
+    outcome = { outcome: "conflict" };
+    await service.run(created.id);
+    await service.run(created.id);
+    expect(await command(created.id)).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      error: "Message changed on the server; please retry.",
+    });
+    expect(calls).toEqual(["mark_read"]);
+    expect((await placement()).flags).toEqual([]);
+    expect(reconciled).toEqual([sourceId]);
+  });
+  it("retains durable transport retries and never labels protocol errors as conflicts", async () => {
+    const created = await service.create(
+      accountId,
+      sourceId,
+      messageId,
+      "mark_read",
+    );
+    providerError = new MailProviderOperationError({
+      success: false,
+      category: "internal_error",
+      message: "IMAP connection failed.",
+    });
+    for (let attempt = 0; attempt < 3; attempt++)
+      await expect(service.run(created.id)).rejects.toBeInstanceOf(
+        MailProviderOperationError,
+      );
+    await service.run(created.id);
+    expect(await command(created.id)).toMatchObject({
+      status: "failed",
+      attempts: 4,
+      error: "IMAP connection failed.",
+    });
+    expect(reconciled).toEqual([sourceId]);
   });
   it("rejects changed UIDVALIDITY and rolls the projection back", async () => {
     const created = await service.create(
