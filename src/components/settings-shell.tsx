@@ -12,7 +12,14 @@ import type { AutoReadPreference } from "@/modules/mail/domain/mail-interactions
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronRight, Mail, Grid2X2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUp,
+  ArrowDown,
+  ChevronRight,
+  Mail,
+  Grid2X2,
+} from "lucide-react";
 import { AccountForm } from "./account-form";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
@@ -70,10 +77,28 @@ export function SettingsShell({
   const router = useRouter();
   const [notifications, setNotifications] = useState(notificationPreferences);
   const [createdAccount, setCreatedAccount] = useState<MailAccountView>();
-  const accountItems =
+  const [accountOrder, setAccountOrder] = useState<string[]>();
+  const [orderPending, setOrderPending] = useState(false);
+  const [orderFeedback, setOrderFeedback] = useState("");
+  const [orderError, setOrderError] = useState("");
+  const baseAccounts =
     createdAccount && !accounts.some((a) => a.id === createdAccount.id)
       ? [...accounts, createdAccount]
       : accounts;
+  const accountItems = accountOrder
+    ? [...baseAccounts].sort((a, b) => {
+        const rank = (id: string) => {
+          const index = accountOrder.indexOf(id);
+          return index < 0 ? accountOrder.length : index;
+        };
+        return rank(a.id) - rank(b.id);
+      })
+    : baseAccounts;
+  if (
+    accountOrder &&
+    accountOrder.join(":") === accounts.map((a) => a.id).join(":")
+  )
+    setAccountOrder(undefined);
   // Use the server list once refresh includes the created account. Clear the
   // temporary view so a subsequent deletion cannot reintroduce it in the rail.
   if (createdAccount && accounts.some((a) => a.id === createdAccount.id))
@@ -93,6 +118,28 @@ export function SettingsShell({
   const leaving = useRef(false);
   const onDirtyChange = useCallback((value: boolean) => setDirty(value), []);
   const onBusyChange = useCallback((value: boolean) => setBusy(value), []);
+  async function moveAccount(id: string, direction: "up" | "down") {
+    if (busy || orderPending) return;
+    setOrderPending(true);
+    setOrderFeedback("");
+    setOrderError("");
+    try {
+      const response = await fetch(`/api/accounts/${id}/order`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction }),
+      });
+      if (!response.ok) throw new Error("order");
+      const result = (await response.json()) as { accounts: MailAccountView[] };
+      setAccountOrder(result.accounts.map((account) => account.id));
+      setOrderFeedback("Account order saved.");
+      router.refresh();
+    } catch {
+      setOrderError("The account order could not be saved. Please try again.");
+    } finally {
+      setOrderPending(false);
+    }
+  }
   const selectedAccount = section.startsWith("account:")
     ? accountItems.find((a) => a.id === section.slice(8))
     : undefined;
@@ -204,9 +251,41 @@ export function SettingsShell({
           </div>
           <div className="settings-nav-group">
             <h2>Accounts</h2>
-            {accountItems.map((a) =>
-              item(`account:${a.id}`, a.displayName, a.email),
-            )}
+            {accountItems.map((a, index) => (
+              <div className="settings-account-row" key={a.id}>
+                {item(`account:${a.id}`, a.displayName, a.email)}
+                <div className="settings-account-order">
+                  <button
+                    type="button"
+                    aria-label={`Move ${a.displayName} up`}
+                    title="Move up"
+                    disabled={busy || orderPending || index === 0}
+                    onClick={() => void moveAccount(a.id, "up")}
+                  >
+                    <ArrowUp size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${a.displayName} down`}
+                    title="Move down"
+                    disabled={
+                      busy || orderPending || index === accountItems.length - 1
+                    }
+                    onClick={() => void moveAccount(a.id, "down")}
+                  >
+                    <ArrowDown size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {orderError ? (
+              <p className="error" role="alert">
+                {orderError}
+              </p>
+            ) : null}
+            <p className="settings-account-order-feedback" role="status">
+              {orderPending ? "Saving account order..." : orderFeedback}
+            </p>
             <button
               type="button"
               disabled={busy}

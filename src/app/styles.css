@@ -1434,6 +1434,12 @@ a {
 .mail-reader > .mail-body > [role="status"] {
   flex: none;
 }
+.reader-inline-status {
+  margin: 0;
+  padding: 10px clamp(24px, 5vw, 64px);
+  color: var(--muted);
+  font-size: 12px;
+}
 .mail-reader > .mail-attachments {
   position: relative;
   z-index: 1;
@@ -2563,4 +2569,32 @@ label.checkbox input {
   padding: 0 16px 12px;
   color: var(--secondary);
   font-size: 12px;
+}
+
+.settings-account-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.settings-account-row > button {
+  flex: 1;
+  min-width: 0;
+}
+.settings-account-order {
+  display: flex;
+  gap: 2px;
+}
+.settings-nav .settings-account-order button {
+  padding: 6px;
+  width: 28px;
+  min-height: 30px;
+  justify-content: center;
+}
+.settings-account-order-feedback {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+.settings-account-order-feedback:empty {
+  display: none;
 }

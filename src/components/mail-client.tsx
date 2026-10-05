@@ -101,8 +101,8 @@ export function MailClient({
   initialNotificationsEnabled?: boolean;
   initialNotification?: {
     accountId: string;
-    mailboxId: string;
-    messageId: string;
+    mailboxId?: string;
+    messageId?: string;
   };
 }) {
   const conversationView = initialConversationView;
@@ -198,7 +198,7 @@ export function MailClient({
       clearInterval(timer);
     };
   }, [outgoing]);
-  const [allInboxes, setAllInboxes] = useState(false);
+  const [allInboxes, setAllInboxes] = useState(!initialNotification);
   const [accountId, setAccountId] = useState(
     initialNotification?.accountId ?? first?.id ?? "",
   );
@@ -214,7 +214,9 @@ export function MailClient({
       folders.find((item) => item.selectable)?.id ??
       "",
   );
-  const activeLocationRef = useRef(`${accountId}:${mailboxId}`);
+  const activeLocationRef = useRef(
+    allInboxes ? "all-inboxes" : `${accountId}:${mailboxId}`,
+  );
   const [messages, setMessages] = useState<MessageListItem[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(Boolean(first));
   const [nextCursor, setNextCursor] = useState<string | null>(null);

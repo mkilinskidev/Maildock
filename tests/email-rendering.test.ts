@@ -6,7 +6,10 @@ import {
   normalizeContentId,
   cidReference,
 } from "@/modules/mail/infrastructure/sanitize-email-html";
-import { renderEmailDocument } from "@/modules/mail/infrastructure/render-email-document";
+import {
+  inlineRasterType,
+  renderEmailDocument,
+} from "@/modules/mail/infrastructure/render-email-document";
 import { normalizedSender } from "@/modules/mail/application/remote-content-sender-service";
 
 function rendered(
@@ -17,6 +20,41 @@ function rendered(
   return renderEmailDocument(sanitizeEmailHtml(input).html, allow, cids);
 }
 describe("Phase 2H HTML/privacy boundary", () => {
+  it.each([
+    ["image/png", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])],
+    ["image/jpeg", Buffer.from([255, 216, 255])],
+    ["image/gif", Buffer.from("GIF89a")],
+    ["image/webp", Buffer.from("RIFF0000WEBP")],
+    ["image/avif", Buffer.from("0000ftypavif")],
+  ])(
+    "detects only existing %s signatures for generic bytes and preserves declared-type checks",
+    (type, bytes) => {
+      // Signature vectors exercise the existing validator, not complete decoders.
+      expect(inlineRasterType(bytes, "application/octet-stream")).toBe(type);
+      expect(inlineRasterType(bytes, type)).toBe(type);
+      expect(inlineRasterType(bytes, "image/svg+xml")).toBeNull();
+      expect(
+        inlineRasterType(
+          bytes,
+          type === "image/png" ? "image/jpeg" : "image/png",
+        ),
+      ).toBeNull();
+      expect(
+        inlineRasterType(Buffer.from("<html>not raster</html>"), type),
+      ).toBeNull();
+    },
+  );
+  it("rejects empty, truncated, active and unsupported generic resources", () => {
+    for (const bytes of [
+      Buffer.alloc(0),
+      Buffer.from([137, 80]),
+      Buffer.from("<svg onload='alert(1)'/>"),
+      Buffer.from("BMbitmap"),
+      Buffer.from("%PDF-1.3"),
+      Buffer.from("not an image"),
+    ])
+      expect(inlineRasterType(bytes, "application/octet-stream")).toBeNull();
+  });
   it("allows consented images through inherited reader CSP while the email policy still blocks by default", () => {
     const parentPolicy = createContentSecurityPolicy("test-nonce");
     expect(parentPolicy).toContain("img-src 'self' data: https: http:");

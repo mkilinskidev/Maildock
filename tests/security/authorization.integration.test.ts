@@ -1,3 +1,6 @@
+import { PATCH as moveAccount } from "../../src/app/api/accounts/[id]/order/route";
+import { AccountsService } from "../../src/modules/accounts/application/accounts-service";
+import type { MailProvider } from "../../src/modules/accounts/domain/mail-provider";
 import {
   GET as oauthConfigRead,
   PUT as oauthConfigSave,
@@ -65,6 +68,7 @@ const runtime = vi.hoisted(() => ({
   signatures: undefined as unknown,
   guard: undefined as unknown,
   oauth: undefined as unknown,
+  accounts: undefined as unknown,
 }));
 vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   get db() {
@@ -72,6 +76,9 @@ vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   },
 }));
 vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
+  get accountsService() {
+    return runtime.accounts;
+  },
   get oauthProviders() {
     return (runtime.oauth as ReturnType<typeof createOAuthComposition>)
       .registry;
@@ -186,6 +193,14 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       ),
       config,
     );
+    runtime.accounts = new AccountsService(
+      database.db,
+      new AesGcmSecretEncryption(
+        config.credentialsEncryption.activeKeyId,
+        config.credentialsEncryption.keys,
+      ),
+      {} as MailProvider,
+    );
     runtime.db = database.db;
     runtime.content = content;
     runtime.attachments = attachments;
@@ -221,6 +236,49 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       ...(method !== "GET" ? { body } : {}),
     });
   }
+  it("protects persisted account order using real owner sessions and Origin checks", async () => {
+    const rows = await database.db
+      .insert(mailAccounts)
+      .values(
+        ["First", "Second"].map((displayName) => ({
+          id: randomUUID(),
+          displayName,
+          email: "owner@test",
+          imapHost: "unused.test",
+          imapPort: 993,
+          imapSecurity: "tls",
+          imapUsername: "owner",
+          imapPassword: { v: 1 } as never,
+          smtpHost: "unused.test",
+          smtpPort: 465,
+          smtpSecurity: "tls",
+        })),
+      )
+      .returning();
+    const context = { params: Promise.resolve({ id: rows[0].id }) };
+    const body = JSON.stringify({ direction: "down" });
+    expect((await moveAccount(req("PATCH", body, false), context)).status).toBe(
+      401,
+    );
+    const forged = req("PATCH", body);
+    forged.headers.set("cookie", "maildock.session_token=guessed");
+    expect((await moveAccount(forged, context)).status).toBe(401);
+    for (const requestOrigin of [null, "null", "http://evil.test"])
+      expect(
+        (await moveAccount(req("PATCH", body, true, requestOrigin), context))
+          .status,
+      ).toBe(403);
+    const accounts = runtime.accounts as AccountsService;
+    expect((await accounts.list()).map((a) => a.id)).toEqual(
+      rows.map((a) => a.id),
+    );
+    const response = await moveAccount(req("PATCH", body), context);
+    expect(response.status).toBe(200);
+    expect((await accounts.list()).map((a) => a.id)).toEqual([
+      rows[1].id,
+      rows[0].id,
+    ]);
+  });
   it("protects OAuth configuration with actual owner sessions and Origin/CSRF checks", async () => {
     const body = JSON.stringify({
       providerId: "microsoft",

@@ -193,6 +193,7 @@ describe("reader reply and forward actions", () => {
         <MailClient
           initialAutoRead={{ mode: "manually", seconds: 2 }}
           initialConversationView={grouped}
+          initialNotification={{ accountId, mailboxId: inboxId }}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
           rolesByAccount={{ [accountId]: roles }}
@@ -323,6 +324,7 @@ describe("reader reply and forward actions", () => {
         <MailClient
           initialAutoRead={{ mode: "manually", seconds: 2 }}
           initialConversationView={false}
+          initialNotification={{ accountId, mailboxId: inboxId }}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
           rolesByAccount={{ [accountId]: [] }}

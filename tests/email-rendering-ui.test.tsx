@@ -65,6 +65,28 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe("received email reader", () => {
+  it("gives both inline status notices the same reader spacing class", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          document: "<p>HTML</p>",
+          blocked: false,
+          pending: true,
+          inlineFailures: 1,
+        }),
+      ),
+    );
+    await mount(<Reader />);
+    const notices = [...host.querySelectorAll(".reader-inline-status")];
+    expect(notices.map((notice) => notice.textContent)).toEqual([
+      "Preparing inline images…",
+      "Some inline images are unavailable.",
+    ]);
+    expect(
+      notices.every((notice) => notice.getAttribute("role") === "status"),
+    ).toBe(true);
+  });
   it("prefers rich HTML over plain alternative and maintains iframe boundary", async () => {
     vi.stubGlobal(
       "fetch",

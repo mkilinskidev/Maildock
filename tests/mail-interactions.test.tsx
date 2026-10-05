@@ -228,6 +228,9 @@ async function mount(
   await act(async () =>
     root.render(
       <MailClient
+        initialNotification={
+          options.all ? undefined : { accountId: "a", mailboxId: "a-inbox" }
+        }
         accounts={accounts}
         mailboxesByAccount={boxes}
         rolesByAccount={roles}

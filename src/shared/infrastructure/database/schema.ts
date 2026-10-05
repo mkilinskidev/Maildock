@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  pgSequence,
   primaryKey,
   text,
   timestamp,
@@ -402,10 +403,18 @@ export const loginThrottle = pgTable("login_throttle", {
     .notNull(),
 });
 
+export const mailAccountOrderSequence = pgSequence("mail_account_order_seq", {
+  maxValue: 2147483647,
+  startWith: 1,
+});
+
 export const mailAccounts = pgTable(
   "mail_accounts",
   {
     id: uuid("id").primaryKey(),
+    sortOrder: integer("sort_order")
+      .default(sql`nextval('mail_account_order_seq')`)
+      .notNull(),
     displayName: text("display_name").notNull(),
     senderDisplayName: text("sender_display_name").default("").notNull(),
     email: text("email").notNull(),
@@ -462,6 +471,7 @@ export const mailAccounts = pgTable(
       .notNull(),
   },
   (table) => [
+    check("mail_accounts_sort_order", sql`${table.sortOrder} > 0`),
     check(
       "mail_accounts_provider_type",
       sql`${table.providerType} = 'imap_smtp'`,

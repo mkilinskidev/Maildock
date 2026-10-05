@@ -1,6 +1,7 @@
 import {
   SAFE_INLINE_IMAGE_TYPES,
   isSafeRaster,
+  inlineRasterType,
 } from "../infrastructure/render-email-document";
 import { normalizeContentId } from "../infrastructure/sanitize-email-html";
 import { randomUUID } from "node:crypto";
@@ -189,13 +190,15 @@ export class AttachmentService {
       row.attachment.messageId !== messageId ||
       !row.attachment.contentId ||
       normalizeContentId(row.attachment.contentId) !== contentId ||
-      !SAFE_INLINE_IMAGE_TYPES.has(row.attachment.contentType)
+      (!SAFE_INLINE_IMAGE_TYPES.has(row.attachment.contentType) &&
+        row.attachment.contentType !== "application/octet-stream")
     )
       throw new AttachmentUnavailableError("Inline resource is unavailable.");
     const result = await this.download(attachmentId);
-    if (!isSafeRaster(result.bytes, row.attachment.contentType))
+    const type = inlineRasterType(result.bytes, row.attachment.contentType);
+    if (!type)
       throw new AttachmentUnavailableError("Inline image format is invalid.");
-    return { ...result, type: row.attachment.contentType };
+    return { ...result, type };
   }
   async upload(
     source: AsyncIterable<Uint8Array>,

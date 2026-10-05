@@ -122,10 +122,14 @@ export function RichEmailBody({
         </pre>
       )}
       {rendering?.pending ? (
-        <p role="status">Preparing inline images…</p>
+        <p className="reader-inline-status" role="status">
+          Preparing inline images…
+        </p>
       ) : null}
       {rendering?.inlineFailures ? (
-        <p role="status">Some inline images are unavailable.</p>
+        <p className="reader-inline-status" role="status">
+          Some inline images are unavailable.
+        </p>
       ) : null}
     </>
   );

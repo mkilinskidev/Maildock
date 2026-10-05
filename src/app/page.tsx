@@ -1,6 +1,6 @@
 import { MailPreferencesService } from "@/modules/mail/application/mail-preferences-service";
 import { NotificationService } from "@/modules/mail/application/notification-service";
-import { z } from "zod";
+import { resolveMailNavigation } from "@/modules/mail/domain/mail-navigation";
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/modules/auth/application/session";
 import { isInstanceInitialized } from "@/modules/auth/application/instance-auth";
@@ -41,23 +41,11 @@ export default async function HomePage({
     ),
   );
   const params = await searchParams;
-  const target = z
-    .object({ account: z.uuid(), mailbox: z.uuid(), message: z.uuid() })
-    .safeParse(params);
-  const initialNotification =
-    target.success &&
-    accounts.some((a) => a.id === target.data.account && a.enabled) &&
-    entries.some(
-      ([id, boxes]) =>
-        id === target.data.account &&
-        boxes.some((box) => box.id === target.data.mailbox),
-    )
-      ? {
-          accountId: target.data.account,
-          mailboxId: target.data.mailbox,
-          messageId: target.data.message,
-        }
-      : undefined;
+  const initialNotification = resolveMailNavigation(
+    params,
+    accounts,
+    Object.fromEntries(entries),
+  );
   return (
     <MailClient
       initialNotificationsEnabled={

@@ -1,5 +1,5 @@
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -42,6 +42,7 @@ type AccountRow = typeof mailAccounts.$inferSelect;
 
 export type MailAccountView = Readonly<{
   id: string;
+  sortOrder: number;
   displayName: string;
   senderDisplayName: string;
   email: string;
@@ -100,6 +101,7 @@ function toView(
     ?.getDefinition();
   return {
     id: row.id,
+    sortOrder: row.sortOrder,
     displayName: row.displayName,
     senderDisplayName: row.senderDisplayName,
     email: row.email,
@@ -167,8 +169,51 @@ export class AccountsService {
     const rows = await this.database
       .select()
       .from(mailAccounts)
-      .orderBy(mailAccounts.createdAt);
+      .orderBy(mailAccounts.sortOrder, mailAccounts.createdAt, mailAccounts.id);
     return rows.map((row) => toView(row, this.oauth));
+  }
+
+  async move(id: string, direction: "up" | "down"): Promise<MailAccountView[]> {
+    z.uuid().parse(id);
+    z.enum(["up", "down"]).parse(direction);
+    return this.database.transaction(async (transaction) => {
+      // Serialize relative moves so simultaneous requests use the latest order.
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtext('maildock-account-order'))`,
+      );
+      const rows = await transaction
+        .select()
+        .from(mailAccounts)
+        .orderBy(
+          mailAccounts.sortOrder,
+          mailAccounts.createdAt,
+          mailAccounts.id,
+        )
+        .for("update");
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) throw new MailAccountNotFoundError();
+      const neighbor = rows[index + (direction === "up" ? -1 : 1)];
+      if (neighbor) {
+        const current = rows[index];
+        await transaction
+          .update(mailAccounts)
+          .set({ sortOrder: neighbor.sortOrder })
+          .where(eq(mailAccounts.id, current.id));
+        await transaction
+          .update(mailAccounts)
+          .set({ sortOrder: current.sortOrder })
+          .where(eq(mailAccounts.id, neighbor.id));
+      }
+      const ordered = await transaction
+        .select()
+        .from(mailAccounts)
+        .orderBy(
+          mailAccounts.sortOrder,
+          mailAccounts.createdAt,
+          mailAccounts.id,
+        );
+      return ordered.map((row) => toView(row, this.oauth));
+    });
   }
 
   async get(id: string): Promise<MailAccountView> {

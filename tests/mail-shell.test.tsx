@@ -128,6 +128,7 @@ async function mount(
     mailboxId: string;
     messageId: string;
   },
+  orderedAccounts = accounts,
 ) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
@@ -189,7 +190,7 @@ async function mount(
   await act(async () =>
     root.render(
       <MailClient
-        accounts={accounts}
+        accounts={orderedAccounts}
         mailboxesByAccount={boxes}
         rolesByAccount={roles}
         initialConversationView={conversation}
@@ -267,7 +268,11 @@ async function click(text: string) {
   await act(async () => button.click());
 }
 it("shows every account, collapses independently, preserves selection and header Compose", async () => {
-  await mount();
+  await mount(false, false, false, {
+    accountId: "a",
+    mailboxId: "a-inbox",
+    messageId: "",
+  });
   expect(host.querySelector('select[aria-label="Account"]')).toBeNull();
   expect(host.querySelector(".app-bar")?.textContent).toContain("New message");
   expect(host.querySelector(".mail-sidebar")?.textContent).not.toContain(
@@ -441,4 +446,40 @@ it("moving an All Inboxes message selects the next message with its own account 
     "/api/accounts/a/mailboxes/a-inbox/messages/next/actions",
     expect.objectContaining({ method: "POST" }),
   ]);
+});
+
+it("defaults to All Inboxes without selecting the first account Inbox", async () => {
+  const fetcher = await mount();
+  expect(
+    host.querySelector('.mail-folders > button[aria-current="page"]')
+      ?.textContent,
+  ).toContain("All Inboxes");
+  expect(
+    host
+      .querySelector('[aria-label="Account a"] [title="INBOX"]')
+      ?.getAttribute("aria-current"),
+  ).toBeNull();
+  expect(
+    fetcher.mock.calls.some(([url]) =>
+      String(url).startsWith("/api/mail/all-inboxes?"),
+    ),
+  ).toBe(true);
+  expect(
+    fetcher.mock.calls.some(([url]) =>
+      String(url).includes("/accounts/a/mailboxes/a-inbox/messages"),
+    ),
+  ).toBe(false);
+});
+
+it("renders the persisted account order while keeping All Inboxes selected", async () => {
+  await mount(false, false, false, undefined, [...accounts].reverse());
+  expect(
+    [...host.querySelectorAll(".tree-account")].map((account) =>
+      account.getAttribute("aria-label"),
+    ),
+  ).toEqual(["Account b", "Account a"]);
+  expect(
+    host.querySelector('.mail-folders > button[aria-current="page"]')
+      ?.textContent,
+  ).toContain("All Inboxes");
 });

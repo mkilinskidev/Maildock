@@ -113,6 +113,7 @@ describe("sidebar unread count", () => {
     await act(async () => {
       root!.render(
         <MailClient
+          initialNotification={{ accountId, mailboxId: inboxId }}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
           rolesByAccount={{ [accountId]: [] }}

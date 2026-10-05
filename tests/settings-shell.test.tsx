@@ -314,7 +314,7 @@ it("keeps one Add action and only configured accounts under Accounts; providers 
     (g) => g.querySelector("h2")?.textContent === "Accounts",
   )!;
   expect(
-    [...group.querySelectorAll("button")].map(
+    [...group.querySelectorAll('button:not([aria-label^="Move "])')].map(
       (b) => b.querySelector("span")?.textContent ?? b.textContent,
     ),
   ).toEqual(["DPoczta", "Microsoft", "+ Add account"]);
@@ -675,4 +675,64 @@ it("disables detail navigation while saving and updates list status from the sav
   expect(
     host.querySelector<HTMLInputElement>('[name="clientSecret"]')!.value,
   ).toBe("");
+});
+
+const orderButton = (label: string) =>
+  host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const railOrder = () =>
+  [...host.querySelectorAll(".settings-account-row > button span")].map(
+    (item) => item.textContent,
+  );
+it("persists accessible account moves immediately and updates every Settings account list", async () => {
+  await mount();
+  expect(orderButton("Move DPoczta up").disabled).toBe(true);
+  expect(orderButton("Move Microsoft down").disabled).toBe(true);
+  fetcher.mockResolvedValueOnce(
+    Response.json({ accounts: [accounts[1], accounts[0]] }),
+  );
+  await act(async () => orderButton("Move DPoczta down").click());
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/accounts/a/order",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ direction: "down" }),
+    }),
+  );
+  expect(railOrder()).toEqual(["Microsoft", "DPoczta"]);
+  expect(host.textContent).toContain("Account order saved.");
+  expect(router.refresh).toHaveBeenCalled();
+  expect(orderButton("Move Microsoft up").disabled).toBe(true);
+});
+it("retains account selection and unsaved fields when reordering", async () => {
+  await mount();
+  await click("DPoczta");
+  await input("displayName", "Unsaved label");
+  fetcher.mockResolvedValueOnce(
+    Response.json({ accounts: [accounts[1], accounts[0]] }),
+  );
+  await act(async () => orderButton("Move DPoczta down").click());
+  expect(
+    host.querySelector<HTMLInputElement>('input[name="displayName"]')?.value,
+  ).toBe("Unsaved label");
+  expect(
+    host.querySelector(
+      '.settings-account-row > button[aria-current="page"] span',
+    )?.textContent,
+  ).toBe("DPoczta");
+});
+it("keeps the previous order on network failure and enables retry", async () => {
+  await mount();
+  fetcher.mockRejectedValueOnce(new TypeError("offline"));
+  await act(async () => orderButton("Move DPoczta down").click());
+  expect(railOrder()).toEqual(["DPoczta", "Microsoft"]);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+    "Please try again",
+  );
+  expect(orderButton("Move DPoczta down").disabled).toBe(false);
+  fetcher.mockResolvedValueOnce(
+    Response.json({ accounts: [accounts[1], accounts[0]] }),
+  );
+  await act(async () => orderButton("Move DPoczta down").click());
+  expect(railOrder()).toEqual(["Microsoft", "DPoczta"]);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
 });

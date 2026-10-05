@@ -137,6 +137,7 @@ describe("global header search overlay", () => {
     await act(async () =>
       root.render(
         <MailClient
+          initialNotification={{ accountId: "a", mailboxId: "inbox" }}
           accounts={accounts}
           mailboxesByAccount={boxes}
           rolesByAccount={{}}
