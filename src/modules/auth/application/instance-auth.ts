@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import {
   hashPassword,
 } from "@/modules/auth/infrastructure/password";
 import type { Database } from "@/shared/infrastructure/database/database";
+import type { AppConfig } from "@/shared/infrastructure/config/config";
 import {
   account,
   instanceState,
@@ -15,6 +16,7 @@ import {
 } from "@/shared/infrastructure/database/schema";
 
 export const setupInputSchema = z.object({
+  bootstrapSecret: z.string().length(44),
   username: z
     .string()
     .trim()
@@ -27,6 +29,49 @@ export const setupInputSchema = z.object({
   password: z.string().min(12).max(128),
 });
 
+export class BootstrapAuthorizationError extends Error {}
+export class SetupThrottledError extends Error {}
+
+// Reuse Better Auth's storage with separate global keys. Reserve attempts atomically
+// before work starts; a fixed window survives web-process restarts.
+async function reserveSetupAttempt(database: Database, authorized: boolean) {
+  const key = authorized
+    ? "maildock:setup:authorized"
+    : "maildock:setup:invalid";
+  const max = authorized ? 5 : 30;
+  const now = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
+  const rows = await database.execute<{ count: number }>(sql`
+    insert into rate_limit (id, key, count, last_request)
+    values (${key}, ${key}, 1, ${now})
+    on conflict (key) do update set
+      count = case when rate_limit.last_request <= excluded.last_request - 60000 then 1
+        else least(rate_limit.count + 1, ${max + 1}) end,
+      last_request = case when rate_limit.last_request <= excluded.last_request - 60000
+        then excluded.last_request else rate_limit.last_request end
+    returning count
+  `);
+  if (rows[0].count > max) throw new SetupThrottledError();
+}
+
+export async function authorizeBootstrap(
+  database: Database,
+  supplied: unknown,
+  config: Pick<AppConfig, "bootstrapSecretDigest">,
+) {
+  const digest = createHash("sha256")
+    .update(
+      typeof supplied === "string" && supplied.length <= 44 ? supplied : "",
+    )
+    .digest();
+  if (
+    !config.bootstrapSecretDigest ||
+    !timingSafeEqual(digest, Buffer.from(config.bootstrapSecretDigest, "hex"))
+  ) {
+    await reserveSetupAttempt(database, false);
+    throw new BootstrapAuthorizationError();
+  }
+}
+
 export class InstanceAlreadyInitializedError extends Error {
   constructor() {
     super("This Maildock instance is already initialized.");
@@ -35,7 +80,7 @@ export class InstanceAlreadyInitializedError extends Error {
 }
 
 export async function isInstanceInitialized(
-  database: Database,
+  database: Pick<Database, "select">,
 ): Promise<boolean> {
   const [state] = await database
     .select({ initializedAt: instanceState.initializedAt })
@@ -48,12 +93,25 @@ export async function isInstanceInitialized(
 export async function initializeOwner(
   database: Database,
   input: z.infer<typeof setupInputSchema>,
+  config: Pick<AppConfig, "bootstrapSecretDigest">,
 ): Promise<void> {
+  if (await isInstanceInitialized(database))
+    throw new InstanceAlreadyInitializedError();
+  await authorizeBootstrap(database, input.bootstrapSecret, config);
   const parsed = setupInputSchema.parse(input);
   const normalizedUsername = parsed.username.toLowerCase();
-  const passwordHash = await hashPassword(parsed.password);
+  await reserveSetupAttempt(database, true);
 
   await database.transaction(async (transaction) => {
+    // Nonblocking, PostgreSQL-wide admission: at most one setup Argon2 job,
+    // including across processes. Transaction exit/crash releases the lock.
+    const locks = await transaction.execute<{ acquired: boolean }>(
+      sql`select pg_try_advisory_xact_lock(1296125003) as acquired`,
+    );
+    if (!locks[0].acquired) throw new SetupThrottledError();
+    if (await isInstanceInitialized(transaction))
+      throw new InstanceAlreadyInitializedError();
+    const passwordHash = await hashPassword(parsed.password);
     await transaction.execute(sql`select pg_advisory_xact_lock(1296125003)`);
 
     const [state] = await transaction

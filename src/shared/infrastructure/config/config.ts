@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { DEFAULT_ATTACHMENT_LIMITS } from "../../application/attachment-limits";
 import { DEFAULT_CONTENT_POLL_INTERVAL_MS } from "../../application/content-polling";
 
@@ -56,6 +57,9 @@ const schema = z
     APP_ORIGIN: z.url(),
     DATABASE_URL: z.string().min(1).startsWith("postgresql://"),
     AUTH_SECRET: secretSchema,
+    MAILDOCK_BOOTSTRAP_SECRET: z
+      .union([z.literal(""), encryptionKeySchema])
+      .optional(),
     CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
     CREDENTIALS_ENCRYPTION_KEY_ID: keyIdSchema.default("v1"),
     CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: previousKeysSchema,
@@ -161,6 +165,7 @@ export type AppConfig = Readonly<{
   appOrigin: string;
   databaseUrl: string;
   authSecret: string;
+  bootstrapSecretDigest?: string;
   credentialsEncryption: Readonly<{
     activeKeyId: string;
     keys: Readonly<Record<string, string>>;
@@ -208,6 +213,11 @@ export function parseConfig(
     appOrigin: new URL(result.data.APP_ORIGIN).origin,
     databaseUrl: result.data.DATABASE_URL,
     authSecret: result.data.AUTH_SECRET,
+    bootstrapSecretDigest: result.data.MAILDOCK_BOOTSTRAP_SECRET
+      ? createHash("sha256")
+          .update(result.data.MAILDOCK_BOOTSTRAP_SECRET)
+          .digest("hex")
+      : undefined,
     credentialsEncryption: Object.freeze({
       activeKeyId: result.data.CREDENTIALS_ENCRYPTION_KEY_ID,
       keys: Object.freeze({

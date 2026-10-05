@@ -153,16 +153,22 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       APP_ORIGIN: origin,
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/security`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
+      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
       ATTACHMENTS_PATH: root,
       LOG_LEVEL: "fatal",
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
-    await initializeOwner(database.db, {
-      username: "owner",
-      password: "correct horse battery staple",
-    });
+    await initializeOwner(
+      database.db,
+      {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "owner",
+        password: "correct horse battery staple",
+      },
+      config,
+    );
     const auth = createAuth(config, database.db);
     const login = await auth.handler(
       new Request(`${origin}/api/auth/sign-in/username`, {

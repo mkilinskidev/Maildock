@@ -18,6 +18,7 @@ export function SetupForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          bootstrapSecret: data.get("bootstrapSecret"),
           username: data.get("username"),
           password: data.get("password"),
         }),
@@ -43,6 +44,21 @@ export function SetupForm() {
       onSubmit={submit}
       className="auth-card"
     >
+      <label>
+        Bootstrap secret
+        <input
+          name="bootstrapSecret"
+          type="password"
+          required
+          minLength={44}
+          maxLength={44}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+      <p className="muted auth-help">
+        Enter the bootstrap secret from your deployment configuration.
+      </p>
       <label>
         Username
         <input

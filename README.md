@@ -15,11 +15,15 @@ The authoritative design is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), gove
 
 ## Configuration and secrets
 
-Copy `.env.example` to `.env` and replace every empty secret. Generate `AUTH_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` independently:
+Copy `.env.example` to `.env` and replace every empty secret. Generate `AUTH_SECRET`, `CREDENTIALS_ENCRYPTION_KEY`, and `MAILDOCK_BOOTSTRAP_SECRET` independently:
 
 ```sh
 openssl rand -base64 32
 ```
+
+Production deployments **MUST configure `MAILDOCK_BOOTSTRAP_SECRET` before exposing an uninitialized instance**. Use canonical base64 encoding of exactly 32 cryptographically random bytes (256 bits); do not use a human password. Enter it in the setup form alongside the new owner credentials. Never put it in a URL, browser storage, logs, or source control. The server retains only a SHA-256 digest in application configuration and does not store the bootstrap secret in PostgreSQL or send it to the browser. Missing configuration leaves provisioning disabled. After setup succeeds, remove the secret from deployment configuration and restart; the persisted initialized state keeps setup closed after restarts. This secret cannot reset an existing owner.
+
+Setup accepts at most 4 KiB per request and allows 10 seconds to read the body. Before Argon2 it checks persisted initialization, bootstrap authorization, and credential bounds. Separate global PostgreSQL fixed-window counters allow five authorized attempts and thirty invalid-secret attempts per minute; invalid-secret traffic cannot consume the authorized budget. A nonblocking transaction advisory lock admits only one setup password hash across web processes. Busy attempts return HTTP 429 with a 60-second retry hint. These controls reuse authentication rate-limit storage and do not depend on client IP or proxy headers. Keep normal reverse-proxy connection/request limits in place for public deployments.
 
 `AUTH_SECRET` must decode to at least 32 bytes. `CREDENTIALS_ENCRYPTION_KEY` must be canonical base64 for exactly 32 random bytes. `CREDENTIALS_ENCRYPTION_KEY_ID` identifies that key (start with `v1`). Do not commit `.env`, place secrets in images, reuse keys, or print them in logs. Production should inject them using a secret manager, mounted secret, or protected orchestrator secret.
 
