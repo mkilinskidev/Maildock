@@ -1,6 +1,11 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { username } from "better-auth/plugins";
+import {
+  isSessionWithinLifetime,
+  sessionAbsoluteMs,
+  sessionInactivitySeconds,
+} from "@/modules/auth/domain/session-policy";
 
 import {
   isOwnerUsername,
@@ -16,9 +21,6 @@ import {
   hashPassword,
   verifyPassword,
 } from "@/modules/auth/infrastructure/password";
-
-const twelveHours = 60 * 60 * 12;
-const thirtyDaysMs = 30 * 24 * 60 * 60 * 1_000;
 
 export function createAuth(config: AppConfig, database: Database) {
   return betterAuth({
@@ -43,7 +45,7 @@ export function createAuth(config: AppConfig, database: Database) {
       },
     },
     session: {
-      expiresIn: twelveHours,
+      expiresIn: sessionInactivitySeconds,
       updateAge: 15 * 60,
       cookieCache: { enabled: false },
       additionalFields: {
@@ -61,9 +63,42 @@ export function createAuth(config: AppConfig, database: Database) {
           before: async (session) => ({
             data: {
               ...session,
-              absoluteExpiresAt: new Date(Date.now() + thirtyDaysMs),
+              // Better Auth 1.7.5 hardcodes 24h for rememberMe:false. Its
+              // supported database hook corrects expiry without changing cookies.
+              expiresAt: new Date(
+                session.createdAt.getTime() + sessionInactivitySeconds * 1_000,
+              ),
+              absoluteExpiresAt: new Date(
+                session.createdAt.getTime() + sessionAbsoluteMs,
+              ),
             },
           }),
+        },
+        update: {
+          before: async (update, context) => {
+            // get-session supplies the authoritative, pre-refresh database row.
+            // Reject before writing: the public protocol must not revive an old
+            // overlong session, even when the dont_remember cookie is omitted.
+            const previous = context?.context.session?.session;
+            const now = Date.now();
+            if (!previous || !isSessionWithinLifetime(previous, now))
+              return false;
+            return {
+              data: {
+                ...update,
+                createdAt: previous.createdAt,
+                absoluteExpiresAt: previous.absoluteExpiresAt,
+                updatedAt: new Date(now),
+                expiresAt: new Date(
+                  Math.min(
+                    now + sessionInactivitySeconds * 1_000,
+                    (previous.absoluteExpiresAt as Date).getTime(),
+                    previous.createdAt.getTime() + sessionAbsoluteMs,
+                  ),
+                ),
+              },
+            };
+          },
         },
       },
     },
