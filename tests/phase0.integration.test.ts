@@ -113,6 +113,9 @@ describe("Phase 0 PostgreSQL foundations", () => {
   });
 
   beforeEach(async () => {
+    await db
+      .update(instanceState)
+      .set({ initializedAt: null, ownerUserId: null });
     await db.delete(mailAccounts);
     await db.delete(session);
     await db.delete(account);

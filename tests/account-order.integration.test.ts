@@ -50,8 +50,9 @@ beforeAll(async () => {
       VALUES (${legacy[index]}, 'Existing', 'owner@example.com', 'imap.test', 993, 'tls', 'owner', '{}', 'smtp.test', 465, 'tls', ${created})`;
   }
   for (const migration of migrations.slice(27))
-    for (const statement of migration.sql)
-      await database.client.unsafe(statement);
+    await database.client.begin(async (tx) => {
+      for (const statement of migration.sql) await tx.unsafe(statement);
+    });
   service = new AccountsService(
     database.db,
     new AesGcmSecretEncryption("v1", {
@@ -161,8 +162,9 @@ it("initializes an empty installation so its first new account receives position
     for (const migration of readMigrationFiles({
       migrationsFolder: "db/migrations",
     }))
-      for (const statement of migration.sql)
-        await empty.client.unsafe(statement);
+      await empty.client.begin(async (tx) => {
+        for (const statement of migration.sql) await tx.unsafe(statement);
+      });
     const [account] = await empty.db
       .insert(mailAccounts)
       .values({

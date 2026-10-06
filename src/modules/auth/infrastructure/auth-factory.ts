@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { username } from "better-auth/plugins";
 import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
+import { isInstanceOwner } from "@/modules/auth/application/owner-binding";
 import {
   isSessionWithinLifetime,
   sessionAbsoluteMs,
@@ -24,7 +25,7 @@ import {
 } from "@/modules/auth/infrastructure/password";
 
 export function createAuth(config: AppConfig, database: Database) {
-  return betterAuth({
+  const auth = betterAuth({
     appName: "Maildock",
     baseURL: config.appOrigin,
     basePath: "/api/auth",
@@ -140,5 +141,9 @@ export function createAuth(config: AppConfig, database: Database) {
     experimental: {
       instrumentation: { enabled: false },
     },
+  });
+  // Bind the authorization reader to the same database as Better Auth.
+  return Object.assign(auth, {
+    isInstanceOwner: (userId: string) => isInstanceOwner(database, userId),
   });
 }

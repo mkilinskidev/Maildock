@@ -197,6 +197,13 @@
       "when": 1791210409314,
       "tag": "0027_account_order",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791266062563,
+      "tag": "0028_owner_binding",
+      "breakpoints": true
     }
   ]
 }

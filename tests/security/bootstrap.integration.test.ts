@@ -16,7 +16,7 @@ import {
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { sql } from "drizzle-orm";
 import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
@@ -139,9 +139,11 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     vi.restoreAllMocks();
     hash = vi.spyOn(passwords, "hashPassword");
     runtime.config = config;
+    await database.db
+      .update(instanceState)
+      .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
-    await database.db.update(instanceState).set({ initializedAt: null });
   });
   afterAll(async () => {
     vi.restoreAllMocks();
@@ -262,13 +264,18 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
   it("rechecks persisted state when initialization races admission", async () => {
     hash.mockImplementationOnce(async () => {
       // Simulate a state change after the early check. The authoritative check must reject it.
+      const id = randomUUID();
+      await database.db
+        .insert(user)
+        .values({ id, name: "Racing owner", email: "owner@localhost.invalid" });
       await database.db
         .update(instanceState)
-        .set({ initializedAt: new Date() });
+        .set({ initializedAt: new Date(), ownerUserId: id });
       return "unused-test-hash";
     });
     expect((await POST(request())).status).toBe(409);
-    expect(await database.db.select().from(user)).toHaveLength(0);
+    expect(await database.db.select().from(user)).toHaveLength(1);
+    expect(await database.db.select().from(account)).toHaveLength(0);
   });
   it("reserves authorized attempts before failures, persists budget, and expires fixed window", async () => {
     hash.mockRejectedValue(new Error("sensitive internal error"));

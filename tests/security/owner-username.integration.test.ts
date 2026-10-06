@@ -125,10 +125,12 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
   });
   beforeEach(async () => {
     vi.restoreAllMocks();
+    await database.db
+      .update(instanceState)
+      .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(loginThrottle);
-    await database.db.update(instanceState).set({ initializedAt: null });
   });
   afterAll(async () => {
     vi.restoreAllMocks();
@@ -243,7 +245,7 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
       });
       await database.db
         .update(instanceState)
-        .set({ initializedAt: new Date() });
+        .set({ initializedAt: new Date(), ownerUserId: id });
       const before = await database.db.select().from(user);
       expect(
         (

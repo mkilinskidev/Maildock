@@ -10,12 +10,15 @@ export async function getValidSession(
     query: { disableRefresh: true, disableCookieCache: true },
   });
   if (!session || !isSessionWithinLifetime(session.session)) return null;
+  if (!(await authInstance.isInstanceOwner(session.user.id))) return null;
   // Only a still-valid session may enter Better Auth's normal refresh path.
   const refreshed = await authInstance.api.getSession({
     headers: requestHeaders,
     query: { disableCookieCache: true },
   });
-  return refreshed && isSessionWithinLifetime(refreshed.session)
+  return refreshed &&
+    refreshed.user.id === session.user.id &&
+    isSessionWithinLifetime(refreshed.session)
     ? refreshed
     : null;
 }

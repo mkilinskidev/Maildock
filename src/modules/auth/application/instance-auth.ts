@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -79,11 +79,18 @@ export async function isInstanceInitialized(
   database: Pick<Database, "select">,
 ): Promise<boolean> {
   const [state] = await database
-    .select({ initializedAt: instanceState.initializedAt })
+    .select({
+      initializedAt: instanceState.initializedAt,
+      ownerUserId: instanceState.ownerUserId,
+    })
     .from(instanceState)
     .where(eq(instanceState.id, 1))
     .limit(1);
-  return state?.initializedAt !== null && state?.initializedAt !== undefined;
+  // Corrupt or partially provisioned instances must never become claimable.
+  if (!state || state.initializedAt !== null || state.ownerUserId !== null)
+    return true;
+  const users = await database.select({ id: user.id }).from(user).limit(1);
+  return users.length > 0;
 }
 
 export async function initializeOwner(
@@ -125,27 +132,24 @@ async function createOwner(
     const passwordHash = await hashPassword(parsed.password);
 
     const [state] = await transaction
-      .select({ initializedAt: instanceState.initializedAt })
+      .select({
+        initializedAt: instanceState.initializedAt,
+        ownerUserId: instanceState.ownerUserId,
+      })
       .from(instanceState)
       .where(eq(instanceState.id, 1))
       .for("update")
       .limit(1);
 
-    if (!state || state.initializedAt) {
+    if (!state || state.initializedAt !== null || state.ownerUserId !== null) {
       throw new InstanceAlreadyInitializedError();
     }
 
-    const existingOwners = await transaction
+    const existingUsers = await transaction
       .select({ id: user.id })
       .from(user)
-      .where(
-        and(
-          eq(user.email, "owner@localhost.invalid"),
-          eq(user.username, normalizedUsername),
-        ),
-      )
       .limit(1);
-    if (existingOwners.length > 0) {
+    if (existingUsers.length > 0) {
       throw new InstanceAlreadyInitializedError();
     }
 
@@ -170,10 +174,11 @@ async function createOwner(
       createdAt: now,
       updatedAt: now,
     });
-    await transaction
+    const initialized = await transaction
       .update(instanceState)
       .set({
         initializedAt: now,
+        ownerUserId: userId,
         updatedAt: now,
         passwordAlgorithm: "argon2id",
         passwordParameters: {
@@ -183,6 +188,14 @@ async function createOwner(
           outputLen: argon2idParameters.outputLen,
         },
       })
-      .where(eq(instanceState.id, 1));
+      .where(
+        and(
+          eq(instanceState.id, 1),
+          isNull(instanceState.initializedAt),
+          isNull(instanceState.ownerUserId),
+        ),
+      )
+      .returning({ id: instanceState.id });
+    if (initialized.length !== 1) throw new InstanceAlreadyInitializedError();
   });
 }

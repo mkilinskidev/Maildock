@@ -246,6 +246,10 @@ export const instanceState = pgTable(
   {
     id: integer("id").primaryKey(),
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
+    ownerUserId: text("owner_user_id").references(() => user.id, {
+      onDelete: "restrict",
+      onUpdate: "restrict",
+    }),
     passwordAlgorithm: text("password_algorithm"),
     conversationView: boolean("conversation_view").default(false).notNull(),
     notificationPreferences: jsonb("notification_preferences")
@@ -281,7 +285,13 @@ export const instanceState = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [check("instance_state_singleton", sql`${table.id} = 1`)],
+  (table) => [
+    check("instance_state_singleton", sql`${table.id} = 1`),
+    check(
+      "instance_state_owner_binding",
+      sql`(${table.initializedAt} is null and ${table.ownerUserId} is null) or (${table.initializedAt} is not null and ${table.ownerUserId} is not null and length(trim(${table.ownerUserId})) > 0 and ${table.ownerUserId} = trim(${table.ownerUserId}))`,
+    ),
+  ],
 );
 
 export const user = pgTable(
