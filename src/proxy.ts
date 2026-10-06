@@ -1,5 +1,7 @@
 import { createContentSecurityPolicy } from "@/shared/infrastructure/security/content-security-policy";
 import { randomBytes } from "node:crypto";
+import { createLogger } from "@/shared/infrastructure/logging/logger";
+import { logFailure } from "@/shared/infrastructure/logging/diagnostics";
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -52,7 +54,19 @@ export async function proxy(request: NextRequest) {
     return continueWithCsp(request, nonce, contentSecurityPolicy);
   }
 
-  const session = await getValidBusinessSession(auth, request.headers);
+  let session;
+  try {
+    session = await getValidBusinessSession(auth, request.headers);
+  } catch (error) {
+    logFailure(createLogger({ logLevel: "info" }), error, "web", "request");
+    return addCsp(
+      NextResponse.json(
+        { error: "Request could not be completed." },
+        { status: 503 },
+      ),
+      contentSecurityPolicy,
+    );
+  }
   if (session) return continueWithCsp(request, nonce, contentSecurityPolicy);
 
   if (request.nextUrl.pathname.startsWith("/api/")) {

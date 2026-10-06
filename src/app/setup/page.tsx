@@ -1,3 +1,4 @@
+import { pageBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { redirect } from "next/navigation";
 
 import { SetupForm } from "@/components/setup-form";
@@ -10,20 +11,22 @@ export const metadata = { title: "Setup" };
 export const dynamic = "force-dynamic";
 
 export default async function SetupPage() {
-  if (await isInstanceInitialized(db)) redirect("/login");
-  return (
-    <main className="auth-page">
-      <section className="auth-content">
-        <div className="auth-brand">
-          <MaildockBrand />
-        </div>
-        <h1>Set up Maildock</h1>
-        <p>Create the only owner account for this instance.</p>
-        <SetupForm />
-        <div className="auth-theme">
-          <ThemeControl />
-        </div>
-      </section>
-    </main>
-  );
+  return pageBoundary(async () => {
+    if (await isInstanceInitialized(db)) redirect("/login");
+    return (
+      <main className="auth-page">
+        <section className="auth-content">
+          <div className="auth-brand">
+            <MaildockBrand />
+          </div>
+          <h1>Set up Maildock</h1>
+          <p>Create the only owner account for this instance.</p>
+          <SetupForm />
+          <div className="auth-theme">
+            <ThemeControl />
+          </div>
+        </section>
+      </main>
+    );
+  });
 }

@@ -1,3 +1,4 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { initialMfaHttp } from "@/modules/auth/application/initial-mfa-http";
 import {
   totpLoginSchema,
@@ -8,12 +9,15 @@ import { getConfig } from "@/shared/infrastructure/config/config";
 
 export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
-  const config = getConfig();
-  return initialMfaHttp(
-    request,
-    config,
-    totpLoginSchema,
-    (input) => verifyMfaLogin(db, config, request.headers, input.code, "totp"),
-    "Sign in could not be completed.",
-  );
+  return routeBoundary(async () => {
+    const config = getConfig();
+    return initialMfaHttp(
+      request,
+      config,
+      totpLoginSchema,
+      (input) =>
+        verifyMfaLogin(db, config, request.headers, input.code, "totp"),
+      "Sign in could not be completed.",
+    );
+  });
 }

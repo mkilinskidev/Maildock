@@ -1,3 +1,4 @@
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { ownerPasswordSchema } from "../domain/password-policy";
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
@@ -139,6 +140,16 @@ export async function regenerateRecoveryCodes(
       throw rejected();
     // The enclosing promise resolves after COMMIT. No cookies/API tokens leak.
     return { recoveryCodes: result.backupCodes };
+  }).then((result) => {
+    if (result instanceof Response && !result.ok) {
+      securityEvent(
+        result.status === 429 ? "admission_rejected" : "proof_rejected",
+      );
+      return result;
+    }
+    securityEvent("recovery_codes_regenerated");
+    if (input.proofType === "recovery") securityEvent("recovery_code_consumed");
+    return result;
   });
 }
 
@@ -214,6 +225,16 @@ export async function startAuthenticatorReplacement(
     );
     response.headers.set("Cache-Control", "no-store");
     return response;
+  }).then((result) => {
+    if (result instanceof Response && !result.ok) {
+      securityEvent(
+        result.status === 429 ? "admission_rejected" : "proof_rejected",
+      );
+      return result;
+    }
+    securityEvent("authenticator_replacement_started");
+    if (input.proofType === "recovery") securityEvent("recovery_code_consumed");
+    return result;
   });
 }
 
@@ -384,5 +405,14 @@ export async function completeAuthenticatorReplacement(
       response.headers.set("Cache-Control", "no-store");
       return response;
     },
-  );
+  ).then((result) => {
+    if (result instanceof Response && !result.ok) {
+      securityEvent(
+        result.status === 429 ? "admission_rejected" : "proof_rejected",
+      );
+      return result;
+    }
+    securityEvent("authenticator_replacement_completed");
+    return result;
+  });
 }

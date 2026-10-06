@@ -1,3 +1,4 @@
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { ownerPasswordSchema } from "../domain/password-policy";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -148,5 +149,14 @@ export async function completeInitialMfa(
       { completed: true, freshLoginRequired: true, recoveryCodes: backupCodes },
       { headers: cleanup.headers },
     );
+  }).then((result) => {
+    if (result instanceof Response && !result.ok) {
+      securityEvent(
+        result.status === 429 ? "admission_rejected" : "proof_rejected",
+      );
+      return result;
+    }
+    securityEvent("mfa_enrollment_completed");
+    return result;
   });
 }

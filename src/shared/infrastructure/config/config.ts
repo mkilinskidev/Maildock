@@ -136,7 +136,17 @@ const schema = z
       .default(5 * 1024 * 1024),
   })
   .superRefine((value, context) => {
-    const origin = new URL(value.APP_ORIGIN);
+    let origin: URL;
+    try {
+      origin = new URL(value.APP_ORIGIN);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        path: ["APP_ORIGIN"],
+        message: "must be a valid URL",
+      });
+      return;
+    }
     if (
       origin.pathname !== "/" ||
       origin.search ||

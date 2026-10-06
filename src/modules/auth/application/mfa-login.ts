@@ -1,3 +1,4 @@
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import { withInitialMfaBoundary } from "../infrastructure/auth-factory";
@@ -91,6 +92,16 @@ export async function verifyMfaLogin(
     });
     for (const cookie of cleanup.headers.getSetCookie())
       result.headers.append("Set-Cookie", cookie);
+    return result;
+  }).then((result) => {
+    if (result instanceof Response && !result.ok) {
+      securityEvent(
+        result.status === 429 ? "admission_rejected" : "proof_rejected",
+      );
+      return result;
+    }
+    securityEvent("mfa_login_completed");
+    if (method === "recovery") securityEvent("recovery_code_consumed");
     return result;
   });
 }

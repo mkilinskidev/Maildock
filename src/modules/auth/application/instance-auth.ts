@@ -1,3 +1,4 @@
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { ownerPasswordSchema } from "../domain/password-policy";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
@@ -51,7 +52,10 @@ export async function reserveSetupAttempt(
         then excluded.last_request else rate_limit.last_request end
     returning count
   `);
-  if (rows[0].count > max) throw new SetupThrottledError();
+  if (rows[0].count > max) {
+    securityEvent("admission_rejected");
+    throw new SetupThrottledError();
+  }
 }
 
 export async function authorizeBootstrap(
@@ -69,6 +73,7 @@ export async function authorizeBootstrap(
     !timingSafeEqual(digest, Buffer.from(config.bootstrapSecretDigest, "hex"))
   ) {
     await reserveSetupAttempt(database, false);
+    securityEvent("proof_rejected");
     throw new BootstrapAuthorizationError();
   }
 }
@@ -203,4 +208,5 @@ async function createOwner(
       .returning({ id: instanceState.id });
     if (initialized.length !== 1) throw new InstanceAlreadyInitializedError();
   });
+  securityEvent("setup_completed");
 }

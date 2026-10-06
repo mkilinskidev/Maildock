@@ -1,3 +1,4 @@
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { eq, sql } from "drizzle-orm";
 import type { Database } from "@/shared/infrastructure/database/database";
 import { authAdmission } from "@/shared/infrastructure/database/schema";
@@ -11,6 +12,7 @@ export class AuthThrottledError extends Error {
   }
 }
 export function authThrottleResponse(retryAfter: number) {
+  securityEvent("admission_rejected");
   return Response.json(
     { error: "Authentication could not be completed. Try again later." },
     {
@@ -42,7 +44,10 @@ export async function reserveAuthWork(
         then excluded.expires_at else auth_admission.expires_at end
     returning count, greatest(1, ceil(extract(epoch from (expires_at - clock_timestamp()))))::integer as retry
   `);
-  if (rows[0].count > max) throw new AuthThrottledError(rows[0].retry);
+  if (rows[0].count > max) {
+    securityEvent("admission_rejected");
+    throw new AuthThrottledError(rows[0].retry);
+  }
 }
 
 type ManagementStage = "password" | "factor";

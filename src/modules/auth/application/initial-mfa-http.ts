@@ -1,3 +1,4 @@
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { z } from "zod";
 import { hasValidOrigin } from "./origin";
 import { requireJsonMediaType } from "./json-media-type";
@@ -85,9 +86,12 @@ export async function initialMfaHttp<T>(
     if (
       cause instanceof InitialMfaRejected ||
       cause instanceof BootstrapAuthorizationError
-    )
+    ) {
+      securityEvent("proof_rejected");
       return error(403);
+    }
     if (cause instanceof SetupThrottledError) {
+      securityEvent("admission_rejected");
       const response = error(429);
       response.headers.set("Retry-After", "60");
       return response;

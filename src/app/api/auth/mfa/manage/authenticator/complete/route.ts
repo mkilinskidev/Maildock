@@ -1,3 +1,4 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { initialMfaHttp } from "@/modules/auth/application/initial-mfa-http";
 import {
   replacementCompleteSchema,
@@ -8,13 +9,20 @@ import { getConfig } from "@/shared/infrastructure/config/config";
 
 export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
-  const config = getConfig();
-  return initialMfaHttp(
-    request,
-    config,
-    replacementCompleteSchema,
-    (input) =>
-      completeAuthenticatorReplacement(db, config, request.headers, input.code),
-    "MFA management could not be completed.",
-  );
+  return routeBoundary(async () => {
+    const config = getConfig();
+    return initialMfaHttp(
+      request,
+      config,
+      replacementCompleteSchema,
+      (input) =>
+        completeAuthenticatorReplacement(
+          db,
+          config,
+          request.headers,
+          input.code,
+        ),
+      "MFA management could not be completed.",
+    );
+  });
 }

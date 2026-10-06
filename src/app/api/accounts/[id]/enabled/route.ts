@@ -1,3 +1,4 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 
@@ -9,31 +10,33 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request);
-  if (denied) return denied;
-  const unsupported = requireJsonMediaType(request);
-  if (unsupported) return unsupported;
-  try {
-    const { enabled } = z
-      .object({ enabled: z.boolean() })
-      .parse(await request.json());
-    return Response.json({
-      account: await accountsService.setEnabled(
-        z.uuid().parse((await params).id),
-        enabled,
-      ),
-    });
-  } catch (error) {
-    if (error instanceof MailAccountNotFoundError)
-      return Response.json({ error: error.message }, { status: 404 });
-    if (error instanceof ZodError)
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    const unsupported = requireJsonMediaType(request);
+    if (unsupported) return unsupported;
+    try {
+      const { enabled } = z
+        .object({ enabled: z.boolean() })
+        .parse(await request.json());
+      return Response.json({
+        account: await accountsService.setEnabled(
+          z.uuid().parse((await params).id),
+          enabled,
+        ),
+      });
+    } catch (error) {
+      if (error instanceof MailAccountNotFoundError)
+        return Response.json({ error: error.message }, { status: 404 });
+      if (error instanceof ZodError)
+        return Response.json(
+          { error: "Invalid enabled state." },
+          { status: 400 },
+        );
       return Response.json(
-        { error: "Invalid enabled state." },
-        { status: 400 },
+        { error: "The mail account could not be updated." },
+        { status: 500 },
       );
-    return Response.json(
-      { error: "The mail account could not be updated." },
-      { status: 500 },
-    );
-  }
+    }
+  });
 }

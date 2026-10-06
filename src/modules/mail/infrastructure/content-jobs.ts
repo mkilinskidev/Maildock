@@ -1,3 +1,6 @@
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
@@ -33,6 +36,9 @@ export class PgBossContentScheduler implements ContentScheduler {
       connectionString: config.databaseUrl,
       application_name: "maildock-web-content-enqueue",
     });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
   }
   private start() {
     this.started ??= (async () => {
@@ -61,7 +67,7 @@ export async function registerContentWorker(
   await boss.work(
     MESSAGE_CONTENT_QUEUE,
     { localConcurrency: 1 },
-    async (batch) => {
+    safeJobHandler("message-content", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Content fetch received an empty batch.");
       const request = payload.parse(job.data);
@@ -70,6 +76,6 @@ export async function registerContentWorker(
         request.mailboxId,
         request.messageId,
       );
-    },
+    }),
   );
 }

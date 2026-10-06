@@ -1,3 +1,6 @@
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 
@@ -35,6 +38,9 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
       connectionString: config.databaseUrl,
       application_name: "maildock-web-message-enqueue",
     });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
   }
 
   private start(): Promise<void> {
@@ -69,13 +75,13 @@ export async function registerRecentSyncWorker(
   await boss.work(
     MAILBOX_RECENT_SYNC_QUEUE,
     { localConcurrency: concurrency },
-    async (batch) => {
+    safeJobHandler("recent-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Recent sync received an empty batch.");
       const payload = recentSyncPayloadSchema.parse(job.data);
       await withLock(payload.mailboxId, () =>
         service.runRecentSync(payload.accountId, payload.mailboxId),
       );
-    },
+    }),
   );
 }

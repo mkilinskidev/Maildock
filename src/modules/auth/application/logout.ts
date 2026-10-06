@@ -6,6 +6,8 @@ import type { AppConfig } from "@/shared/infrastructure/config/config";
 import type { Database } from "@/shared/infrastructure/database/database";
 import { session } from "@/shared/infrastructure/database/schema";
 import type { Logger } from "pino";
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
+import { bestEffortDiagnostic } from "../../../shared/infrastructure/logging/diagnostics";
 
 export async function logoutCurrentSession(
   request: Request,
@@ -36,10 +38,13 @@ export async function logoutCurrentSession(
       status = 200;
     }
   } catch {
+    securityEvent("session_failed");
     // Do not log raw DB errors: they may contain credentials or session tokens.
-    logger.error(
-      { event: "logout_revocation_failed" },
-      "Logout could not be confirmed.",
+    bestEffortDiagnostic(() =>
+      logger.error(
+        { event: "logout_revocation_failed" },
+        "Logout could not be confirmed.",
+      ),
     );
   }
 
@@ -61,9 +66,12 @@ export async function logoutCurrentSession(
     for (const cookie of cleanup.headers.getSetCookie())
       response.headers.append("Set-Cookie", cookie);
   } catch {
-    logger.error(
-      { event: "logout_cookie_cleanup_failed" },
-      "Logout cookie cleanup failed.",
+    securityEvent("session_failed");
+    bestEffortDiagnostic(() =>
+      logger.error(
+        { event: "logout_cookie_cleanup_failed" },
+        "Logout cookie cleanup failed.",
+      ),
     );
     // Revocation, if confirmed, remains authoritative despite cleanup failure.
   }

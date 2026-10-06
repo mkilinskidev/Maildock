@@ -1,4 +1,7 @@
 import { betterAuth } from "better-auth";
+import { betterAuthLogger } from "./auth-logger";
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { twoFactor, username } from "better-auth/plugins";
 import { eq, sql } from "drizzle-orm";
@@ -103,7 +106,10 @@ export function createAuth(config: AppConfig, database: Database) {
               // Recheck after acquiring M, immediately before the credential read.
               // Queued requests observe the previous committed failure at READ COMMITTED.
               const retry = await getLoginDelaySeconds(tx, input.username);
-              if (retry) return authThrottleResponse(retry);
+              if (retry) {
+                securityEvent("admission_rejected");
+                return authThrottleResponse(retry);
+              }
               const response = await scoped.handler(
                 new Request(request.url, {
                   method: "POST",
@@ -161,8 +167,13 @@ export function createAuth(config: AppConfig, database: Database) {
 }
 
 function createAuthEngine(config: AppConfig, database: Database) {
+  const dependencyLogger = betterAuthLogger(createLogger(config));
   const auth = betterAuth({
     appName: "Maildock",
+    logger: dependencyLogger,
+    // Router onError can use core's global fallback outside endpoint context.
+    // Its supported callback prevents that separate console path as well.
+    onAPIError: { onError: () => dependencyLogger.log("error") },
     baseURL: config.appOrigin,
     basePath: "/api/auth",
     secret: config.authSecret,

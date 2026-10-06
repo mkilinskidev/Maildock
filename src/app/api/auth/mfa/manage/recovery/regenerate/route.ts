@@ -1,3 +1,4 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { initialMfaHttp } from "@/modules/auth/application/initial-mfa-http";
 import {
   managementSchema,
@@ -8,12 +9,14 @@ import { getConfig } from "@/shared/infrastructure/config/config";
 
 export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
-  const config = getConfig();
-  return initialMfaHttp(
-    request,
-    config,
-    managementSchema,
-    (input) => regenerateRecoveryCodes(db, config, request.headers, input),
-    "MFA management could not be completed.",
-  );
+  return routeBoundary(async () => {
+    const config = getConfig();
+    return initialMfaHttp(
+      request,
+      config,
+      managementSchema,
+      (input) => regenerateRecoveryCodes(db, config, request.headers, input),
+      "MFA management could not be completed.",
+    );
+  });
 }

@@ -1,3 +1,4 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { draftService } from "@/modules/accounts/infrastructure/accounts";
@@ -10,50 +11,56 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request);
-  if (denied) return denied;
-  try {
-    const { id } = await context.params;
-    return Response.json(await draftService.get(id), {
-      headers: { "Cache-Control": "private, no-store" },
-    });
-  } catch (e) {
-    return draftApiError(e);
-  }
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    try {
+      const { id } = await context.params;
+      return Response.json(await draftService.get(id), {
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    } catch (e) {
+      return draftApiError(e);
+    }
+  });
 }
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request);
-  if (denied) return denied;
-  const unsupported = requireJsonMediaType(request);
-  if (unsupported) return unsupported;
-  try {
-    const { id } = await context.params;
-    return Response.json(
-      await draftService.update(id, await readDraftRequest(request)),
-    );
-  } catch (e) {
-    return draftApiError(e);
-  }
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    const unsupported = requireJsonMediaType(request);
+    if (unsupported) return unsupported;
+    try {
+      const { id } = await context.params;
+      return Response.json(
+        await draftService.update(id, await readDraftRequest(request)),
+      );
+    } catch (e) {
+      return draftApiError(e);
+    }
+  });
 }
 export async function DELETE(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request);
-  if (denied) return denied;
-  const unsupported = requireJsonMediaType(request);
-  if (unsupported) return unsupported;
-  try {
-    const { id } = await context.params;
-    const { expectedRevision } = draftRevision.parse(
-      await readDraftRequest(request),
-    );
-    await draftService.discard(id, expectedRevision);
-    return new Response(null, { status: 204 });
-  } catch (e) {
-    return draftApiError(e);
-  }
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    const unsupported = requireJsonMediaType(request);
+    if (unsupported) return unsupported;
+    try {
+      const { id } = await context.params;
+      const { expectedRevision } = draftRevision.parse(
+        await readDraftRequest(request),
+      );
+      await draftService.discard(id, expectedRevision);
+      return new Response(null, { status: 204 });
+    } catch (e) {
+      return draftApiError(e);
+    }
+  });
 }

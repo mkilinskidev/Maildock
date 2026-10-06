@@ -1,3 +1,6 @@
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
@@ -22,6 +25,9 @@ export class PgBossAttachmentScheduler {
       connectionString: config.databaseUrl,
       application_name: "maildock-web-attachment-enqueue",
     });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
   }
   async enqueue(id: string) {
     this.started ??= (async () => {
@@ -40,10 +46,14 @@ export async function registerAttachmentWorker(
   service: AttachmentService,
 ) {
   await ensureAttachmentQueue(boss);
-  await boss.work(ATTACHMENT_QUEUE, { localConcurrency: 2 }, async (batch) => {
-    const { attachmentId } = attachmentJob.parse(batch[0]?.data);
-    await service.run(attachmentId);
-  });
+  await boss.work(
+    ATTACHMENT_QUEUE,
+    { localConcurrency: 2 },
+    safeJobHandler("attachment", async (batch) => {
+      const { attachmentId } = attachmentJob.parse(batch[0]?.data);
+      await service.run(attachmentId);
+    }),
+  );
 }
 export class AttachmentPoller {
   private timer?: ReturnType<typeof setInterval>;

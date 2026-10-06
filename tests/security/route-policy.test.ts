@@ -110,11 +110,33 @@ it("inventories every HTTP method and requires the guard before application work
         continue;
       const method = statement.name.text;
       const key = `${name}:${method}`;
+      // F11 permits exactly one outer failure boundary. Authorization must
+      // still be the first application statement INSIDE that boundary, and
+      // no work may run outside it. All original guard/parser checks remain.
+      const outer = statement.body!;
+      expect(outer.statements, `${key}: one outer boundary only`).toHaveLength(
+        1,
+      );
+      const returned = outer.statements[0];
+      expect(ts.isReturnStatement(returned), key).toBe(true);
+      if (
+        !ts.isReturnStatement(returned) ||
+        !returned.expression ||
+        !ts.isCallExpression(returned.expression)
+      )
+        throw new Error(`Missing route boundary: ${key}`);
+      const call = returned.expression;
+      expect(call.expression.getText(source), key).toBe("routeBoundary");
+      expect(call.arguments, key).toHaveLength(1);
+      const work = call.arguments[0];
+      expect(ts.isArrowFunction(work), key).toBe(true);
+      if (!ts.isArrowFunction(work) || !ts.isBlock(work.body))
+        throw new Error(`Missing boundary callback: ${key}`);
+      const body = work.body;
       if (boundaries.has(key)) {
         foundExceptions.add(key);
         continue;
       }
-      const body = statement.body!;
       const first = body.statements[0]?.getText(source);
       const second = body.statements[1]?.getText(source);
       expect(first, key).toBe(

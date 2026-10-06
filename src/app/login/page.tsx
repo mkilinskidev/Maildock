@@ -1,3 +1,4 @@
+import { pageBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { redirect } from "next/navigation";
 
 import { LoginForm } from "@/components/login-form";
@@ -13,22 +14,24 @@ export const metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
-  if (!(await isInstanceInitialized(db))) redirect("/setup");
-  const landing = await ownerLanding(auth, await headers());
-  if (landing !== "/login") redirect(landing);
-  return (
-    <main className="auth-page">
-      <section className="auth-content">
-        <div className="auth-brand">
-          <MaildockBrand />
-        </div>
-        <h1>Welcome back</h1>
-        <p>Sign in to your Maildock instance.</p>
-        <LoginForm />
-        <div className="auth-theme">
-          <ThemeControl />
-        </div>
-      </section>
-    </main>
-  );
+  return pageBoundary(async () => {
+    if (!(await isInstanceInitialized(db))) redirect("/setup");
+    const landing = await ownerLanding(auth, await headers());
+    if (landing !== "/login") redirect(landing);
+    return (
+      <main className="auth-page">
+        <section className="auth-content">
+          <div className="auth-brand">
+            <MaildockBrand />
+          </div>
+          <h1>Welcome back</h1>
+          <p>Sign in to your Maildock instance.</p>
+          <LoginForm />
+          <div className="auth-theme">
+            <ThemeControl />
+          </div>
+        </section>
+      </main>
+    );
+  });
 }
