@@ -80,7 +80,10 @@ describe("F2.1 transactional Drizzle migration on disposable PostgreSQL", () => 
     expect(column).toEqual({ column_default: "false", is_nullable: "NO" });
     const [journal] =
       await database.client`SELECT count(*)::integer AS count FROM drizzle.__drizzle_migrations`;
-    expect(journal.count).toBe(31);
+    expect(journal.count).toBe(
+      JSON.parse(await readFile("db/migrations/meta/_journal.json", "utf8"))
+        .entries.length,
+    );
   });
   it.each([
     "missing row",

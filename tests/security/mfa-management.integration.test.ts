@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import {
@@ -51,6 +51,7 @@ import {
   user,
   verification,
   rateLimit,
+  authAdmission,
 } from "@/shared/infrastructure/database/schema";
 import { createLogger } from "@/shared/infrastructure/logging/logger";
 
@@ -241,6 +242,7 @@ beforeEach(async () => {
   await database.db.delete(user);
   await database.db.delete(verification);
   await database.db.delete(rateLimit);
+  await database.db.delete(authAdmission);
   await initializeOwner(
     database.db,
     { bootstrapSecret, username: "owner-01", password },
@@ -304,10 +306,21 @@ describe("F2.4 recovery regeneration", () => {
         body: { userId: ownerId },
       });
       expect(original.backupCodes).toEqual(recoveryCodes);
-      for (const code of oldCodes) {
+      for (const [index, code] of oldCodes.entries()) {
+        expect(recoveryCodes).not.toContain(code);
         const invalid = await managed("regenerate", proof("recovery", code));
-        expect(invalid.status).toBe(403);
+        // F8: after five rejected old codes, the shared management factor
+        // budget denies further proof work. Normal login has a separate budget.
+        expect(invalid.status).toBe(index < 5 ? 403 : 429);
       }
+      expect(
+        (
+          await database.db
+            .select()
+            .from(authAdmission)
+            .where(eq(authAdmission.key, "manage:factor"))
+        )[0].count,
+      ).toBe(5);
       const challenge = cookies(await login());
       const recoveryLogin = await verifyMfaLogin(
         independent.db,
@@ -590,9 +603,23 @@ describe("F2.4 replacement authority and transitions", () => {
       // A newer supported ceremony starts only after completion, fresh login
       // and another password/current-MFA proof. The previous bearer cannot
       // authorize the new factor even when a replacement record exists again.
+      const newProof = proof("totp", await totp(newSecret));
+      const denied = await managed(
+        "start",
+        newProof,
+        independent.db,
+        cookies(newLogin),
+      );
+      // This long regression spends the twelve-operation work window, including
+      // stale-session calls. Denial cannot become a permanent owner lockout.
+      expect(denied.status).toBe(429);
+      await database.db
+        .update(authAdmission)
+        .set({ expiresAt: sql`clock_timestamp() - interval '1 second'` })
+        .where(eq(authAdmission.key, "work:management"));
       const newer = await managed(
         "start",
-        proof("totp", await totp(newSecret)),
+        newProof,
         independent.db,
         cookies(newLogin),
       );
@@ -689,7 +716,7 @@ describe("F2.4 replacement authority and transitions", () => {
     }
     await database.db
       .update(mfaReplacement)
-      .set({ expiresAt: new Date(Date.now() - 1) });
+      .set({ expiresAt: sql`clock_timestamp() - interval '1 second'` });
     const response = await resume(
       request("/api/auth/mfa/manage/authenticator/resume", {}, ceremony),
     );
@@ -1057,7 +1084,7 @@ describe("F2.4 management boundaries", () => {
       if (failure === "expired")
         await database.db
           .update(session)
-          .set({ expiresAt: new Date(Date.now() - 1) });
+          .set({ expiresAt: sql`clock_timestamp() - interval '1 second'` });
       if (failure === "absolute")
         await database.db
           .update(session)

@@ -7,6 +7,10 @@ import {
 } from "./instance-auth";
 import { InitialMfaRejected } from "./initial-mfa";
 import type { AppConfig } from "@/shared/infrastructure/config/config";
+import {
+  AuthThrottledError,
+  authThrottleResponse,
+} from "../infrastructure/auth-admission";
 
 class BodyRejected extends Error {}
 export async function initialMfaHttp<T>(
@@ -75,6 +79,8 @@ export async function initialMfaHttp<T>(
     }
     return Response.json(result, { headers: sensitive });
   } catch (cause) {
+    if (cause instanceof AuthThrottledError)
+      return authThrottleResponse(cause.retryAfter);
     if (cause instanceof BodyRejected) return error(413);
     if (
       cause instanceof InitialMfaRejected ||

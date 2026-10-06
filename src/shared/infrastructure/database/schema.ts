@@ -439,6 +439,22 @@ export const rateLimit = pgTable("rate_limit", {
   lastRequest: bigint("last_request", { mode: "number" }).notNull(),
 });
 
+export const authAdmission = pgTable(
+  "auth_admission",
+  {
+    key: text("key").primaryKey(),
+    count: integer("count").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check(
+      "auth_admission_key",
+      sql`${table.key} in ('work:password', 'work:mfa', 'work:management', 'manage:password', 'manage:factor')`,
+    ),
+    check("auth_admission_count", sql`${table.count} between 1 and 31`),
+  ],
+);
+
 export const loginThrottle = pgTable("login_throttle", {
   key: text("key").primaryKey(),
   failureCount: integer("failure_count").default(0).notNull(),
@@ -1104,6 +1120,7 @@ export const schema = {
   account,
   verification,
   rateLimit,
+  authAdmission,
   loginThrottle,
   mailAccounts,
   oauthAuthorizationStates,

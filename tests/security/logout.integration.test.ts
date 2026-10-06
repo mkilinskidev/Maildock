@@ -28,6 +28,7 @@ import {
 import {
   session,
   rateLimit,
+  authAdmission,
   loginThrottle,
 } from "@/shared/infrastructure/database/schema";
 
@@ -104,6 +105,7 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
     await database.db.delete(session);
     await database.client`UPDATE "user" SET two_factor_enabled = false`;
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
     logger.error.mockClear();
   });

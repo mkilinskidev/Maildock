@@ -25,6 +25,7 @@ import {
   instanceState,
   loginThrottle,
   rateLimit,
+  authAdmission,
   user,
 } from "@/shared/infrastructure/database/schema";
 
@@ -130,6 +131,7 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
       .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
   });
   afterAll(async () => {

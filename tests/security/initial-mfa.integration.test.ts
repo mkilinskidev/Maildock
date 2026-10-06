@@ -32,6 +32,7 @@ import {
 import {
   instanceState,
   rateLimit,
+  authAdmission,
   session,
   twoFactor,
   user,
@@ -127,6 +128,7 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
       .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     await initializeOwner(
       database.db,
       { bootstrapSecret, username: "owner-01", password },

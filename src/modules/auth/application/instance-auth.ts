@@ -1,3 +1,4 @@
+import { ownerPasswordSchema } from "../domain/password-policy";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -22,7 +23,7 @@ import {
 
 const ownerCredentialsSchema = z.object({
   username: z.string().trim().pipe(ownerUsernameSchema),
-  password: z.string().min(12).max(128),
+  password: ownerPasswordSchema,
 });
 
 export class BootstrapAuthorizationError extends Error {}

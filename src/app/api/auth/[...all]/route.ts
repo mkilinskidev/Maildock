@@ -1,10 +1,5 @@
 import { toNextJsHandler } from "better-auth/next-js";
 
-import {
-  clearLoginFailures,
-  getLoginDelaySeconds,
-  recordLoginFailure,
-} from "@/modules/auth/infrastructure/login-throttle";
 import { auth } from "@/modules/auth/infrastructure/auth";
 import { logoutCurrentSession } from "@/modules/auth/application/logout";
 import { db } from "@/shared/infrastructure/database/runtime-database";
@@ -17,8 +12,8 @@ export const dynamic = "force-dynamic";
 
 const handler = toNextJsHandler(auth);
 
-// Explicit login boundary: Better Auth 1.7.5 owns Origin/CSRF and JSON media-type
-// validation here (trustedOrigins = [APP_ORIGIN], neither check disabled).
+// Login adds bounded JSON/work admission in createAuth; Better Auth 1.7.5
+// also enforces Origin/CSRF (trustedOrigins = [APP_ORIGIN], neither disabled).
 // Its login/session protocol must not pass through the owner-session guard.
 
 export async function GET(request: Request) {
@@ -53,34 +48,5 @@ export async function POST(request: Request) {
     return logoutCurrentSession(request, auth, db, config, logger);
   }
 
-  let username: string | undefined;
-  try {
-    const body = (await request.clone().json()) as { username?: unknown };
-    if (typeof body.username === "string") username = body.username;
-  } catch {
-    // Better Auth returns the canonical validation response.
-  }
-
-  if (username) {
-    const retryAfter = await getLoginDelaySeconds(username);
-    if (retryAfter > 0) {
-      return Response.json(
-        { error: "Too many login attempts. Try again later." },
-        { status: 429, headers: { "Retry-After": String(retryAfter) } },
-      );
-    }
-  }
-
-  const response = await handler.POST(request);
-  if (username) {
-    if (response.ok) await clearLoginFailures(username);
-    else if (
-      response.status === 400 ||
-      response.status === 401 ||
-      response.status === 403
-    ) {
-      await recordLoginFailure(username);
-    }
-  }
-  return response;
+  return handler.POST(request);
 }

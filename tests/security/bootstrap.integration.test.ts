@@ -27,6 +27,7 @@ import {
   account,
   instanceState,
   rateLimit,
+  authAdmission,
   user,
 } from "@/shared/infrastructure/database/schema";
 import { createLogger } from "@/shared/infrastructure/logging/logger";
@@ -144,6 +145,7 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
       .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
   });
   afterAll(async () => {
     vi.restoreAllMocks();

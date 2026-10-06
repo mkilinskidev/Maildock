@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 import { withInitialMfaBoundary } from "../infrastructure/auth-factory";
+import { reserveAuthWork } from "../infrastructure/auth-admission";
 import {
   challengeHeaders,
   responseCookies,
@@ -24,6 +26,7 @@ export async function verifyMfaLogin(
   code: string,
   method: "totp" | "recovery",
 ) {
+  await reserveAuthWork(database, "mfa");
   return withInitialMfaBoundary(config, database, async (auth, tx) => {
     if (!(await isInstanceReady(tx)))
       return Response.json(
@@ -54,6 +57,12 @@ export async function verifyMfaLogin(
         { error: "Sign in could not be completed.", restart },
         { status: response.status === 429 ? 429 : 401 },
       );
+      if (response.status === 429) {
+        const rows = await tx.execute<{ retry: number }>(sql`
+          select greatest(1, coalesce(ceil(extract(epoch from (max(locked_until) - clock_timestamp()))), 1))::integer as retry from two_factor
+        `);
+        error.headers.set("Retry-After", String(rows[0].retry));
+      }
       if (restart) {
         const cleanup = await auth.api.clearMfaChallengeCookies({
           headers,
@@ -91,6 +100,7 @@ export async function cancelMfaLogin(
   config: AppConfig,
   headers: Headers,
 ) {
+  await reserveAuthWork(database, "mfa");
   return withInitialMfaBoundary(config, database, async (auth) => {
     const cleanup = await auth.api.clearMfaChallengeCookies({
       headers,

@@ -1,3 +1,4 @@
+import { ownerPasswordSchema } from "../domain/password-policy";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { APIError } from "better-auth/api";
@@ -19,7 +20,7 @@ export class InitialMfaRejected extends Error {}
 export const initialMfaStartSchema = z
   .object({
     bootstrapSecret: z.string().max(44),
-    password: z.string().min(12).max(128),
+    password: ownerPasswordSchema,
   })
   .strict();
 export const initialMfaCompleteSchema = z

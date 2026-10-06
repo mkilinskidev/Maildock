@@ -22,7 +22,7 @@ import * as applicationSchema from "../../src/shared/infrastructure/database/sch
 // Better Auth 1.7.5's Drizzle adapter guarded only the LIMIT 1 subquery:
 // PostgreSQL READ COMMITTED waiting writers could all update the selected ID.
 // Protect one recovery-code CAS winner, one admission at max-1, and limit-one.
-// Test-only plugin schema: Maildock's production auth still has no MFA plugin.
+// Isolated plugin schema; production Maildock also composes the MFA plugin.
 const twoFactorTable = pgTable("two_factor", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),

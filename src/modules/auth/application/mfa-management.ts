@@ -1,3 +1,4 @@
+import { ownerPasswordSchema } from "../domain/password-policy";
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -5,6 +6,13 @@ import { APIError } from "better-auth/api";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { createOTP } from "@better-auth/utils/otp";
 import { withInitialMfaBoundary } from "../infrastructure/auth-factory";
+import {
+  reserveAuthWork,
+  managementProofDelay,
+  recordManagementFailure,
+  clearManagementFailures,
+  authThrottleResponse,
+} from "../infrastructure/auth-admission";
 import { getValidBusinessSession } from "./session-validation";
 import { isInstanceReady } from "./instance-readiness";
 import { isInstanceOwner } from "./owner-binding";
@@ -22,14 +30,14 @@ import {
 export const managementSchema = z.discriminatedUnion("proofType", [
   z
     .object({
-      password: z.string().min(12).max(128),
+      password: ownerPasswordSchema,
       proofType: z.literal("totp"),
       proofCode: z.string().regex(/^\d{6}$/),
     })
     .strict(),
   z
     .object({
-      password: z.string().min(12).max(128),
+      password: ownerPasswordSchema,
       proofType: z.literal("recovery"),
       proofCode: z.string().regex(/^[a-zA-Z0-9]{5}-[a-zA-Z0-9]{5}$/),
     })
@@ -58,11 +66,19 @@ function authorityCookie(config: AppConfig, token: string, maxAge: number) {
 
 async function authorize(
   auth: ScopedAuth,
+  tx: Database,
   headers: Headers,
   input: z.infer<typeof managementSchema>,
 ) {
   const owner = await getValidBusinessSession(auth, headers);
   if (!owner) throw rejected();
+  // Check both stage budgets before Argon2. A correct password must not refund
+  // a locked current-factor budget, even with another session or operation.
+  const retry = Math.max(
+    await managementProofDelay(tx, "password"),
+    await managementProofDelay(tx, "factor"),
+  );
+  if (retry) return authThrottleResponse(retry);
   const context = await auth.$context;
   const credential = await context.internalAdapter.findCredentialAccount(
     owner.user.id,
@@ -73,8 +89,11 @@ async function authorize(
       hash: credential.password,
       password: input.password,
     }))
-  )
-    throw rejected();
+  ) {
+    await recordManagementFailure(tx, "password");
+    return genericError();
+  }
+  await clearManagementFailures(tx, "password");
   try {
     // Authenticated verified-factor paths do NOT issue a session or challenge.
     // disableSession does not make the recovery path safe for anonymous users;
@@ -87,9 +106,18 @@ async function authorize(
         body: { code: input.proofCode, disableSession: true },
       });
   } catch (error) {
-    if (error instanceof APIError) throw rejected();
+    // Only expected invalid proofs commit. Infrastructure/unexpected API errors
+    // still roll back all MFA mutations, including recovery CAS consumption.
+    if (
+      error instanceof APIError &&
+      ["INVALID_CODE", "INVALID_BACKUP_CODE"].includes(error.body?.code ?? "")
+    ) {
+      await recordManagementFailure(tx, "factor");
+      return genericError();
+    }
     throw error;
   }
+  await clearManagementFailures(tx, "factor");
   return owner;
 }
 
@@ -99,8 +127,10 @@ export async function regenerateRecoveryCodes(
   headers: Headers,
   input: z.infer<typeof managementSchema>,
 ) {
+  await reserveAuthWork(database, "management");
   return withInitialMfaBoundary(config, database, async (auth, tx) => {
-    const owner = await authorize(auth, headers, input);
+    const owner = await authorize(auth, tx, headers, input);
+    if (owner instanceof Response) return owner;
     const result = await auth.api.generateBackupCodes({
       headers,
       body: { password: input.password },
@@ -118,8 +148,10 @@ export async function startAuthenticatorReplacement(
   headers: Headers,
   input: z.infer<typeof managementSchema>,
 ) {
+  await reserveAuthWork(database, "management");
   return withInitialMfaBoundary(config, database, async (auth, tx) => {
-    const owner = await authorize(auth, headers, input);
+    const owner = await authorize(auth, tx, headers, input);
+    if (owner instanceof Response) return owner;
     if ((await tx.select().from(mfaReplacement)).length) throw rejected();
     await tx.delete(twoFactor).where(eq(twoFactor.userId, owner.user.id));
     // enableTwoFactor owns new secret + encrypted recovery generation. Default
@@ -238,6 +270,7 @@ async function replacementOperation<T>(
     pending: Awaited<ReturnType<typeof pendingReplacement>>,
   ) => Promise<T>,
 ) {
+  await reserveAuthWork(database, "mfa");
   try {
     return await withInitialMfaBoundary(config, database, async (auth, tx) =>
       operation(auth, tx, await pendingReplacement(tx, headers)),

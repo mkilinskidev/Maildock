@@ -61,6 +61,7 @@ import {
   mailboxMessages,
   messageContents,
   rateLimit,
+  authAdmission,
   session,
   user,
   verification,
@@ -123,6 +124,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
     await db.delete(user);
     await db.delete(verification);
     await db.delete(rateLimit);
+    await db.delete(authAdmission);
     await db.delete(loginThrottle);
     await db.update(instanceState).set({
       initializedAt: null,

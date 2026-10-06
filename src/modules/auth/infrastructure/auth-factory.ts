@@ -5,6 +5,18 @@ import { eq, sql } from "drizzle-orm";
 import { isInstanceReady } from "@/modules/auth/application/instance-readiness";
 import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
 import { withoutTrustedDevice } from "./mfa-cookies";
+import { initialMfaHttp } from "../application/initial-mfa-http";
+import {
+  ownerPasswordSchema,
+  passwordMinLength,
+  passwordMaxLength,
+} from "../domain/password-policy";
+import { reserveAuthWork, authThrottleResponse } from "./auth-admission";
+import {
+  getLoginDelaySeconds,
+  recordLoginFailure,
+  clearLoginFailures,
+} from "./login-throttle";
 import { isInstanceOwner } from "@/modules/auth/application/owner-binding";
 import {
   isSessionWithinLifetime,
@@ -51,6 +63,13 @@ export async function withInitialMfaBoundary<T>(
 
 export function createAuth(config: AppConfig, database: Database) {
   const auth = createAuthEngine(config, database);
+  // Extend the installed plugin's protocol instead of maintaining a second
+  // username route schema. Grammar/normalization remain owned by that plugin.
+  const loginSchema = auth.api.signInUsername.options.body
+    .extend({
+      password: ownerPasswordSchema,
+    })
+    .strict();
   const sessionIssuingMethods = [
     "signInUsername",
     "signInEmail",
@@ -67,6 +86,43 @@ export function createAuth(config: AppConfig, database: Database) {
   const handler = auth.handler;
   auth.handler = async (request) => {
     const path = new URL(request.url).pathname.replace(/\/+$/, "");
+    if (
+      request.method === "POST" &&
+      path.endsWith(auth.api.signInUsername.path)
+    ) {
+      return initialMfaHttp(
+        request,
+        config,
+        loginSchema,
+        async (input) => {
+          await reserveAuthWork(database, "password");
+          return withInitialMfaBoundary(
+            config,
+            database,
+            async (scoped, tx) => {
+              // Recheck after acquiring M, immediately before the credential read.
+              // Queued requests observe the previous committed failure at READ COMMITTED.
+              const retry = await getLoginDelaySeconds(tx, input.username);
+              if (retry) return authThrottleResponse(retry);
+              const response = await scoped.handler(
+                new Request(request.url, {
+                  method: "POST",
+                  headers: await withoutTrustedDevice(scoped, request.headers),
+                  body: JSON.stringify(input),
+                }),
+              );
+              if (response.ok) await clearLoginFailures(tx, input.username);
+              else if ([400, 401, 403].includes(response.status))
+                await recordLoginFailure(tx, input.username);
+              const retryHeader = response.headers.get("X-Retry-After");
+              if (retryHeader) response.headers.set("Retry-After", retryHeader);
+              return response;
+            },
+          );
+        },
+        "Sign in could not be completed.",
+      );
+    }
     // Match the catch-all's suffix allowlist, including router trailing slashes.
     // Logout and session reads retain their existing transaction semantics.
     if (
@@ -118,8 +174,8 @@ function createAuthEngine(config: AppConfig, database: Database) {
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
-      minPasswordLength: 12,
-      maxPasswordLength: 128,
+      minPasswordLength: passwordMinLength,
+      maxPasswordLength: passwordMaxLength,
       autoSignIn: false,
       password: {
         hash: hashPassword,

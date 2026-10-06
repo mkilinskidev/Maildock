@@ -37,6 +37,7 @@ import {
   user,
   session,
   rateLimit,
+  authAdmission,
   loginThrottle,
 } from "@/shared/infrastructure/database/schema";
 
@@ -132,6 +133,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
       .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
     await initializeOwner(database.db, credentials, config);
     runtime.oauth.mockReset();
@@ -261,6 +263,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
       .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     // Inject a DB failure at the last provisioning write, after both inserts.
     await database.client`ALTER TABLE instance_state ADD CONSTRAINT f10_test_failure CHECK (initialized_at IS NULL)`;
     try {

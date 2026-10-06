@@ -39,6 +39,7 @@ import {
   user,
   session,
   rateLimit,
+  authAdmission,
   loginThrottle,
 } from "@/shared/infrastructure/database/schema";
 
@@ -134,6 +135,7 @@ describe("F2.1 MFA foundation with real Better Auth and PostgreSQL", () => {
       .set({ initializedAt: null, ownerUserId: null });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
     await initializeOwner(database.db, credentials, config);
     runtime.oauth.mockReset();

@@ -26,6 +26,7 @@ import { parseConfig } from "@/shared/infrastructure/config/config";
 import {
   session,
   rateLimit,
+  authAdmission,
   loginThrottle,
 } from "@/shared/infrastructure/database/schema";
 
@@ -123,6 +124,7 @@ describe("F5 lifetime with real Better Auth 1.7.5 and PostgreSQL", () => {
     await database.db.delete(session);
     await database.client`UPDATE "user" SET two_factor_enabled = false`;
     await database.db.delete(rateLimit);
+    await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
     runtime.oauth.mockClear();
     vi.useFakeTimers({ toFake: ["Date"] });
