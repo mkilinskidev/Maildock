@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 function useSensitiveState<T>() {
@@ -33,45 +41,115 @@ function RecoveryCodes({
   codes,
   close,
   freshLogin = false,
+  compact = false,
+  titleId,
 }: {
   codes: string[];
   close: () => void;
   freshLogin?: boolean;
+  compact?: boolean;
+  titleId?: string;
 }) {
   const [copyStatus, setCopyStatus] = useState("");
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (compact) heading.current?.focus();
+  }, [compact]);
   return (
-    <section className="auth-card" aria-label="Recovery codes">
-      <h2>Save your new recovery codes</h2>
+    <section
+      className={compact ? "mfa-code-presentation" : "auth-card"}
+      aria-label="Recovery codes"
+    >
+      <h2 id={titleId} ref={heading} tabIndex={compact ? -1 : undefined}>
+        Save your new recovery codes
+      </h2>
       <p>
-        All previous recovery codes are invalid. These codes are shown only now.
-        Store them somewhere safe outside Maildock.
+        All previous recovery codes are invalid. These codes are shown only{" "}
+        {compact ? "once" : "now"}. Store them somewhere safe outside Maildock.
       </p>
-      <pre className="mfa-recovery-codes">{codes.join("\n")}</pre>
-      <button
-        className="button"
-        type="button"
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(codes.join("\n"));
-            setCopyStatus("Copied");
-          } catch {
-            setCopyStatus("Select and copy the codes manually.");
-          }
-        }}
-      >
-        Copy all
-      </button>
-      <p role="status">{copyStatus}</p>
-      {freshLogin && (
-        <p>
-          Sign in again with your password and new authenticator or recovery
-          code.
+      {compact ? (
+        <div
+          className="mfa-code-grid"
+          role="group"
+          aria-label="New recovery codes"
+        >
+          {codes.map((code) => (
+            <code key={code}>{code}</code>
+          ))}
+        </div>
+      ) : (
+        <pre className="mfa-recovery-codes">{codes.join("\n")}</pre>
+      )}
+      {compact && (
+        <p className="mfa-copy-status" role="status">
+          {copyStatus}
         </p>
       )}
-      <button className="button" type="button" onClick={close}>
-        {freshLogin ? "Continue to login" : "Close"}
-      </button>
+      <div className={compact ? "mfa-dialog-actions" : "mfa-recovery-actions"}>
+        <button
+          className={compact ? "button secondary" : "button"}
+          type="button"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(codes.join("\n"));
+              setCopyStatus("Copied");
+            } catch {
+              setCopyStatus("Select and copy the codes manually.");
+            }
+          }}
+        >
+          Copy all
+        </button>
+        {!compact && <p role="status">{copyStatus}</p>}
+        {freshLogin && (
+          <p>
+            Sign in again with your password and new authenticator or recovery
+            code.
+          </p>
+        )}
+        <button className="button" type="button" onClick={close}>
+          {freshLogin ? "Continue to login" : compact ? "Done" : "Close"}
+        </button>
+      </div>
     </section>
+  );
+}
+
+function ManagementDialog({
+  titleId,
+  protectedState,
+  close,
+  trigger,
+  children,
+}: {
+  titleId: string;
+  protectedState: boolean;
+  close: () => void;
+  trigger: RefObject<HTMLButtonElement | null>;
+  children: ReactNode;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current!;
+    const opener = trigger.current;
+    element.showModal();
+    return () => {
+      element.close();
+      opener?.focus();
+    };
+  }, [trigger]);
+  return (
+    <dialog
+      ref={dialog}
+      className="mfa-management-dialog"
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!protectedState) close();
+      }}
+    >
+      {children}
+    </dialog>
   );
 }
 
@@ -81,6 +159,19 @@ export function MfaManagement() {
   const [codes, setCodes] = useSensitiveState<string[]>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const trigger = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  function open(next: "recovery" | "replace", button: HTMLButtonElement) {
+    trigger.current = button;
+    setError("");
+    setProofType("totp");
+    setAction(next);
+  }
+  function close() {
+    setAction(undefined);
+    setCodes(undefined);
+    setError("");
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -111,111 +202,164 @@ export function MfaManagement() {
       setPending(false);
     }
   }
-  if (codes)
-    return <RecoveryCodes codes={codes} close={() => setCodes(undefined)} />;
   return (
-    <section
-      className="settings-section"
-      aria-label="Two-factor authentication"
-    >
-      <h2>Two-factor authentication</h2>
-      <p>Authenticator: enabled</p>
-      <p>Recovery codes: configured</p>
-      {!action ? (
-        <>
+    <section className="mfa-settings" aria-label="Two-factor authentication">
+      <header className="settings-pane-header">
+        <h2>Two-factor authentication</h2>
+        <p>
+          Protect your Maildock account with an authenticator app and recovery
+          codes.
+        </p>
+      </header>
+      <section
+        className="mfa-settings-card"
+        aria-labelledby="mfa-authenticator-title"
+      >
+        <div className="mfa-card-header">
+          <h3 id="mfa-authenticator-title">Authenticator</h3>
+          <span className="status-pill">Enabled</span>
+        </div>
+        <p>An authenticator code is required when you sign in.</p>
+        <div className="mfa-card-actions">
           <button
-            className="button"
-            onClick={() => {
-              setError("");
-              setAction("recovery");
-            }}
-          >
-            Generate new recovery codes
-          </button>
-          <button
-            className="button"
-            onClick={() => {
-              setError("");
-              setAction("replace");
-            }}
+            className="button secondary"
+            onClick={(event) => open("replace", event.currentTarget)}
           >
             Replace authenticator
           </button>
-        </>
-      ) : (
-        <form onSubmit={submit} className="auth-card" autoComplete="off">
-          <h3>
-            {action === "recovery"
-              ? "Generate new recovery codes"
-              : "Replace authenticator"}
-          </h3>
-          {action === "replace" && (
-            <p>
-              Starting replacement invalidates your authenticator and recovery
-              codes and signs out all sessions. Finish in this browser within 10
-              minutes. If you leave or the authority expires, Maildock stays
-              locked and may require operator intervention.
-            </p>
-          )}
-          <label>
-            Owner password
-            <input
-              name="password"
-              type="password"
-              minLength={12}
-              maxLength={128}
-              required
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Current MFA proof
-            <select
-              value={proofType}
-              onChange={(event) => setProofType(event.target.value)}
-              disabled={pending}
-            >
-              <option value="totp">Authenticator code</option>
-              <option value="recovery">Recovery code</option>
-            </select>
-          </label>
-          <label>
-            {proofType === "totp" ? "Authenticator code" : "Recovery code"}
-            <input
-              key={proofType}
-              name="proofCode"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              inputMode={proofType === "totp" ? "numeric" : "text"}
-              pattern={
-                proofType === "totp"
-                  ? "[0-9]{6}"
-                  : "[a-zA-Z0-9]{5}-[a-zA-Z0-9]{5}"
-              }
-              maxLength={proofType === "totp" ? 6 : 11}
-            />
-          </label>
-          <button className="button" disabled={pending}>
-            {pending ? "Please wait…" : "Confirm"}
-          </button>
-          <button
-            className="button"
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              setAction(undefined);
-              setError("");
-            }}
-          >
-            Cancel
-          </button>
-        </form>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
+        </div>
+      </section>
+      <section
+        className="mfa-settings-card"
+        aria-labelledby="mfa-recovery-title"
+      >
+        <div className="mfa-card-header">
+          <h3 id="mfa-recovery-title">Recovery codes</h3>
+          <span className="status-pill">Configured</span>
+        </div>
+        <p>
+          Use recovery codes if you lose access to your authenticator. Each code
+          can only be used once.
         </p>
+        <div className="mfa-card-actions">
+          <button
+            className="button secondary"
+            onClick={(event) => open("recovery", event.currentTarget)}
+          >
+            Generate new recovery codes
+          </button>
+        </div>
+      </section>
+      {(action || codes) && (
+        <ManagementDialog
+          titleId={titleId}
+          protectedState={pending || Boolean(codes)}
+          close={close}
+          trigger={trigger}
+        >
+          {codes ? (
+            <RecoveryCodes
+              codes={codes}
+              compact
+              titleId={titleId}
+              close={close}
+            />
+          ) : (
+            <form
+              onSubmit={submit}
+              className="mfa-management-form"
+              autoComplete="off"
+              aria-busy={pending}
+            >
+              <h2 id={titleId}>
+                {action === "recovery"
+                  ? "Generate new recovery codes"
+                  : "Replace authenticator"}
+              </h2>
+              <p>
+                {action === "replace"
+                  ? "Your current authenticator and recovery codes will stop working, and all sessions will be signed out. You will need to set up a new authenticator and sign in again."
+                  : "Your existing recovery codes will stop working immediately."}
+              </p>
+              {action === "replace" && (
+                <p className="mfa-dialog-help">
+                  Complete setup in this browser within 10 minutes. If you leave
+                  or run out of time, Maildock stays locked and may require
+                  operator intervention.
+                </p>
+              )}
+              <fieldset className="mfa-dialog-fields" disabled={pending}>
+                <label>
+                  Current password
+                  <input
+                    name="password"
+                    type="password"
+                    minLength={12}
+                    maxLength={128}
+                    required
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </label>
+                <label>
+                  Verification method
+                  <select
+                    value={proofType}
+                    onChange={(event) => setProofType(event.target.value)}
+                    disabled={pending}
+                  >
+                    <option value="totp">Authenticator code</option>
+                    <option value="recovery">Recovery code</option>
+                  </select>
+                </label>
+                <label>
+                  {proofType === "totp"
+                    ? "Current authenticator code"
+                    : "Current recovery code"}
+                  <input
+                    key={proofType}
+                    name="proofCode"
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                    inputMode={proofType === "totp" ? "numeric" : "text"}
+                    pattern={
+                      proofType === "totp"
+                        ? "[0-9]{6}"
+                        : "[a-zA-Z0-9]{5}-[a-zA-Z0-9]{5}"
+                    }
+                    maxLength={proofType === "totp" ? 6 : 11}
+                  />
+                </label>
+              </fieldset>
+              {error && (
+                <p className="error" role="alert">
+                  {error}
+                </p>
+              )}
+              <div className="mfa-dialog-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={pending}
+                  onClick={close}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={action === "replace" ? "button danger" : "button"}
+                  disabled={pending}
+                >
+                  {pending
+                    ? "Please wait…"
+                    : action === "replace"
+                      ? "Replace authenticator"
+                      : "Generate codes"}
+                </button>
+              </div>
+            </form>
+          )}
+        </ManagementDialog>
       )}
     </section>
   );
