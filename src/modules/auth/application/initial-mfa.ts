@@ -1,0 +1,135 @@
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { APIError } from "better-auth/api";
+import { authorizeBootstrap, reserveSetupAttempt } from "./instance-auth";
+import { getValidOwnerSession } from "./session-validation";
+import { isInstanceReady } from "./instance-readiness";
+import { withInitialMfaBoundary } from "../infrastructure/auth-factory";
+import type { AppConfig } from "@/shared/infrastructure/config/config";
+import type { Database } from "@/shared/infrastructure/database/database";
+import {
+  instanceState,
+  session,
+  twoFactor,
+  user,
+} from "@/shared/infrastructure/database/schema";
+
+export class InitialMfaRejected extends Error {}
+export const initialMfaStartSchema = z
+  .object({
+    bootstrapSecret: z.string().max(44),
+    password: z.string().min(12).max(128),
+  })
+  .strict();
+export const initialMfaCompleteSchema = z
+  .object({
+    bootstrapSecret: z.string().max(44),
+    code: z.string().regex(/^\d{6}$/),
+  })
+  .strict();
+
+async function pendingState(tx: Database, ownerId: string) {
+  const states = await tx.select().from(instanceState);
+  const owners = await tx.select().from(user).where(eq(user.id, ownerId));
+  const factors = await tx.select().from(twoFactor);
+  const state = states[0];
+  if (
+    states.length !== 1 ||
+    state.id !== 1 ||
+    !(state.initializedAt instanceof Date) ||
+    !Number.isFinite(state.initializedAt.getTime()) ||
+    state.ownerUserId !== ownerId ||
+    owners.length !== 1 ||
+    owners[0].twoFactorEnabled !== false ||
+    factors.length > 1 ||
+    factors.some(
+      (factor) => factor.userId !== ownerId || factor.verified !== false,
+    )
+  ) {
+    throw new InitialMfaRejected();
+  }
+  return factors[0];
+}
+
+export async function startInitialMfa(
+  database: Database,
+  config: AppConfig,
+  headers: Headers,
+  input: z.infer<typeof initialMfaStartSchema>,
+) {
+  await authorizeBootstrap(database, input.bootstrapSecret, config);
+  // Persist admission independently: failed passwords/codes cannot roll it back.
+  await reserveSetupAttempt(database, true, "initial-mfa");
+  return withInitialMfaBoundary(config, database, async (auth, tx) => {
+    const owner = await getValidOwnerSession(auth, headers);
+    if (!owner) throw new InitialMfaRejected();
+    const pending = await pendingState(tx, owner.user.id);
+    try {
+      if (pending) {
+        // Better Auth validates the password and decrypts its own pending secret.
+        const result = await auth.api.getTOTPURI({
+          headers,
+          body: { password: input.password },
+        });
+        return { totpURI: result.totpURI, resumed: true };
+      }
+      const result = await auth.api.enableTwoFactor({
+        headers,
+        body: { password: input.password, method: "totp" },
+      });
+      if (result.method !== "totp") throw new InitialMfaRejected();
+      const factor = await pendingState(tx, owner.user.id);
+      if (!factor) throw new InitialMfaRejected();
+      // Provisional recovery codes remain encrypted in DB. F2.3 must present
+      // them through an equally controlled path; no acknowledgement is added.
+      return { totpURI: result.totpURI, resumed: false };
+    } catch (error) {
+      if (error instanceof APIError) throw new InitialMfaRejected();
+      throw error;
+    }
+  });
+}
+
+export async function completeInitialMfa(
+  database: Database,
+  config: AppConfig,
+  headers: Headers,
+  input: z.infer<typeof initialMfaCompleteSchema>,
+) {
+  await authorizeBootstrap(database, input.bootstrapSecret, config);
+  await reserveSetupAttempt(database, true, "initial-mfa");
+  return withInitialMfaBoundary(config, database, async (auth, tx) => {
+    // Re-read authority AFTER the lock. A competing completion revokes it.
+    const owner = await getValidOwnerSession(auth, headers);
+    if (!owner) throw new InitialMfaRejected();
+    const pending = await pendingState(tx, owner.user.id);
+    if (!pending) throw new InitialMfaRejected();
+    try {
+      // The installed plugin owns decryption/TOTP verification, user flag,
+      // factor verification and temporary session rotation, all on this tx.
+      await auth.api.verifyTOTP({ headers, body: { code: input.code } });
+    } catch (error) {
+      if (error instanceof APIError) throw new InitialMfaRejected();
+      throw error;
+    }
+    await tx.delete(session).where(eq(session.userId, owner.user.id));
+    if (
+      (
+        await tx
+          .select({ id: session.id })
+          .from(session)
+          .where(eq(session.userId, owner.user.id))
+      ).length !== 0 ||
+      !(await isInstanceReady(tx, owner.user.id))
+    )
+      throw new Error("Initial MFA completion could not be confirmed.");
+    // Discard all cookies returned by verifyTOTP, including its rotated session.
+    const cleanup = await auth.api.clearInitialMfaCookies({
+      headers,
+      asResponse: true,
+    });
+    if (!cleanup.ok)
+      throw new Error("Initial MFA cookie cleanup could not be prepared.");
+    return cleanup;
+  });
+}

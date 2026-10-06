@@ -30,10 +30,14 @@ export class SetupThrottledError extends Error {}
 
 // Reuse Better Auth's storage with separate global keys. Reserve attempts atomically
 // before work starts; a fixed window survives web-process restarts.
-async function reserveSetupAttempt(database: Database, authorized: boolean) {
+export async function reserveSetupAttempt(
+  database: Database,
+  authorized: boolean,
+  purpose: "setup" | "initial-mfa" = "setup",
+) {
   const key = authorized
-    ? "maildock:setup:authorized"
-    : "maildock:setup:invalid";
+    ? `maildock:${purpose}:authorized`
+    : `maildock:${purpose}:invalid`;
   const max = authorized ? 5 : 30;
   const now = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
   const rows = await database.execute<{ count: number }>(sql`
@@ -49,7 +53,7 @@ async function reserveSetupAttempt(database: Database, authorized: boolean) {
   if (rows[0].count > max) throw new SetupThrottledError();
 }
 
-async function authorizeBootstrap(
+export async function authorizeBootstrap(
   database: Database,
   supplied: unknown,
   config: Pick<AppConfig, "bootstrapSecretDigest">,

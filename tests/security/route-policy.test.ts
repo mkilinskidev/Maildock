@@ -13,6 +13,14 @@ const boundaries = new Map([
   ],
   ["setup/route.ts:GET", "Public initialized status"],
   ["setup/route.ts:POST", "Bootstrap secret + exact Origin + bounded parser"],
+  [
+    "auth/initial-mfa/start/route.ts:POST",
+    "Initial MFA: exact Origin + bounded strict JSON + owner session + password + bootstrap + PostgreSQL boundary",
+  ],
+  [
+    "auth/initial-mfa/complete/route.ts:POST",
+    "Initial MFA: exact Origin + bounded strict JSON + owner session + bootstrap + TOTP + atomic READY/revocation",
+  ],
   ["health/live/route.ts:GET", "Public health probe"],
   ["health/ready/route.ts:GET", "Public health probe"],
   ["oauth/google/start/route.ts:GET", "Owner session + state/PKCE creation"],
