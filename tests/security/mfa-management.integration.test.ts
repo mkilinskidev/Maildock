@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq, sql } from "drizzle-orm";
 import { symmetricDecrypt } from "better-auth/crypto";
@@ -206,11 +207,17 @@ async function orderedRace<A, B>(
 beforeAll(async () => {
   container = await new GenericContainer("postgres:18.6-bookworm")
     .withEnvironment({
-      POSTGRES_DB: "management",
+      POSTGRES_DB: "maildock",
       POSTGRES_USER: "maildock",
       POSTGRES_PASSWORD: "test",
     })
     .withExposedPorts(5432)
+    .withCopyFilesToContainer([
+      {
+        source: path.resolve("scripts/postgres/99-maildock-authority.sql"),
+        target: "/docker-entrypoint-initdb.d/99-maildock-authority.sql",
+      },
+    ])
     .withWaitStrategy(
       Wait.forLogMessage(/database system is ready to accept connections/, 2),
     )
@@ -218,7 +225,7 @@ beforeAll(async () => {
   config = parseConfig({
     MAILDOCK_ENV: "test",
     APP_ORIGIN: origin,
-    DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/management`,
+    DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/maildock`,
     AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
     CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
     MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,

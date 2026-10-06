@@ -6,6 +6,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { getConfig } from "../config/config.js";
 import { createWorkerDatabase } from "./database-worker.js";
+import { validateDatabaseAuthority } from "./database-authority.js";
 import { initializeLocalSearchBodies } from "../../../modules/mail/infrastructure/search-local-backfill.js";
 
 async function main() {
@@ -13,6 +14,7 @@ async function main() {
   const database = createWorkerDatabase(config);
 
   try {
+    await validateDatabaseAuthority(database.client);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
     await createOAuthComposition(
       database.db,

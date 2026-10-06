@@ -50,6 +50,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql
+      - ./scripts/postgres/99-maildock-authority.sql:/docker-entrypoint-initdb.d/99-maildock-authority.sql:ro
+      - ./scripts/postgres/maildock-authority-maintenance.sh:/usr/local/bin/maildock-authority-maintenance:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maildock -d maildock"]
       interval: 5s

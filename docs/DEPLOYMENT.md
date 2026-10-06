@@ -1,5 +1,111 @@
 # Production ingress contract
 
+## PostgreSQL authority (F12-03)
+
+Fresh bundled `docker compose up` runs the read-only
+`scripts/postgres/99-maildock-authority.sql` as the **last** initdb step. Keep it
+last: it disables the original bootstrap login. The normal TCP server, existing
+PostgreSQL health dependency and application authority guard gate migrations and
+web/worker startup. Base services remain exactly `app` and private `postgres`,
+with the existing persistent PostgreSQL volume and one application `DATABASE_URL`.
+
+The runtime `maildock` is an ordinary login with `NOSUPERUSER NOCREATEDB
+NOCREATEROLE NOREPLICATION NOBYPASSRLS`. It owns the Maildock database and
+application objects, including Drizzle and pg-boss objects. Database ownership
+deliberately allows migration and queue DDL and does not contain SQL injection
+within Maildock's own data. The original OID-10 role is `maildock_bootstrap`,
+`SUPERUSER NOLOGIN PASSWORD NULL`, retaining system/bootstrap ownership. No
+membership connects the application to it. The temporary passwordless NOLOGIN
+bridge is dropped before commit; no extra admin/migration credential remains.
+The application username, database name and existing password are preserved.
+The privileged transition explicitly verifies bootstrap `PASSWORD NULL` before
+commit. On subsequent ordinary-login no-ops PostgreSQL hides `pg_authid`, so
+verification covers NOLOGIN, catalog attributes, memberships and ownership;
+it cannot independently reread the bootstrap verifier. This accepted boundary
+does not add a persistent privileged verifier function or credential.
+
+### Existing bundled volume: explicit offline transition
+
+Installations created before F12-03 need an explicit maintenance operation. Do
+not run the helper against an external/shared/custom cluster. Use your existing
+Compose project name and **the same volumes and credentials** throughout:
+
+1. Stop all writers: `docker compose stop app`, plus any independently launched
+   web, worker, migrator or other client writing this database. Keep them stopped
+   until every subsequent step succeeds.
+2. Take and verify a consistent database/attachment backup, preserving the auth
+   secret and every required credential-encryption key. Store backups and keys
+   confidentially. Verify against disposable recovery storage using your
+   established procedure before changing authority. F12-05 still owns the
+   complete recovery procedure and the known restore/search-path issue; this
+   transition does not certify unmodified `pg_restore`.
+3. Install this version's Compose file and both `scripts/postgres` helpers, then
+   run `docker compose up -d --no-deps --force-recreate postgres`. Recreating the
+   container retains `postgres_data`; **never use `down -v` or delete the volume**.
+   Wait for PostgreSQL to become healthy. Existing PG_VERSION skips initdb
+   scripts; changing `POSTGRES_*` variables never upgrades an existing cluster.
+4. Run the supported maintenance invocation (the flag confirms steps 1–2):
+
+   ```sh
+   docker compose exec -T postgres sh /usr/local/bin/maildock-authority-maintenance --writers-stopped-backup-verified
+   ```
+
+   It runs `psql -X -v ON_ERROR_STOP=1` on the local socket, closes that session,
+   then opens a **new password-authenticated TCP connection** as `maildock` with
+   the existing `POSTGRES_PASSWORD` and verifies the hardened model again. A
+   deliberately incorrect password must fail too. The helper uses the private
+   `postgres` service address, because initdb's loopback HBA rules may use trust;
+   custom passwordless authentication is refused.
+   A password mismatch fails this second step without undoing the committed
+   hardening. Correct operator configuration, retry verification and keep the
+   application stopped until successful.
+
+5. Only after successful verification, run `docker compose up -d --no-deps
+--build app`. Normal startup validates authority, runs ordinary migrations,
+   then starts web/worker. Direct migration/web/worker process roots also check
+   authority before becoming operational.
+
+The helper acquires a dedicated transaction advisory lock and accepts only the
+reviewed fresh/legacy bootstrap state or a verified hardened no-op. It refuses
+remaining legacy client sessions, collisions, custom roles/schemas/objects,
+ownership, grants/default privileges and role settings rather than repairing
+them. Known public application objects and optional Drizzle/pg-boss namespaces
+transfer explicitly, including sequences/functions/enum and queue partitions;
+system objects, `plpgsql`, templates and `postgres` remain with OID 10. User rows
+and definitions are not rebuilt. Failures before commit roll back role and
+ownership changes together, removing the bridge. A later application migration
+failure cannot restore excessive privileges.
+
+Refusal uses a fixed diagnostic: stop writers, verify backup and obtain DBA
+review. Never automatically elevate or repair on guard failure. An interrupted
+fresh init may leave PG_VERSION and skip scripts on restart; the application
+guard rejects the unsafe role. Classify the state and use the explicit supported
+operation while offline; do not delete storage. Administrative recovery for the
+locked bootstrap requires operator-controlled offline PostgreSQL maintenance,
+not a retained application credential. Server audit/query logging and DBA
+surfaces must protect password verifiers during provisioning.
+
+### External PostgreSQL
+
+Provide one `DATABASE_URL` for an ordinary **non-bootstrap** login with all five
+forbidden flags disabled and no privileged role membership/SET ROLE path.
+Ownership is the simplest supported contract. Equivalent scoped authority must
+include database CONNECT/CREATE, public USAGE/CREATE, SQL/plpgsql USAGE, ownership
+(or inherited ordinary owner authority) over existing application objects and
+the optional Drizzle/pg-boss schemas. This permits normal migrations, pg-boss
+installation/upgrades and queue partition DDL. Provider-only objects in these
+application namespaces may require DBA review. Keep transport private and use
+TLS according to the provider/operator environment.
+
+The guard reads actual `pg_roles` identity/attributes and recursive membership,
+not the potentially stale `is_superuser` setting. It rejects privileged predefined
+roles conservatively, insufficient schema/DDL authority and incompatible object
+ownership. It never alters roles, guesses bundled status from a hostname/name or
+requests an admin URL/password. It runs once at each process root; request/job
+loops do not repeat catalog validation. Connection failures and unsafe authority
+produce fixed categories without URL, password, raw SQL error or catalog dump.
+No automatic external provisioning or transition occurs.
+
 Maildock V1 is self-hosted and proxy-independent. The base Compose file requires exactly two services, `app` and `postgres`. HTTPS ingress is operator-owned infrastructure: Coolify / Traefik, Caddy, Nginx Proxy Manager, nginx, another equivalent ingress, or private network/VPN infrastructure may satisfy the same contract. None is a Maildock dependency. No proxy, certificates or ACME configuration are bundled.
 
 For Internet-facing production, the supported path is:

@@ -4,6 +4,7 @@ const state = vi.hoisted(() => ({
   output: "",
   failComposition: false,
   failStartup: false,
+  failAuthority: false,
   ready: false,
 }));
 vi.mock("@/shared/infrastructure/logging/logger", async (original) => {
@@ -38,7 +39,22 @@ vi.mock("@/composition/worker", async () => {
       return {
         logger: createLogger({ logLevel: "info" }),
         events: { cleanup: async () => {} },
-        database: { db: {}, client: { end: async () => {} } },
+        database: {
+          db: {},
+          client: Object.assign(
+            async () => [
+              {
+                identity_ok: true,
+                authority_ok: !state.failAuthority,
+                scope_ok: true,
+                schemas_ok: true,
+                objects_ok: true,
+                system_ok: true,
+              },
+            ],
+            { end: async () => {} },
+          ),
+        },
         jobs: {
           start: async () => {
             if (state.failStartup) throw failure();
@@ -79,6 +95,17 @@ afterEach(() => {
         );
 });
 describe("F11 actual worker process composition/startup/shutdown boundaries", () => {
+  it("rejects unsafe authority before business startup with a fixed diagnostic", async () => {
+    vi.resetModules();
+    state.output = "";
+    state.failComposition = false;
+    state.failAuthority = true;
+    await import("@/composition/worker-process");
+    expect(state.output).toContain("database_authority");
+    expect(state.output).not.toContain("worker.shutdown_failed");
+    expect(process.exitCode).toBe(1);
+    state.failAuthority = false;
+  });
   it("captures composition failures before readiness and preserves nonzero exit", async () => {
     vi.resetModules();
     state.output = "";

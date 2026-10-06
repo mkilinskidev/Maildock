@@ -12,9 +12,16 @@ import { registerOutgoingWorker } from "../modules/mail/infrastructure/outgoing-
 import { registerSentCopyWorker } from "../modules/mail/infrastructure/sent-copy-jobs.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { isInstanceReady } from "../modules/auth/application/instance-readiness.js";
+import { validateDatabaseAuthority } from "../shared/infrastructure/database/database-authority.js";
 
 async function main() {
   const worker = createWorkerComposition();
+  try {
+    await validateDatabaseAuthority(worker.database.client);
+  } catch (error) {
+    await worker.database.client.end();
+    throw error;
+  }
   let stopping = false;
   const retentionTimer = setInterval(
     () => void worker.events.cleanup(),

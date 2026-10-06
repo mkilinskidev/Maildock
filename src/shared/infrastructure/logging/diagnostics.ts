@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { Job } from "pg-boss";
 import { ConfigurationError } from "../config/config";
+import { DatabaseAuthorityError } from "../database/database-authority";
 
 export type FailureOperation =
   | "runtime"
@@ -32,7 +33,11 @@ export function failureDiagnostic(
     component,
     operation,
     category:
-      error instanceof ConfigurationError ? "configuration" : "internal_error",
+      error instanceof ConfigurationError
+        ? "configuration"
+        : error instanceof DatabaseAuthorityError
+          ? error.category
+          : "internal_error",
     ...(error instanceof ConfigurationError
       ? {
           configurationField: error.problems.some((problem) =>
