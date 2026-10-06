@@ -344,6 +344,33 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(`${origin}/login`);
   });
+  it.each(["http", "https", "http, https", "nothttps"])(
+    "F9 native form uses production APP_ORIGIN despite conflicting authority (%s)",
+    async (proto) => {
+      const publicOrigin = "https://maildock.example.test";
+      runtime.config = {
+        ...config,
+        environment: "production",
+        appOrigin: publicOrigin,
+      };
+      const response = await POST(
+        new Request("http://container.internal:3000/api/setup", {
+          method: "POST",
+          headers: {
+            Origin: publicOrigin,
+            Host: "other.example.test:8080",
+            "X-Forwarded-Host": "attacker.example.test",
+            "X-Forwarded-Proto": proto,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams(credentials),
+        }),
+      );
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toBe(`${publicOrigin}/login`);
+      expect(await database.db.select().from(user)).toHaveLength(1);
+    },
+  );
   it("cancels a stalled request body before hashing", async () => {
     const cancel = vi.fn();
     const body = new ReadableStream<Uint8Array>({ cancel });

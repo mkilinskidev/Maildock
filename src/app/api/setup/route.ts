@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     }
     await initializeOwner(db, rawInput, config);
     if (submittedAsForm)
-      return Response.redirect(new URL("/login", request.url), 303);
+      return Response.redirect(new URL("/login", config.appOrigin), 303);
     return Response.json({ initialized: true }, { status: 201 });
   } catch (error) {
     if (error instanceof InstanceAlreadyInitializedError) {

@@ -82,7 +82,9 @@ For a local two-service deployment, put development values in `.env` (including 
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-The development override binds the app and PostgreSQL only to localhost. The production-oriented base file contains exactly `app` and `postgres`, does not publish PostgreSQL, and only exposes the app port to its private Compose network for an external reverse proxy.
+The development override binds the app and PostgreSQL only to localhost and selects development security mode. It is not a production template. The production-oriented base file contains exactly `app` and `postgres`, publishes neither service on the host, and advertises internal app port 3000 for operator-owned ingress.
+
+Follow the [proxy-independent production ingress contract and operator checklist](docs/DEPLOYMENT.md). Coolify / Traefik, Caddy, Nginx Proxy Manager, nginx and equivalent ingress systems are examples, not dependencies. Production requires canonical HTTPS `APP_ORIGIN`, `MAILDOCK_ENV=production`, private PostgreSQL, and no alternate untrusted raw HTTP path bypassing ingress. Maildock does not trust forwarded client-address headers; F8 authentication admission is IP-independent. Network attachment, routing and actual reachability are operator responsibilities, not guarantees inferred from Docker networking.
 
 The app entrypoint waits for Compose's PostgreSQL health check, runs migrations, then starts the web and worker composition roots. The same image can later run only one role by setting `MAILDOCK_ROLE=web` or `MAILDOCK_ROLE=worker`.
 

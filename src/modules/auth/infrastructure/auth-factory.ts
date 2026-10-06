@@ -266,6 +266,10 @@ function createAuthEngine(config: AppConfig, database: Database) {
       },
     },
     advanced: {
+      // V1 does not require authoritative client IP. Ignore all caller-supplied
+      // address headers; retain database HTTP limiting in a shared per-path
+      // bucket in production. Do not disableIpTracking: it bypasses that limiter.
+      ipAddress: { ipAddressHeaders: [] },
       // Keep the auth protocol's own CSRF boundary enabled in every runtime,
       // including tests (Better Auth otherwise disables Origin checks there).
       disableOriginCheck: false,

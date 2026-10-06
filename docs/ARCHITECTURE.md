@@ -107,6 +107,8 @@ Docker Compose must define exactly two required services:
 
 PostgreSQL must not publish a port to the public Internet. In production, the application port should not be exposed directly to the Internet either: public traffic terminates TLS at a reverse proxy, which reaches the app over a private/internal connection, and the app reaches PostgreSQL only over the private Docker network. A reverse proxy is deployment infrastructure and is not a mandatory third service in the base Maildock Compose file. Development may publish the app and database ports to localhost where useful, with clearly development-only configuration.
 
+The [V1 production ingress contract](DEPLOYMENT.md) defines the operator-owned boundary independently of proxy product. Container/platform ingress may need no host publication; a host proxy may use loopback/private publication; a private LAN/VPN may safely use a non-loopback publication if untrusted clients cannot bypass the intended boundary. Docker networking does not alone prove isolation. Production retains HTTPS `APP_ORIGIN` and Secure cookies in every topology. Maildock ignores forwarded client-address headers for identity and retains PostgreSQL-backed, IP-independent F8 admission plus shared supplemental Better Auth HTTP limiting.
+
 Startup must wait for a healthy database, run schema migrations once using an explicit migration command or guarded entrypoint step, and then start the application. Do not rely on container startup order alone. The application should expose a liveness endpoint and a readiness endpoint that verifies required dependencies without contacting mail providers.
 
 ## 5. Codebase shape

@@ -282,6 +282,7 @@ import {
   AuthThrottledError,
 } from "@/modules/auth/infrastructure/auth-admission";
 import * as passwords from "@/modules/auth/infrastructure/password";
+import { forwardingHeaders } from "./f9-headers";
 import { POST as cancelPost } from "@/app/api/auth/mfa/cancel/route";
 async function bucket(key: string) {
   return (
@@ -429,6 +430,60 @@ it("F8 aggregate admission is before M for every explicit public/management wrap
       await control.client`select pid from pg_locks where locktype='advisory' and objid=${key} and not granted`,
     ).toHaveLength(0);
   });
+});
+
+it("F9 all address-header variants retain exhausted F8 password, MFA and management admission", async () => {
+  await prime("work:password", 12, 60);
+  await prime("work:mfa", 30, 60);
+  await prime("work:management", 12, 60);
+  const verify = vi.spyOn(passwords, "verifyPassword");
+  const hash = vi.spyOn(passwords, "hashPassword");
+  try {
+    for (const extra of forwardingHeaders) {
+      const login = await otherAuth.handler(
+        request(
+          "/api/auth/sign-in/username",
+          { username: "owner-01", password },
+          "",
+          extra,
+        ),
+      );
+      expect(login.status).toBe(429);
+      for (const [route, path, body] of [
+        [totpPost, "/api/auth/mfa/totp", { code: "000000" }],
+        [recoveryPost, "/api/auth/mfa/recovery", { code: "AAAAA-BBBBB" }],
+        [cancelPost, "/api/auth/mfa/cancel", {}],
+        [resume, "/api/auth/mfa/manage/authenticator/resume", {}],
+        [
+          complete,
+          "/api/auth/mfa/manage/authenticator/complete",
+          { code: "000000" },
+        ],
+        [
+          start,
+          "/api/auth/mfa/manage/authenticator/start",
+          proof("totp", "000000"),
+        ],
+        [
+          regenerate,
+          "/api/auth/mfa/manage/recovery/regenerate",
+          proof("totp", "000000"),
+        ],
+      ] as const) {
+        expect((await route(request(path, body, cookie, extra))).status).toBe(
+          429,
+        );
+      }
+    }
+    expect(verify).not.toHaveBeenCalled();
+    expect(hash).not.toHaveBeenCalled();
+    expect((await bucket("work:password")).count).toBe(13);
+    expect((await bucket("work:mfa")).count).toBe(31);
+    expect((await bucket("work:management")).count).toBe(13);
+  } finally {
+    verify.mockRestore();
+    hash.mockRestore();
+  }
 });
 
 it("F8 C/E fifth concurrent wrong management password commits; sixth does not verify or mutate", async () => {
