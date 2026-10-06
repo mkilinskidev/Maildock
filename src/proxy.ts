@@ -10,6 +10,7 @@ const publicPaths = [
   "/setup",
   "/login",
   "/initial-mfa",
+  "/replace-authenticator",
   "/api/setup",
   "/api/auth",
 ];

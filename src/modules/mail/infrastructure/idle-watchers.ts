@@ -42,6 +42,7 @@ export class IdleWatcherManager {
   ) {}
 
   async start(): Promise<void> {
+    this.stopped = false;
     await this.refresh();
     this.timer = setInterval(
       () => void this.refresh().catch(() => undefined),

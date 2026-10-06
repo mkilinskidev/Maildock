@@ -203,6 +203,22 @@ describe("F10 actual Drizzle migration against pre-F10 PostgreSQL databases", ()
     // The current MFA plugin cannot read a pre-F2.1 database by design.
     const legacyAuth = betterAuth({
       ...auth.options,
+      // Historical session issuance predates the replacement-table guard.
+      // Keep F5 fields, but do not query a table absent from this legacy DB.
+      databaseHooks: {
+        session: {
+          create: {
+            before: async (session) => ({
+              data: {
+                ...session,
+                absoluteExpiresAt: new Date(
+                  session.createdAt.getTime() + 24 * 60 * 60 * 1000,
+                ),
+              },
+            }),
+          },
+        },
+      },
       plugins: auth.options.plugins.filter(
         (plugin) => plugin.id !== "two-factor",
       ),

@@ -340,6 +340,18 @@ export const twoFactor = pgTable(
   ],
 );
 
+// A pending replacement remains here after expiry to block bootstrap fallback.
+// It authorizes only enrollment of this exact factor, never login or business.
+export const mfaReplacement = pgTable("mfa_replacement", {
+  ownerUserId: text("owner_user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  factorId: text("factor_id").notNull(),
+  tokenDigest: text("token_digest").notNull(),
+  failedAttempts: integer("failed_attempts").default(0).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
 export const session = pgTable(
   "session",
   {

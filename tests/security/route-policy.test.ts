@@ -7,6 +7,22 @@ import { expect, it } from "vitest";
 // or receive a specific boundary review here; no generic skip flag is allowed.
 const boundaries = new Map([
   [
+    "auth/mfa/manage/recovery/regenerate/route.ts:POST",
+    "Exact Origin + bounded strict JSON + synchronized business owner/password/current MFA + encrypted replacement after commit",
+  ],
+  [
+    "auth/mfa/manage/authenticator/start/route.ts:POST",
+    "Exact Origin + bounded strict JSON + synchronized business owner/password/current MFA + revocation + digest-only ceremony",
+  ],
+  [
+    "auth/mfa/manage/authenticator/resume/route.ts:POST",
+    "Exact Origin + bounded strict empty JSON + synchronized unexpired narrow ceremony + pending factor only",
+  ],
+  [
+    "auth/mfa/manage/authenticator/complete/route.ts:POST",
+    "Exact Origin + bounded strict JSON + synchronized narrow ceremony + installed TOTP primitive + single-use completion",
+  ],
+  [
     "auth/mfa/totp/route.ts:POST",
     "Strict bounded JSON + exact Origin + real password challenge + PostgreSQL boundary + business session authorization",
   ],

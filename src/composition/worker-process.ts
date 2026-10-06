@@ -98,12 +98,37 @@ async function startBusinessWorkers() {
   await worker.watchers.start();
 }
 
+async function superviseBusinessReadiness() {
+  while (!stopping) {
+    await startBusinessWorkers();
+    if (stopping) return;
+    // Authenticator replacement is the first supported READY -> NOT READY
+    // transition. Re-read PostgreSQL instead of caching startup readiness.
+    while (!stopping && (await isInstanceReady(worker.database.db)))
+      await delay(1_000);
+    if (stopping) return;
+    worker.attachmentPoller.stop();
+    worker.poller.stop();
+    worker.backfillPoller.stop();
+    worker.commandPoller.stop();
+    worker.outgoingPoller.stop();
+    worker.sentCopyPoller.stop();
+    await worker.watchers.stop();
+    await worker.jobs.stop();
+    worker.logger.info(
+      { event: "worker.mfa_pending" },
+      "Business workers paused until verified owner MFA.",
+    );
+  }
+}
+
 try {
-  await startBusinessWorkers();
+  await superviseBusinessReadiness();
 } catch (error) {
   worker.logger.fatal(
     { err: error, event: "worker.start_failed" },
     "Worker failed to start",
   );
+  await shutdown("READINESS_FAILURE");
   process.exitCode = 1;
 }

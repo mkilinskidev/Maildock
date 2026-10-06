@@ -174,6 +174,9 @@ importers:
       '@azure/msal-node':
         specifier: ^7.0.0
         version: 7.0.0
+      '@better-auth/utils':
+        specifier: 0.4.2
+        version: 0.4.2
       '@lexical/extension':
         specifier: 0.52.0
         version: 0.52.0(typescript@6.0.3)

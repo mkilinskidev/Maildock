@@ -9,6 +9,7 @@ import type { AppConfig } from "@/shared/infrastructure/config/config";
 import type { Database } from "@/shared/infrastructure/database/database";
 import {
   instanceState,
+  mfaReplacement,
   session,
   twoFactor,
   user,
@@ -29,6 +30,8 @@ export const initialMfaCompleteSchema = z
   .strict();
 
 async function pendingState(tx: Database, ownerId: string) {
+  if ((await tx.select().from(mfaReplacement)).length)
+    throw new InitialMfaRejected();
   const states = await tx.select().from(instanceState);
   const owners = await tx.select().from(user).where(eq(user.id, ownerId));
   const factors = await tx.select().from(twoFactor);

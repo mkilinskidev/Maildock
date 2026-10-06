@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { twoFactor, username } from "better-auth/plugins";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { isInstanceReady } from "@/modules/auth/application/instance-readiness";
 import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
 import { withoutTrustedDevice } from "./mfa-cookies";
@@ -142,19 +142,35 @@ function createAuthEngine(config: AppConfig, database: Database) {
     databaseHooks: {
       session: {
         create: {
-          before: async (session) => ({
-            data: {
-              ...session,
-              // Better Auth 1.7.5 hardcodes 24h for rememberMe:false. Its
-              // supported database hook corrects expiry without changing cookies.
-              expiresAt: new Date(
-                session.createdAt.getTime() + sessionInactivitySeconds * 1_000,
-              ),
-              absoluteExpiresAt: new Date(
-                session.createdAt.getTime() + sessionAbsoluteMs,
-              ),
-            },
-          }),
+          before: async (session) => {
+            // Includes pending and expired ceremonies. Password login must not
+            // create a session that could bypass the replacement authority.
+            if (
+              (
+                await database
+                  .select()
+                  .from(authSchema.mfaReplacement)
+                  .where(
+                    eq(authSchema.mfaReplacement.ownerUserId, session.userId),
+                  )
+              ).length
+            )
+              return false;
+            return {
+              data: {
+                ...session,
+                // Better Auth 1.7.5 hardcodes 24h for rememberMe:false. Its
+                // supported database hook corrects expiry without changing cookies.
+                expiresAt: new Date(
+                  session.createdAt.getTime() +
+                    sessionInactivitySeconds * 1_000,
+                ),
+                absoluteExpiresAt: new Date(
+                  session.createdAt.getTime() + sessionAbsoluteMs,
+                ),
+              },
+            };
+          },
         },
         update: {
           before: async (update, context) => {
@@ -232,6 +248,8 @@ function createAuthEngine(config: AppConfig, database: Database) {
   });
   // Bind the authorization reader to the same database as Better Auth.
   return Object.assign(auth, {
+    isMfaReplacementPending: async () =>
+      (await database.select().from(authSchema.mfaReplacement)).length > 0,
     isInstanceOwner: (userId: string) => isInstanceOwner(database, userId),
     isInstanceReady: (userId: string, sessionId?: string) =>
       isInstanceReady(database, userId, sessionId),
