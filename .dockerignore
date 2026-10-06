@@ -3,6 +3,7 @@
 dist-worker
 node_modules
 coverage
+.security-results
 .env
 .env.*
 !.env.example

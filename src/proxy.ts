@@ -83,5 +83,10 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // This raw-body endpoint owns business-session + Origin validation before
+  // reading. Avoid Next's eager in-memory clone in front of its disk stream;
+  // its configured storage limit can legitimately exceed the proxy ceiling.
+  matcher: [
+    "/((?!api/attachments/staged/?$|_next/static|_next/image|favicon.ico).*)",
+  ],
 };
