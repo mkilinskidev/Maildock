@@ -7,7 +7,10 @@ import { expect, it } from "vitest";
 // or receive a specific boundary review here; no generic skip flag is allowed.
 const boundaries = new Map([
   ["auth/[...all]/route.ts:GET", "Better Auth session protocol"],
-  ["auth/[...all]/route.ts:POST", "Better Auth Origin/CSRF + JSON router"],
+  [
+    "auth/[...all]/route.ts:POST",
+    "Better Auth login; Maildock exact-Origin current-session logout",
+  ],
   ["setup/route.ts:GET", "Public initialized status"],
   ["setup/route.ts:POST", "Bootstrap secret + exact Origin + bounded parser"],
   ["health/live/route.ts:GET", "Public health probe"],

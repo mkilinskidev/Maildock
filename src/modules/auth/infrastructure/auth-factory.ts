@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { username } from "better-auth/plugins";
+import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
 import {
   isSessionWithinLifetime,
   sessionAbsoluteMs,
@@ -126,6 +127,7 @@ export function createAuth(config: AppConfig, database: Database) {
       },
     },
     plugins: [
+      logoutCookies,
       username({
         minUsernameLength: ownerUsernameMinLength,
         maxUsernameLength: ownerUsernameMaxLength,

@@ -21,7 +21,9 @@ export function LogoutButton() {
       });
 
       if (!response.ok) {
-        setError("Sign out failed. Please try again.");
+        setError(
+          "Sign out could not be confirmed. Your session may still be active.",
+        );
 
         return;
       }
@@ -29,7 +31,9 @@ export function LogoutButton() {
       router.replace("/login");
       router.refresh();
     } catch {
-      setError("Sign out failed. Please try again.");
+      setError(
+        "Sign out could not be confirmed. Your session may still be active.",
+      );
     } finally {
       setPending(false);
     }

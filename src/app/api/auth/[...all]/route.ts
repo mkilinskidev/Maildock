@@ -6,12 +6,18 @@ import {
   recordLoginFailure,
 } from "@/modules/auth/infrastructure/login-throttle";
 import { auth } from "@/modules/auth/infrastructure/auth";
+import { logoutCurrentSession } from "@/modules/auth/application/logout";
+import { db } from "@/shared/infrastructure/database/runtime-database";
+import { getConfig } from "@/shared/infrastructure/config/config";
+import { createLogger } from "@/shared/infrastructure/logging/logger";
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
+import { hasValidOrigin } from "@/modules/auth/application/origin";
 
 export const dynamic = "force-dynamic";
 
 const handler = toNextJsHandler(auth);
 
-// Explicit auth boundary: Better Auth 1.7.5 owns Origin/CSRF and JSON media-type
+// Explicit login boundary: Better Auth 1.7.5 owns Origin/CSRF and JSON media-type
 // validation here (trustedOrigins = [APP_ORIGIN], neither check disabled).
 // Its login/session protocol must not pass through the owner-session guard.
 
@@ -32,7 +38,19 @@ export async function POST(request: Request) {
   }
 
   if (pathname.endsWith("/sign-out")) {
-    return handler.POST(request);
+    const config = getConfig();
+    const logger = createLogger(config);
+    if (!hasValidOrigin(request, config))
+      return Response.json(
+        { error: "Invalid request origin." },
+        { status: 403 },
+      );
+    // Preserve the existing JSON protocol; bodyless logout is also supported.
+    if (request.body !== null) {
+      const unsupported = requireJsonMediaType(request);
+      if (unsupported) return unsupported;
+    }
+    return logoutCurrentSession(request, auth, db, config, logger);
   }
 
   let username: string | undefined;
