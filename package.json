@@ -49,6 +49,7 @@
     "pino": "10.3.1",
     "postcss": "^8.5.28",
     "postgres": "3.4.9",
+    "qrcode.react": "4.2.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "4.6.5"

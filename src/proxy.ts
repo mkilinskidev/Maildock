@@ -6,7 +6,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getValidBusinessSession } from "@/modules/auth/application/session-validation";
 import { auth } from "@/modules/auth/infrastructure/auth";
 
-const publicPaths = ["/setup", "/login", "/api/setup", "/api/auth"];
+const publicPaths = [
+  "/setup",
+  "/login",
+  "/initial-mfa",
+  "/api/setup",
+  "/api/auth",
+];
 
 function isPublicPath(pathname: string): boolean {
   if (pathname === "/api/health/live" || pathname === "/api/health/ready")

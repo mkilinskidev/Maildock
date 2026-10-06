@@ -2408,6 +2408,21 @@ label.checkbox input {
   font-size: 12px;
   line-height: 1.5;
 }
+.mfa-qr {
+  justify-self: center;
+  max-width: 100%;
+  height: auto;
+}
+.mfa-secret {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.mfa-recovery-codes {
+  margin: 0;
+  text-align: center;
+  user-select: all;
+  line-height: 1.7;
+}
 .mail-composer,
 .signature-editor-frame {
   container-type: inline-size;

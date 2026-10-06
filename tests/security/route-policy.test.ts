@@ -6,6 +6,18 @@ import { expect, it } from "vitest";
 // Exact reviewed exceptions. A new route/method must use the application guard
 // or receive a specific boundary review here; no generic skip flag is allowed.
 const boundaries = new Map([
+  [
+    "auth/mfa/totp/route.ts:POST",
+    "Strict bounded JSON + exact Origin + real password challenge + PostgreSQL boundary + business session authorization",
+  ],
+  [
+    "auth/mfa/recovery/route.ts:POST",
+    "Strict bounded JSON + exact Origin + real password challenge + atomic Better Auth recovery consumption + business session authorization",
+  ],
+  [
+    "auth/mfa/cancel/route.ts:POST",
+    "Strict empty JSON + exact Origin + engine-owned challenge cookie expiry; no session issuance",
+  ],
   ["auth/[...all]/route.ts:GET", "Better Auth session protocol"],
   [
     "auth/[...all]/route.ts:POST",

@@ -41,7 +41,15 @@ import {
 const runtime = vi.hoisted(() => ({
   db: undefined as unknown,
   config: undefined as unknown,
+  auth: undefined as unknown,
+  headers: new Headers(),
 }));
+vi.mock("@/modules/auth/infrastructure/auth", () => ({
+  get auth() {
+    return runtime.auth;
+  },
+}));
+vi.mock("next/headers", () => ({ headers: async () => runtime.headers }));
 vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   get db() {
     return runtime.db;
@@ -53,6 +61,18 @@ vi.mock("@/shared/infrastructure/config/config", async (original) => ({
 }));
 import { POST as start } from "@/app/api/auth/initial-mfa/start/route";
 import { POST as complete } from "@/app/api/auth/initial-mfa/complete/route";
+import { POST as verifyTotp } from "@/app/api/auth/mfa/totp/route";
+import { POST as verifyRecovery } from "@/app/api/auth/mfa/recovery/route";
+import { POST as cancelChallenge } from "@/app/api/auth/mfa/cancel/route";
+import { ownerLanding } from "@/modules/auth/application/auth-navigation";
+import LoginPage from "@/app/login/page";
+import InitialMfaPage from "@/app/initial-mfa/page";
+import SetupPage from "@/app/setup/page";
+import {
+  sessionAbsoluteMs,
+  sessionInactivitySeconds,
+} from "@/modules/auth/domain/session-policy";
+import { verification } from "@/shared/infrastructure/database/schema";
 
 const origin = "http://localhost:3000";
 const password = "correct horse battery staple";
@@ -99,6 +119,7 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
     otherAuth = createAuth(config, independent.db);
     runtime.db = database.db;
     runtime.config = config;
+    runtime.auth = auth;
   });
   beforeEach(async () => {
     await database.db
@@ -112,6 +133,7 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
       config,
     );
     cookie = cookies(await login());
+    runtime.headers = new Headers({ cookie });
   });
   afterAll(async () => {
     await database?.client.end();
@@ -310,6 +332,7 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
     expect(await response.json()).toEqual({
       completed: true,
       freshLoginRequired: true,
+      recoveryCodes: expect.arrayContaining([expect.any(String)]),
     });
     expect(response.headers.get("cache-control")).toBe("no-store");
     const cleanup = response.headers.getSetCookie();
@@ -747,6 +770,368 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
       ]) {
         expect(logged).not.toContain(value);
       }
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  async function enroll() {
+    const started = await begin();
+    expect(started.status).toBe(200);
+    const [original] = await database.db.select().from(twoFactor);
+    const originals = (
+      await auth.api.viewBackupCodes({ body: { userId: original.userId } })
+    ).backupCodes;
+    const completed = await finish(await code());
+    expect(completed.status).toBe(200);
+    const result = await completed.json();
+    expect(result.recoveryCodes).toEqual(originals);
+    expect((await database.db.select().from(twoFactor))[0].backupCodes).toBe(
+      original.backupCodes,
+    );
+    expect(original.backupCodes).not.toContain(originals[0]);
+    await readyWithNoSessions();
+    return result.recoveryCodes as string[];
+  }
+
+  async function challenge(engine = auth) {
+    const response = await login(engine);
+    expect((await response.json()).twoFactorRedirect).toBe(true);
+    expect(await database.db.select().from(session)).toHaveLength(0);
+    expect(
+      await getValidBusinessSession(
+        auth,
+        new Headers({ cookie: cookies(response) }),
+      ),
+    ).toBeNull();
+    return cookies(response);
+  }
+
+  function verify(
+    method: "totp" | "recovery",
+    suppliedCookie: string,
+    input: unknown,
+  ) {
+    return (method === "totp" ? verifyTotp : verifyRecovery)(
+      request(`mfa/${method}`, input, suppliedCookie),
+    );
+  }
+
+  function noTrust(response: Response) {
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(
+      response.headers
+        .getSetCookie()
+        .filter((value) => value.includes("trust_device="))
+        .every((value) => value.includes("Max-Age=0")),
+    ).toBe(true);
+  }
+
+  it("F2.3 routes a pending owner to enrollment, then READY to fresh login", async () => {
+    expect(await ownerLanding(auth, new Headers({ cookie }))).toBe(
+      "/initial-mfa",
+    );
+    expect(
+      await getValidBusinessSession(auth, new Headers({ cookie })),
+    ).toBeNull();
+    await enroll();
+    expect(await ownerLanding(auth, new Headers({ cookie }))).toBe("/login");
+    const second = await challenge();
+    const response = await verify("totp", second, { code: await code() });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ authenticated: true });
+    noTrust(response);
+    expect(
+      await ownerLanding(auth, new Headers({ cookie: cookies(response) })),
+    ).toBe("/");
+    const [created] = await database.db.select().from(session);
+    expect(created.expiresAt.getTime() - created.createdAt.getTime()).toBe(
+      sessionInactivitySeconds * 1000,
+    );
+    expect(
+      created.absoluteExpiresAt.getTime() - created.createdAt.getTime(),
+    ).toBe(sessionAbsoluteMs);
+    expect((await verify("totp", second, { code: await code() })).status).toBe(
+      401,
+    );
+    expect(await database.db.select().from(session)).toHaveLength(1);
+    expect(
+      (await database.db.select().from(verification)).some((row) =>
+        row.identifier.startsWith("trust-device-"),
+      ),
+    ).toBe(false);
+    await database.db.update(session).set({ absoluteExpiresAt: new Date(0) });
+    expect(
+      await getValidBusinessSession(
+        auth,
+        new Headers({ cookie: cookies(response) }),
+      ),
+    ).toBeNull();
+  });
+
+  it("F2.3 actual pages close setup, route pending owners without loops, and deny READY enrollment", async () => {
+    const redirected = (path: string) =>
+      expect.objectContaining({ digest: expect.stringContaining(`;${path};`) });
+    await expect(SetupPage()).rejects.toEqual(redirected("/login"));
+    await expect(LoginPage()).rejects.toEqual(redirected("/initial-mfa"));
+    await expect(InitialMfaPage()).resolves.toBeTruthy();
+    runtime.headers = new Headers();
+    await expect(InitialMfaPage()).rejects.toEqual(redirected("/login"));
+    await expect(LoginPage()).resolves.toBeTruthy();
+    runtime.headers = new Headers({ cookie });
+    await enroll();
+    await expect(InitialMfaPage()).rejects.toEqual(redirected("/login"));
+    await expect(LoginPage()).resolves.toBeTruthy();
+    const success = await verify("totp", await challenge(), {
+      code: await code(),
+    });
+    runtime.headers = new Headers({ cookie: cookies(success) });
+    await expect(LoginPage()).rejects.toEqual(redirected("/"));
+    await expect(InitialMfaPage()).rejects.toEqual(redirected("/login"));
+  });
+
+  it("F2.3 preserves failed attempt/account counters and refuses missing/expired challenges", async () => {
+    await enroll();
+    const second = await challenge();
+    const valid = await code();
+    const wrong = valid === "000000" ? "111111" : "000000";
+    for (let i = 0; i < 5; i++) {
+      const failed = await verify("totp", second, { code: wrong });
+      expect(failed.status).toBe(401);
+      expect((await failed.json()).restart).toBe(false);
+      expect(
+        (await database.db.select().from(twoFactor))[0].failedVerificationCount,
+      ).toBe(i + 1);
+    }
+    expect(
+      (await (await verify("totp", second, { code: valid })).json()).restart,
+    ).toBe(true);
+    expect(
+      (await (await verify("totp", "", { code: valid })).json()).restart,
+    ).toBe(true);
+    const expired = await challenge();
+    await database.db.update(verification).set({ expiresAt: new Date(0) });
+    expect(
+      (await (await verify("totp", expired, { code: valid })).json()).restart,
+    ).toBe(true);
+    expect(await database.db.select().from(session)).toHaveLength(0);
+  });
+
+  it("F2.3 returns original codes once; recovery requires password and consumes only its chosen code", async () => {
+    const codes = await enroll();
+    const replay = await finish(await code());
+    expect(replay.status).toBe(403);
+    expect(await replay.json()).not.toHaveProperty("recoveryCodes");
+    expect((await verify("recovery", "", { code: codes[0] })).status).toBe(401);
+    const second = await challenge();
+    const successful = await verify("recovery", second, { code: codes[0] });
+    expect(successful.status).toBe(200);
+    noTrust(successful);
+    expect(
+      await getValidBusinessSession(
+        auth,
+        new Headers({ cookie: cookies(successful) }),
+      ),
+    ).not.toBeNull();
+    const [factor] = await database.db.select().from(twoFactor);
+    const remaining = (
+      await auth.api.viewBackupCodes({ body: { userId: factor.userId } })
+    ).backupCodes;
+    expect(remaining).toEqual(codes.slice(1));
+    await database.db.delete(session);
+    expect(
+      (await verify("recovery", await challenge(), { code: codes[0] })).status,
+    ).toBe(401);
+    expect(
+      (await verify("recovery", await challenge(), { code: codes[1] })).status,
+    ).toBe(200);
+  });
+
+  it("F2.3 same recovery code on independent concurrent PostgreSQL challenges succeeds EXACTLY once", async () => {
+    const codes = await enroll();
+    const challenges: string[] = [];
+    for (let i = 0; i < 4; i++)
+      challenges.push(await challenge(i % 2 ? auth : otherAuth));
+    let pending: Promise<Response>[] = [];
+    await control.client.begin(async (barrier) => {
+      await barrier`SELECT pg_advisory_xact_lock(${boundaryKey})`;
+      pending = challenges.map((suppliedCookie) =>
+        verify("recovery", suppliedCookie, { code: codes[0] }),
+      );
+      await waitBoundaryWaiters(4);
+    });
+    const responses = await Promise.all(pending);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 401, 401, 401,
+    ]);
+    expect(await database.db.select().from(session)).toHaveLength(1);
+    const [factor] = await database.db.select().from(twoFactor);
+    expect(
+      (await auth.api.viewBackupCodes({ body: { userId: factor.userId } }))
+        .backupCodes,
+    ).toEqual(codes.slice(1));
+    await database.db.delete(session);
+    expect(
+      (await verify("recovery", await challenge(), { code: codes[0] })).status,
+    ).toBe(401);
+  });
+
+  it("F2.3 rejects all extra plugin fields and exact-Origin/media-type/body violations", async () => {
+    const codes = await enroll();
+    const second = await challenge();
+    for (const method of ["totp", "recovery"] as const) {
+      const input = { code: method === "totp" ? await code() : codes[0] };
+      for (const extra of [
+        { trustDevice: true },
+        { trustDevice: false },
+        { disableSession: true },
+        { method: "otp" },
+        { userId: "other" },
+      ])
+        expect(
+          (await verify(method, second, { ...input, ...extra })).status,
+        ).toBe(400);
+      const route = method === "totp" ? verifyTotp : verifyRecovery;
+      for (const [headers, status] of [
+        [{ Origin: "https://evil.example" }, 403],
+        [{ "Content-Type": "text/plain" }, 415],
+        [{ "Content-Length": "4097" }, 413],
+      ] as const)
+        expect(
+          (await route(request(`mfa/${method}`, input, second, headers)))
+            .status,
+        ).toBe(status);
+      expect(
+        (
+          await route(
+            request(
+              `mfa/${method}`,
+              { ...input, padding: "x".repeat(4096) },
+              second,
+            ),
+          )
+        ).status,
+      ).toBe(413);
+    }
+    expect(await database.db.select().from(session)).toHaveLength(0);
+  });
+
+  it("F2.3 cancellation only expires engine cookies and bounds stale rows to 600 seconds", async () => {
+    await enroll();
+    const second = await challenge();
+    const before = await database.db.select().from(verification);
+    const cancelled = await cancelChallenge(request("mfa/cancel", {}, second));
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toEqual({ cancelled: true });
+    expect(
+      cancelled.headers
+        .getSetCookie()
+        .every((value) => value.includes("Max-Age=0")),
+    ).toBe(true);
+    expect(await database.db.select().from(session)).toHaveLength(0);
+    expect(await database.db.select().from(verification)).toEqual(before);
+    expect(
+      before.every((row) => row.expiresAt.getTime() <= Date.now() + 600000),
+    ).toBe(true);
+    expect(
+      (await verify("totp", cookies(cancelled), { code: await code() })).status,
+    ).toBe(401);
+    expect(
+      (
+        await cancelChallenge(
+          request("mfa/cancel", { trustDevice: true }, second),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (await verify("totp", await challenge(), { code: await code() })).status,
+    ).toBe(200);
+  });
+
+  it("F2.3 refuses the existing-session branch and rolls back non-owner issuance", async () => {
+    await enroll();
+    const first = await verify("totp", await challenge(), {
+      code: await code(),
+    });
+    expect(first.status).toBe(200);
+    expect(
+      (await verify("totp", cookies(first), { code: await code() })).status,
+    ).toBe(401);
+    await database.db.delete(session);
+    const second = await challenge();
+    const [owner] = await database.db.select().from(user);
+    const id = randomUUID();
+    await database.db.insert(user).values({
+      id,
+      name: "Other",
+      email: "other@example.test",
+      twoFactorEnabled: true,
+    });
+    const [factor] = await database.db.select().from(twoFactor);
+    // A challenge bound to a foreign user must never produce business access.
+    await database.db
+      .insert(twoFactor)
+      .values({ ...factor, id: randomUUID(), userId: id });
+    await database.db
+      .update(verification)
+      .set({ value: id })
+      .where((await import("drizzle-orm")).eq(verification.value, owner.id));
+    expect((await verify("totp", second, { code: await code() })).status).toBe(
+      503,
+    );
+    expect(await database.db.select().from(session)).toHaveLength(0);
+  });
+
+  it("F2.3 ignores even a valid Better Auth trusted-device cookie at password login", async () => {
+    await enroll();
+    const second = await challenge();
+    const privateResult = await auth.api.verifyTOTP({
+      headers: new Headers({ cookie: second }),
+      body: { code: await code(), trustDevice: true },
+      asResponse: true,
+    });
+    expect(privateResult.status).toBe(200);
+    const trusted = privateResult.headers
+      .getSetCookie()
+      .find((value) => value.includes("trust_device="))!;
+    expect(trusted).toBeTruthy();
+    await database.db.delete(session);
+    const loginWithTrust = await auth.handler(
+      request(
+        "sign-in/username",
+        { username: "owner-01", password },
+        trusted.split(";")[0],
+      ),
+    );
+    expect((await loginWithTrust.json()).twoFactorRedirect).toBe(true);
+    expect(await database.db.select().from(session)).toHaveLength(0);
+  });
+
+  it("F2.3 never logs secret/challenge/session values on success, invalid code or cancellation", async () => {
+    const spies = [
+      vi.spyOn(console, "log"),
+      vi.spyOn(console, "info"),
+      vi.spyOn(console, "warn"),
+      vi.spyOn(console, "error"),
+    ];
+    try {
+      const codes = await enroll();
+      const second = await challenge();
+      const totp = await code();
+      await verify("totp", second, { code: "999999" });
+      const success = await verify("recovery", second, { code: codes[0] });
+      expect(success.status).toBe(200);
+      await cancelChallenge(request("mfa/cancel", {}, second));
+      const logged = JSON.stringify(spies.flatMap((spy) => spy.mock.calls));
+      for (const value of [
+        password,
+        bootstrapSecret,
+        totp,
+        ...codes,
+        second,
+        cookies(success),
+      ])
+        expect(logged).not.toContain(value);
     } finally {
       spies.forEach((spy) => spy.mockRestore());
     }

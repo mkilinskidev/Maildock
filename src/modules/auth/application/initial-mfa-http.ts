@@ -14,13 +14,11 @@ export async function initialMfaHttp<T>(
   config: AppConfig,
   schema: z.ZodType<T>,
   operation: (input: T) => Promise<Response | object>,
+  errorMessage = "Initial MFA enrollment could not be completed.",
 ) {
   const sensitive = { "Cache-Control": "no-store" };
   const error = (status: number) =>
-    Response.json(
-      { error: "Initial MFA enrollment could not be completed." },
-      { status, headers: sensitive },
-    );
+    Response.json({ error: errorMessage }, { status, headers: sensitive });
   try {
     if (!hasValidOrigin(request, config)) return error(403);
     if (requireJsonMediaType(request)) return error(415);
@@ -72,13 +70,8 @@ export async function initialMfaHttp<T>(
     }
     const result = await operation(input);
     if (result instanceof Response) {
-      const response = Response.json(
-        { completed: true, freshLoginRequired: true },
-        { headers: sensitive },
-      );
-      for (const cookie of result.headers.getSetCookie())
-        response.headers.append("Set-Cookie", cookie);
-      return response;
+      result.headers.set("Cache-Control", "no-store");
+      return result;
     }
     return Response.json(result, { headers: sensitive });
   } catch (cause) {

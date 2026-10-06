@@ -4,6 +4,7 @@ import { twoFactor, username } from "better-auth/plugins";
 import { sql } from "drizzle-orm";
 import { isInstanceReady } from "@/modules/auth/application/instance-readiness";
 import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
+import { withoutTrustedDevice } from "./mfa-cookies";
 import { isInstanceOwner } from "@/modules/auth/application/owner-binding";
 import {
   isSessionWithinLifetime,
@@ -64,7 +65,7 @@ export function createAuth(config: AppConfig, database: Database) {
     (name) => auth.api[name].path,
   );
   const handler = auth.handler;
-  auth.handler = (request) => {
+  auth.handler = async (request) => {
     const path = new URL(request.url).pathname.replace(/\/+$/, "");
     // Match the catch-all's suffix allowlist, including router trailing slashes.
     // Logout and session reads retain their existing transaction semantics.
@@ -72,8 +73,12 @@ export function createAuth(config: AppConfig, database: Database) {
       request.method === "POST" &&
       sessionIssuingPaths.some((endpoint) => path.endsWith(endpoint))
     ) {
-      return withInitialMfaBoundary(config, database, (scoped) =>
-        scoped.handler(request),
+      return withInitialMfaBoundary(config, database, async (scoped) =>
+        scoped.handler(
+          new Request(request, {
+            headers: await withoutTrustedDevice(scoped, request.headers),
+          }),
+        ),
       );
     }
     return handler(request);
@@ -83,14 +88,15 @@ export function createAuth(config: AppConfig, database: Database) {
     const original = auth.api[name];
     const wrapped = Object.assign(
       ((input: unknown) =>
-        withInitialMfaBoundary(
-          config,
-          database,
-          (scoped) =>
-            Reflect.apply(scoped.api[name], undefined, [
-              input,
-            ]) as Promise<unknown>,
-        )) as typeof original,
+        withInitialMfaBoundary(config, database, async (scoped) => {
+          const supplied = input as { headers?: HeadersInit };
+          return Reflect.apply(scoped.api[name], undefined, [
+            {
+              ...supplied,
+              headers: await withoutTrustedDevice(scoped, supplied?.headers),
+            },
+          ]) as Promise<unknown>;
+        })) as typeof original,
       { path: original.path, options: original.options },
     );
     Object.assign(auth.api, { [name]: wrapped });

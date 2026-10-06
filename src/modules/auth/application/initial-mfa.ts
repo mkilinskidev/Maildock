@@ -123,6 +123,16 @@ export async function completeInitialMfa(
       !(await isInstanceReady(tx, owner.user.id))
     )
       throw new Error("Initial MFA completion could not be confirmed.");
+    // Server-only Better Auth API decrypts the ORIGINAL codes on this tx.
+    // Authority was established before revocation; nothing leaves before commit.
+    const { backupCodes } = await auth.api.viewBackupCodes({
+      body: { userId: owner.user.id },
+    });
+    if (
+      !Array.isArray(backupCodes) ||
+      !backupCodes.every((code) => typeof code === "string")
+    )
+      throw new Error("Initial recovery codes could not be prepared.");
     // Discard all cookies returned by verifyTOTP, including its rotated session.
     const cleanup = await auth.api.clearInitialMfaCookies({
       headers,
@@ -130,6 +140,9 @@ export async function completeInitialMfa(
     });
     if (!cleanup.ok)
       throw new Error("Initial MFA cookie cleanup could not be prepared.");
-    return cleanup;
+    return Response.json(
+      { completed: true, freshLoginRequired: true, recoveryCodes: backupCodes },
+      { headers: cleanup.headers },
+    );
   });
 }
