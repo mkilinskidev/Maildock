@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getValidSession } from "@/modules/auth/application/session-validation";
+import { getValidBusinessSession } from "@/modules/auth/application/session-validation";
 import { auth } from "@/modules/auth/infrastructure/auth";
 
 const publicPaths = ["/setup", "/login", "/api/setup", "/api/auth"];
@@ -45,7 +45,7 @@ export async function proxy(request: NextRequest) {
     return continueWithCsp(request, nonce, contentSecurityPolicy);
   }
 
-  const session = await getValidSession(auth, request.headers);
+  const session = await getValidBusinessSession(auth, request.headers);
   if (session) return continueWithCsp(request, nonce, contentSecurityPolicy);
 
   if (request.nextUrl.pathname.startsWith("/api/")) {

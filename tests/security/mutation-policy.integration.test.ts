@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./mfa-fixture";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -165,6 +166,7 @@ describe("F4 real HTTP handlers and authenticated session boundary", () => {
     );
     expect(login.status).toBe(200);
     cookie = login.headers.get("set-cookie")!.split(";")[0];
+    await setReadyFixture(database.db);
   });
   afterAll(async () => {
     await database?.client.end();

@@ -1,4 +1,5 @@
 import { tmpdir } from "node:os";
+import { setReadyFixture } from "./mfa-fixture";
 import { betterAuth } from "better-auth";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -120,6 +121,7 @@ describe("F5 lifetime with real Better Auth 1.7.5 and PostgreSQL", () => {
   beforeEach(async () => {
     vi.useRealTimers();
     await database.db.delete(session);
+    await database.client`UPDATE "user" SET two_factor_enabled = false`;
     await database.db.delete(rateLimit);
     await database.db.delete(loginThrottle);
     runtime.oauth.mockClear();
@@ -360,6 +362,7 @@ describe("F5 lifetime with real Better Auth 1.7.5 and PostgreSQL", () => {
 
   it("rejects stale sessions at API, page/proxy and all OAuth owner checks", async () => {
     const { cookie, row } = await login();
+    await setReadyFixture(database.db);
     await store(row.id, { expiresAt: new Date(start + day) });
     vi.setSystemTime(start + 12 * hour);
     runtime.headers = headers(cookie);
@@ -401,6 +404,7 @@ describe("F5 lifetime with real Better Auth 1.7.5 and PostgreSQL", () => {
 
   it("preserves F4 mutation Origin checks for a valid session", async () => {
     const { cookie } = await login();
+    await setReadyFixture(database.db);
     expect(
       (
         await settingsRead(

@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import * as databaseSchema from "@/shared/infrastructure/database/schema";
 import {
   mkdtemp,
   mkdir,
@@ -195,11 +199,55 @@ describe("F10 actual Drizzle migration against pre-F10 PostgreSQL databases", ()
   it("cannot authorize a real authenticated legacy user after an ambiguous migration fails", async () => {
     const owner = await legacyOwner();
     await legacyUser(1);
-    const cookie = await ownerCookie();
+    // Reproduce the historical protocol against its historical user schema.
+    // The current MFA plugin cannot read a pre-F2.1 database by design.
+    const legacyAuth = betterAuth({
+      ...auth.options,
+      plugins: auth.options.plugins.filter(
+        (plugin) => plugin.id !== "two-factor",
+      ),
+      database: drizzleAdapter(database.db, {
+        provider: "pg",
+        schema: {
+          ...databaseSchema,
+          user: pgTable("user", {
+            id: text("id").primaryKey(),
+            name: text("name").notNull(),
+            email: text("email").notNull(),
+            emailVerified: boolean("email_verified").notNull(),
+            image: text("image"),
+            username: text("username"),
+            displayUsername: text("display_username"),
+            createdAt: timestamp("created_at", {
+              withTimezone: true,
+            }).notNull(),
+            updatedAt: timestamp("updated_at", {
+              withTimezone: true,
+            }).notNull(),
+          }),
+        },
+      }),
+    });
+    const login = await legacyAuth.handler(
+      new Request(`${origin}/api/auth/sign-in/username`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: "OWNER0",
+          password: "correct horse battery staple",
+          rememberMe: false,
+        }),
+      }),
+    );
+    expect(login.status).toBe(200);
+    const cookie = login.headers
+      .getSetCookie()
+      .map((value) => value.split(";")[0])
+      .join("; ");
     await expectRejected();
     expect(
-      (await auth.api.getSession({ headers: new Headers({ cookie }) }))?.user
-        .id,
+      (await legacyAuth.api.getSession({ headers: new Headers({ cookie }) }))
+        ?.user.id,
     ).toBe(owner.id);
     // The missing schema raises a server error rather than granting access.
     await expect(

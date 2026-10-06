@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { username } from "better-auth/plugins";
+import { twoFactor, username } from "better-auth/plugins";
+import { isInstanceReady } from "@/modules/auth/application/instance-readiness";
 import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
 import { isInstanceOwner } from "@/modules/auth/application/owner-binding";
 import {
@@ -129,6 +130,14 @@ export function createAuth(config: AppConfig, database: Database) {
     },
     plugins: [
       logoutCookies,
+      twoFactor({
+        issuer: "Maildock",
+        skipVerificationOnEnable: false,
+        allowPasswordless: false,
+        twoFactorCookieMaxAge: 600,
+        // No sendOTP: email/SMS OTP is unavailable. All two-factor endpoints
+        // remain private behind the existing HTTP allowlist in F2.1.
+      }),
       username({
         minUsernameLength: ownerUsernameMinLength,
         maxUsernameLength: ownerUsernameMaxLength,
@@ -145,5 +154,7 @@ export function createAuth(config: AppConfig, database: Database) {
   // Bind the authorization reader to the same database as Better Auth.
   return Object.assign(auth, {
     isInstanceOwner: (userId: string) => isInstanceOwner(database, userId),
+    isInstanceReady: (userId: string, sessionId?: string) =>
+      isInstanceReady(database, userId, sessionId),
   });
 }

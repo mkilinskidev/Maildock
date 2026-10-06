@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./security/mfa-fixture";
 import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
 import { applicationEvents } from "@/shared/infrastructure/database/schema";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -895,6 +896,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
       }),
     );
     const cookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+    await setReadyFixture(db);
     const wrongOrigin = await checkOwnerApiAccess(
       testAuth,
       config,

@@ -304,6 +304,7 @@ export const user = pgTable(
     image: text("image"),
     username: text("username"),
     displayUsername: text("display_username"),
+    twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -314,6 +315,28 @@ export const user = pgTable(
   (table) => [
     uniqueIndex("user_email_unique").on(table.email),
     uniqueIndex("user_username_unique").on(table.username),
+  ],
+);
+
+export const twoFactor = pgTable(
+  "two_factor",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade", onUpdate: "restrict" }),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+    // Explicit verification is required by Maildock, including direct inserts.
+    verified: boolean("verified").default(false).notNull(),
+    failedVerificationCount: integer("failed_verification_count")
+      .default(0)
+      .notNull(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("two_factor_user_id_unique").on(table.userId),
+    index("two_factor_secret_idx").on(table.secret),
   ],
 );
 
@@ -1064,6 +1087,7 @@ export const schema = {
   outgoingMessages,
   instanceState,
   user,
+  twoFactor,
   session,
   account,
   verification,

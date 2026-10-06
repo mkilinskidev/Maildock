@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { eq } from "drizzle-orm";
@@ -279,6 +280,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
 
   it("allows the owner through real API, proxy and both OAuth start/callback guards", async () => {
     const cookie = await login();
+    await setReadyFixture(database.db);
     runtime.headers = new Headers({ cookie });
     expect((await getValidSession(auth, runtime.headers))?.user.id).toBe(
       (await state()).ownerUserId,
@@ -319,6 +321,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
     expect((await state()).ownerUserId).toBe(ownerId);
     // The same database still authorizes its actual owner.
     const ownerCookie = await login();
+    await setReadyFixture(database.db);
     expect(
       (await settingsRead(request("/api/settings/auto-read", ownerCookie)))
         .status,
@@ -348,6 +351,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
 
   it("uses the immutable user ID even if owner profile fields change", async () => {
     const cookie = await login();
+    await setReadyFixture(database.db);
     const ownerId = (await state()).ownerUserId!;
     await database.db
       .update(user)
@@ -505,6 +509,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
 
   it("preserves F5 lifetime, F4 mutation Origin policy and disabled signup", async () => {
     const cookie = await login();
+    await setReadyFixture(database.db);
     const headers = new Headers({
       cookie,
       "Content-Type": "application/json",

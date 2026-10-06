@@ -8,6 +8,8 @@ import { registerBackfillWorker } from "../modules/mail/infrastructure/backfill-
 import { registerMessageCommandWorker } from "../modules/mail/infrastructure/message-command-jobs.js";
 import { registerOutgoingWorker } from "../modules/mail/infrastructure/outgoing-jobs.js";
 import { registerSentCopyWorker } from "../modules/mail/infrastructure/sent-copy-jobs.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { isInstanceReady } from "../modules/auth/application/instance-readiness.js";
 
 const worker = createWorkerComposition();
 let stopping = false;
@@ -49,7 +51,12 @@ async function shutdown(signal: string) {
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
 
-try {
+async function startBusinessWorkers() {
+  // Fresh installations may start the worker before setup/enrollment. Keep
+  // consumers, mail pollers and IMAP watchers idle until verified owner MFA.
+  while (!stopping && !(await isInstanceReady(worker.database.db)))
+    await delay(1_000);
+  if (stopping) return;
   await worker.jobs.start();
   await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
   await worker.attachmentPoller.start();
@@ -89,6 +96,10 @@ try {
   await worker.commandPoller.start();
   await worker.sentCopyPoller.start();
   await worker.watchers.start();
+}
+
+try {
+  await startBusinessWorkers();
 } catch (error) {
   worker.logger.fatal(
     { err: error, event: "worker.start_failed" },

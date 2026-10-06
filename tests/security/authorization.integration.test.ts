@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./mfa-fixture";
 import { PATCH as moveAccount } from "../../src/app/api/accounts/[id]/order/route";
 import { AccountsService } from "../../src/modules/accounts/application/accounts-service";
 import type { MailProvider } from "../../src/modules/accounts/domain/mail-provider";
@@ -180,6 +181,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     );
     expect(login.status).toBe(200);
     cookie = login.headers.get("set-cookie")!.split(";")[0];
+    await setReadyFixture(database.db);
     storage = new LocalBlobStorage(root);
     content = new MessageContentService(database.db);
     attachments = new AttachmentService(

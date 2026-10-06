@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./mfa-fixture";
 import { tmpdir } from "node:os";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -101,6 +102,7 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
   beforeEach(async () => {
     await database.client`DROP TRIGGER IF EXISTS f6_delete_fault ON "session"`;
     await database.db.delete(session);
+    await database.client`UPDATE "user" SET two_factor_enabled = false`;
     await database.db.delete(rateLimit);
     await database.db.delete(loginThrottle);
     logger.error.mockClear();
@@ -174,6 +176,7 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
     const copied = await login();
     const current = (await rows())[0];
     const independent = await login();
+    await setReadyFixture(database.db);
     expect(
       (
         await protectedRead(
@@ -212,6 +215,7 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
     "fails closed when PostgreSQL deletion %s leaves the copied token valid",
     async (mode) => {
       const copied = await login();
+      await setReadyFixture(database.db);
       const before = await rows();
       await fault(mode);
       const response = await logoutCurrentSession(
@@ -261,6 +265,7 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
   });
   it("reproduces Better Auth's false success with the same real database deletion fault", async () => {
     const copied = await login();
+    await setReadyFixture(database.db);
     await fault("raise");
     const response = await auth.handler(request(copied));
     expect(response.status).toBe(200);
@@ -280,6 +285,7 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
   it("keeps copied-token revocation authoritative across concurrent logout requests", async () => {
     const copied = await login();
     const independent = await login();
+    await setReadyFixture(database.db);
     const responses = await Promise.all([
       post(request(copied)),
       post(request(copied)),

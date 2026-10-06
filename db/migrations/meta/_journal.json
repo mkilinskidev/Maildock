@@ -204,6 +204,13 @@
       "when": 1791266062563,
       "tag": "0028_owner_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791270104926,
+      "tag": "0029_omniscient_leper_queen",
+      "breakpoints": true
     }
   ]
 }

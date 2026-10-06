@@ -1,7 +1,7 @@
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
 import { isSessionWithinLifetime } from "@/modules/auth/domain/session-policy";
 
-export async function getValidSession(
+export async function getValidOwnerSession(
   authInstance: ReturnType<typeof createAuth>,
   requestHeaders: Headers,
 ) {
@@ -21,4 +21,23 @@ export async function getValidSession(
     isSessionWithinLifetime(refreshed.session)
     ? refreshed
     : null;
+}
+
+// Retain the existing identity reader for callers of the owner/session protocol.
+export const getValidSession = getValidOwnerSession;
+
+export async function getValidBusinessSession(
+  authInstance: ReturnType<typeof createAuth>,
+  requestHeaders: Headers,
+) {
+  const session = await getValidOwnerSession(authInstance, requestHeaders);
+  if (
+    !session ||
+    !(await authInstance.isInstanceReady(session.user.id, session.session.id))
+  )
+    return null;
+  // F2.2/F2.3 MUST revoke all existing owner sessions at first verification,
+  // under a synchronization boundary that also excludes concurrent login.
+  // READY alone cannot distinguish a pre-enrollment password-only session.
+  return session;
 }

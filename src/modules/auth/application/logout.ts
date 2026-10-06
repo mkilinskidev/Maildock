@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getValidSession } from "@/modules/auth/application/session-validation";
+import { getValidOwnerSession } from "@/modules/auth/application/session-validation";
 import { hasValidOrigin } from "@/modules/auth/application/origin";
 import type { createAuth } from "@/modules/auth/infrastructure/auth-factory";
 import type { AppConfig } from "@/shared/infrastructure/config/config";
@@ -20,7 +20,7 @@ export async function logoutCurrentSession(
 
   let status = 500;
   try {
-    const current = await getValidSession(auth, request.headers);
+    const current = await getValidOwnerSession(auth, request.headers);
     if (!current) {
       status = 401;
     } else {
