@@ -78,7 +78,7 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/google_oauth`,
       AUTH_SECRET: Buffer.alloc(32, 1).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString("base64"),
-      ATTACHMENTS_PATH: "D:/Projects/JS/Maildock/.test-attachments",
+      ATTACHMENTS_PATH: process.cwd(),
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });

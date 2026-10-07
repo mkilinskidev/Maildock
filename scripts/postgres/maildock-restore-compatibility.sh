@@ -43,7 +43,11 @@ cmp -s "$tmp/definitions" "$resources/legacy-functions.sql" || fail
 pg_restore --data-only --table=__drizzle_migrations --file="$tmp/migrations.sql" "$2" 2> "$tmp/error" || fail
 stage=archive_migrations
 awk '/^COPY drizzle.__drizzle_migrations / { active=1; next } active && /^\\\.$/ {active=0; next} active { if(NF != 3) exit 1; print $2 "\t" $3 }' "$tmp/migrations.sql" > "$tmp/migrations" || fail
-cmp -s "$tmp/migrations" "$resources/legacy-migrations.txt" || fail
+# Exact complete baseline histories from the deployed image and the LF checkout.
+# Never accept per-row alternatives, normalize hashes, or edit archive contents.
+if ! cmp -s "$tmp/migrations" "$resources/legacy-migrations.txt"; then
+  cmp -s "$tmp/migrations" "$resources/legacy-migrations-lf.txt" || fail
+fi
 # The preflight checks actual ordinary authority and rejects any destination
 # application storage. A failed import leaves the two predefinitions behind.
 stage=destination

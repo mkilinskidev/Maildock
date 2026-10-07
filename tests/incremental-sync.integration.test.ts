@@ -118,7 +118,7 @@ describe("Phase 1E persisted delta state", () => {
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      ATTACHMENTS_PATH: "D:/Projects/JS/Maildock/.test-attachments",
+      ATTACHMENTS_PATH: process.cwd(),
       LOG_LEVEL: "fatal",
     });
     database = createDatabase(config);

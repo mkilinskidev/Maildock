@@ -42,13 +42,13 @@ it("ships matching CJS/ESM overflow rejection and the locked dependency patch", 
     expect(server).toContain("err.code === 'NEXT_PROXY_BODY_TOO_LARGE'");
     expect(server).toContain("res.body('Request body is too large.').send();");
   }
-  const patch = readFileSync("patches/next@16.3.6.patch");
+  const patch = readFileSync("patches/next@16.3.8.patch");
   const hash = createHash("sha256").update(patch).digest("hex");
   expect(readFileSync("pnpm-lock.yaml", "utf8")).toContain(
-    `next@16.3.6: ${hash}`,
+    `next@16.3.8: ${hash}`,
   );
   expect(readFileSync("pnpm-workspace.yaml", "utf8")).toContain(
-    "next@16.3.6: patches/next@16.3.6.patch",
+    "next@16.3.8: patches/next@16.3.8.patch",
   );
   const dockerfile = readFileSync("Dockerfile", "utf8");
   expect(dockerfile.indexOf("COPY patches ./patches")).toBeLessThan(
@@ -56,8 +56,8 @@ it("ships matching CJS/ESM overflow rejection and the locked dependency patch", 
   );
 });
 
-it("uses Next 16.3.6 with a finite proxy ceiling and bypasses only the raw upload", () => {
-  expect(require("next/package.json").version).toBe("16.3.6");
+it("uses Next 16.3.8 with a finite proxy ceiling and bypasses only the raw upload", () => {
+  expect(require("next/package.json").version).toBe("16.3.8");
   expect(nextConfig.experimental?.proxyClientMaxBodySize).toBe(
     10 * 1024 * 1024,
   );

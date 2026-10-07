@@ -69,7 +69,7 @@ describe("account system mailbox roles", () => {
       DATABASE_URL: url,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      ATTACHMENTS_PATH: "D:/Projects/JS/Maildock/.test-attachments",
+      ATTACHMENTS_PATH: process.cwd(),
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });

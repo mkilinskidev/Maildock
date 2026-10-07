@@ -6,6 +6,7 @@ import { symmetricDecrypt } from "better-auth/crypto";
 import type { AppConfig } from "../config/config";
 import type { Database } from "./database";
 import * as schema from "./schema";
+import { matchesRecoveryMigrationHistory } from "./recovery-migration-history";
 import { LocalBlobStorage } from "../storage/local-blob-storage";
 import { readVerifiedBlob } from "../../application/blob-storage";
 import { AesGcmSecretEncryption } from "../crypto/aes-gcm-secret-encryption";
@@ -41,14 +42,7 @@ export async function verifyRecoverySchema(db: Database) {
     const actual = await db.execute<{ hash: string; created_at: string }>(
       sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at`,
     );
-    if (
-      actual.length !== expected.length ||
-      actual.some(
-        (row, i) =>
-          row.hash !== expected[i].hash ||
-          Number(row.created_at) !== expected[i].folderMillis,
-      )
-    )
+    if (!(await matchesRecoveryMigrationHistory(actual, expected)))
       throw new Error();
     const columns = await db.execute<{
       table_name: string;

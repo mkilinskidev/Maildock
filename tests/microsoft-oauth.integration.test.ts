@@ -7,7 +7,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { accountCredentialContext } from "@/modules/accounts/domain/account";
 import {
@@ -161,7 +161,7 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
       DATABASE_URL: `postgresql://maildock:maildock-test@${container.getHost()}:${container.getMappedPort(5432)}/maildock_phase1f`,
       AUTH_SECRET: Buffer.alloc(32, 1).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString("base64"),
-      ATTACHMENTS_PATH: "D:/Projects/JS/Maildock/.test-attachments",
+      ATTACHMENTS_PATH: process.cwd(),
       MICROSOFT_CLIENT_ID: "test-client",
       MICROSOFT_CLIENT_SECRET: "client-secret",
     });
@@ -192,7 +192,7 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
         );
       await migrate(database.db, { migrationsFolder: folder });
     } finally {
-      if (!resolve(folder).startsWith(resolve(tmpdir()) + "\\"))
+      if (!resolve(folder).startsWith(resolve(tmpdir()) + sep))
         throw Error("Unexpected temporary migration path");
       await rm(folder, { recursive: true, force: true });
     }
