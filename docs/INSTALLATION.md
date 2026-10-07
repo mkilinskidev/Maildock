@@ -99,6 +99,15 @@ Production is safe only when all of these are true:
 
 Caddy, Traefik, nginx, Nginx Proxy Manager, Coolify-managed ingress and similar systems can satisfy this contract. Maildock does not require a particular proxy product.
 
+
+## Platform deployments
+
+Git-based Docker Compose platforms such as Coolify may build the stack directly from the repository. The production Compose definition is self-contained at runtime: PostgreSQL authority, maintenance and recovery helpers are baked into the Maildock PostgreSQL image instead of bind-mounted from the repository checkout. Only the named `postgres_data` and `attachments_data` volumes carry persistent application data.
+
+For Coolify, use a Git-based Docker Compose application with the repository root as the base directory and `docker-compose.yml` as the Compose file. Configure the required environment variables in the platform, route the public domain to the `app` service on port 3000, and keep PostgreSQL private. Repository preservation is not required for Maildock runtime file mounts.
+
+Do not replace the named data volumes with ephemeral container storage. Platform-managed persistent storage is not a backup; keep using the matched database/blob recovery procedure described in [Backup & recovery](BACKUP_AND_RECOVERY.md).
+
 ## Existing installations from before database hardening
 
 A PostgreSQL volume created before the database-authority hardening cannot be fixed by merely replacing the image. This is a one-time transition for old volumes, not a normal startup procedure.

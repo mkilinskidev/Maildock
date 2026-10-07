@@ -5,6 +5,8 @@ type Service = {
   ports?: { host_ip: string; target: number; published: string }[];
   expose?: string[];
   environment: Record<string, string>;
+  volumes?: { type: string; source: string; target: string }[];
+  build?: { context?: string; dockerfile?: string };
 };
 function resolve(development: boolean): Record<string, Service> {
   const args = ["compose", "-f", "docker-compose.yml"];
@@ -34,6 +36,15 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
   expect(services.app.environment.MAILDOCK_ENV).toBe("production");
   expect(services.app.environment.NODE_ENV).toBe("production");
   expect(services.app.environment.DATABASE_URL).toContain("@postgres:5432/");
+  expect(services.postgres.build).toEqual(
+    expect.objectContaining({ dockerfile: "Dockerfile.postgres" }),
+  );
+  expect(services.postgres.volumes ?? []).toEqual([
+    expect.objectContaining({
+      type: "volume",
+      target: "/var/lib/postgresql",
+    }),
+  ]);
 });
 
 it("F9 resolved development Compose explicitly selects development and loopback publications", () => {

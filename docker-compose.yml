@@ -53,17 +53,15 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:18.6-bookworm
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     environment:
       POSTGRES_DB: maildock
       POSTGRES_USER: maildock
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql
-      - ./scripts/postgres/99-maildock-authority.sql:/docker-entrypoint-initdb.d/99-maildock-authority.sql:ro
-      - ./scripts/postgres/maildock-authority-maintenance.sh:/usr/local/bin/maildock-authority-maintenance:ro
-      - ./scripts/postgres/maildock-restore-compatibility.sh:/usr/local/bin/maildock-restore-compatibility:ro
-      - ./scripts/postgres/recovery:/usr/local/share/maildock-recovery:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maildock -d maildock"]
       interval: 5s

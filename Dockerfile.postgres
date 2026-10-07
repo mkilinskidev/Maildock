@@ -1,0 +1,6 @@
+FROM postgres:18.6-bookworm
+
+COPY scripts/postgres/99-maildock-authority.sql /docker-entrypoint-initdb.d/99-maildock-authority.sql
+COPY scripts/postgres/maildock-authority-maintenance.sh /usr/local/bin/maildock-authority-maintenance
+COPY scripts/postgres/maildock-restore-compatibility.sh /usr/local/bin/maildock-restore-compatibility
+COPY scripts/postgres/recovery /usr/local/share/maildock-recovery
