@@ -102,6 +102,7 @@ export type RemoteEnvelope = Readonly<{
   subject?: string;
   messageId?: string;
   inReplyTo?: string;
+  references?: string;
   from: readonly RemoteAddress[];
   sender: readonly RemoteAddress[];
   replyTo: readonly RemoteAddress[];
@@ -213,7 +214,48 @@ export type DisplayContentResult = Readonly<{
   html: string | null;
 }>;
 
+export type RemoteMutationRequest = Readonly<{
+  sourcePath: string;
+  uidValidity: string;
+  uid: string;
+  action: "mark_read" | "mark_unread" | "flag" | "unflag" | "archive" | "trash";
+  destinationPath?: string;
+  modseq?: string;
+}>;
+export type RemoteMutationResult = Readonly<{
+  outcome: "applied" | "source_missing" | "conflict";
+  destinationUidValidity?: string;
+  destinationUid?: string;
+}>;
+
 export interface MailProvider {
+  /** Adapter retains the connection until the streaming consumer has finished. */
+  fetchAttachment?<T>(
+    account: ProviderImapAccount,
+    request: Readonly<{
+      remotePath: string;
+      uid: string;
+      expectedUidValidity: string;
+      partId: string;
+      maxBytes: number;
+    }>,
+    consume: (bytes: AsyncIterable<Uint8Array>) => Promise<T>,
+  ): Promise<T>;
+  appendMessage?(
+    account: ProviderImapAccount,
+    request: SentCopyAppendRequest,
+    mime: Buffer,
+  ): Promise<SentCopyAppendResult>;
+  findSentCopy?(
+    account: ProviderImapAccount,
+    remotePath: string,
+    messageId: string,
+  ): Promise<SentCopyLookupResult>;
+  deliverMessage?(
+    account: Pick<ProviderAccount, "accountId" | "smtp">,
+    envelope: Readonly<{ from: string; to: string[] }>,
+    mime: Buffer,
+  ): Promise<SmtpDeliveryResult>;
   testConnection(account: ProviderAccount): Promise<ConnectionReport>;
   listMailboxes(account: ProviderImapAccount): Promise<MailboxDiscoveryResult>;
   synchronizeRecentMailbox(
@@ -236,4 +278,26 @@ export interface MailProvider {
     account: ProviderImapAccount,
     request: DisplayContentRequest,
   ): Promise<DisplayContentResult>;
+  mutateMessage?(
+    account: ProviderImapAccount,
+    request: RemoteMutationRequest,
+  ): Promise<RemoteMutationResult>;
 }
+
+export type SmtpDeliveryResult =
+  | { outcome: "accepted"; acceptedCount: number; rejectedCount: number }
+  | { outcome: "definite_failure"; retryable: boolean; message: string }
+  | { outcome: "uncertain" };
+
+export type SentCopyAppendRequest = Readonly<{
+  remotePath: string;
+  flags: string[];
+  internalDate: Date;
+}>;
+export type SentCopyIdentity = Readonly<{ uidValidity?: string; uid?: string }>;
+export type SentCopyAppendResult =
+  | ({ outcome: "saved" } & SentCopyIdentity)
+  | { outcome: "failed" | "uncertain" };
+export type SentCopyLookupResult =
+  | ({ outcome: "found" } & SentCopyIdentity)
+  | { outcome: "not_found" | "uncertain" };

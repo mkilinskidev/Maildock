@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { ConversationService } from "./conversation-service";
+import { persistAttachmentMetadata } from "./attachment-metadata";
 
 import { and, desc, eq, lt, or } from "drizzle-orm";
 
@@ -42,6 +44,9 @@ export type MessageListItem = Readonly<{
   flagged: boolean;
   size: string;
   hasAttachments: boolean;
+  conversationId?: string;
+  messageCount?: number;
+  conversationMessageCount?: number;
 }>;
 
 export type MessagePage = Readonly<{
@@ -83,6 +88,7 @@ function messageValues(
     cc: envelope.cc,
     bcc: envelope.bcc,
     inReplyTo: envelope.inReplyTo ?? null,
+    references: envelope.references ?? null,
     mimeStructure: remote.mimeStructure ?? null,
     hasAttachments: remote.hasAttachments,
     updatedAt: now,
@@ -378,6 +384,14 @@ export class MessageService {
             .update(messages)
             .set(messageValues(accountId, remote, synchronizedAt))
             .where(eq(messages.id, placement.messageId));
+          await persistAttachmentMetadata(
+            tx,
+            placement.messageId,
+            mailboxId,
+            uidValidity,
+            uid,
+            remote.mimeStructure,
+          );
           continue;
         }
         const messageId = randomUUID();
@@ -386,6 +400,14 @@ export class MessageService {
           ...messageValues(accountId, remote, synchronizedAt),
           createdAt: synchronizedAt,
         });
+        await persistAttachmentMetadata(
+          tx,
+          messageId,
+          mailboxId,
+          uidValidity,
+          uid,
+          remote.mimeStructure,
+        );
         await tx.insert(mailboxMessages).values({
           id: randomUUID(),
           mailboxId,
@@ -446,16 +468,30 @@ export class MessageService {
     cursor?: string,
   ): Promise<MessagePage> {
     await this.ownedMailbox(accountId, mailboxId);
+    const conversations = new ConversationService(this.database);
+    if (await conversations.enabled())
+      return conversations.list(accountId, mailboxId, pageSize, cursor);
     const limit = Math.min(Math.max(pageSize, 1), 100);
     const cursorValue = cursor ? decodeCursor(cursor) : undefined;
     const rows = await this.database
-      .select({ message: messages, placement: mailboxMessages })
+      .select({
+        message: {
+          id: messages.id,
+          subject: messages.subject,
+          from: messages.from,
+          internalDate: messages.internalDate,
+          size: messages.size,
+          hasAttachments: messages.hasAttachments,
+        },
+        placement: mailboxMessages,
+      })
       .from(mailboxMessages)
       .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
       .where(
         and(
           eq(mailboxMessages.mailboxId, mailboxId),
           eq(messages.accountId, accountId),
+          eq(mailboxMessages.actionHidden, false),
           cursorValue
             ? or(
                 lt(messages.internalDate, cursorValue[0]),

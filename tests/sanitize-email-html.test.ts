@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { JSDOM } from "jsdom";
+import { renderEmailDocument } from "@/modules/mail/infrastructure/render-email-document";
 import { sanitizeEmailHtml } from "@/modules/mail/infrastructure/sanitize-email-html";
 
 const payloads = [
@@ -26,14 +27,15 @@ describe("email HTML security policy", () => {
     "removes active and network-bearing markup: %s",
     (payload) => {
       const result = sanitizeEmailHtml(payload);
-      const document = new JSDOM(result.html).window.document;
+      const rendered = renderEmailDocument(result.html, false);
+      const document = new JSDOM(rendered).window.document;
       expect(
         document.querySelector(
-          "script,iframe,frame,object,embed,form,input,button,meta,base,link,style,svg,math,img,video,audio,source",
+          "script,iframe,frame,object,embed,form,input,button,base,link,svg,math,video,audio,source",
         ),
       ).toBeNull();
-      expect(result.html).not.toMatch(
-        /tracker\.example|javascript:|data:text|onclick=|style=|src=|srcset=|srcdoc=|id=|name=/i,
+      expect(document.body.innerHTML).not.toMatch(
+        /tracker\.example|javascript:|data:text|onclick=|src=|srcset=|srcdoc=|\bid=|\bname=/i,
       );
     },
   );

@@ -7,12 +7,238 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
   uuid,
+  foreignKey,
+  customType,
 } from "drizzle-orm/pg-core";
 import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
+import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
+import type { RichDocument } from "../../../modules/mail/domain/rich-document";
+
+export const outgoingMessages = pgTable(
+  "outgoing_messages",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "restrict" }),
+    from: jsonb("from").$type<OutgoingAddress>().notNull(),
+    to: jsonb("to").$type<OutgoingAddress[]>().notNull(),
+    cc: jsonb("cc").$type<OutgoingAddress[]>().notNull(),
+    bcc: jsonb("bcc").$type<OutgoingAddress[]>().notNull(),
+    subject: text("subject").notNull(),
+    plainText: text("plain_text").notNull(),
+    richDocument: jsonb("rich_document").$type<RichDocument>(),
+    html: text("html"),
+    messageId: text("message_id").notNull(),
+    inReplyTo: text("in_reply_to"),
+    references: jsonb("references").$type<string[]>().default([]).notNull(),
+    mimeBase64: text("mime_base64"),
+    mimeBlobId: uuid("mime_blob_id").references(() => blobs.id, {
+      onDelete: "restrict",
+    }),
+    status: text("status").default("queued").notNull(),
+    sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
+    sentCopyStatus: text("sent_copy_status").default("not_required").notNull(),
+    sentCopyError: text("sent_copy_error"),
+    sentCopyMailboxId: uuid("sent_copy_mailbox_id").references(
+      () => mailboxes.id,
+      { onDelete: "set null" },
+    ),
+    sentCopyPath: text("sent_copy_path"),
+    sentCopyUidValidity: bigint("sent_copy_uid_validity", { mode: "bigint" }),
+    sentCopyUid: bigint("sent_copy_uid", { mode: "bigint" }),
+    sentCopyStartedAt: timestamp("sent_copy_started_at", {
+      withTimezone: true,
+    }),
+    sentCopySavedAt: timestamp("sent_copy_saved_at", { withTimezone: true }),
+    sentCopySyncPending: boolean("sent_copy_sync_pending")
+      .default(false)
+      .notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    error: text("error"),
+    acceptedCount: integer("accepted_count"),
+    rejectedCount: integer("rejected_count"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    smtpAcceptedAt: timestamp("smtp_accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "outgoing_messages_mime_source",
+      sql`(${table.mimeBlobId} is not null and ${table.mimeBase64} is null) or (${table.mimeBlobId} is null and ${table.mimeBase64} is not null)`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_policy",
+      sql`${table.sentCopyPolicy} in ('server', 'maildock')`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_status",
+      sql`${table.sentCopyStatus} in ('not_required', 'pending', 'saving', 'saved', 'failed', 'uncertain')`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_delivery",
+      sql`${table.sentCopyStatus} = 'not_required' or (${table.status} = 'sent' and ${table.sentCopyPolicy} = 'maildock')`,
+    ),
+    check(
+      "outgoing_messages_sent_copy_sync",
+      sql`not ${table.sentCopySyncPending} or ${table.sentCopyStatus} = 'saved'`,
+    ),
+    index("outgoing_messages_sent_copy_pending_idx").on(
+      table.sentCopyStatus,
+      table.sentCopySyncPending,
+    ),
+    check(
+      "outgoing_messages_status",
+      sql`${table.status} in ('queued', 'sending', 'sent', 'failed', 'uncertain')`,
+    ),
+    check("outgoing_messages_attempts", sql`${table.attempts} between 0 and 3`),
+    check(
+      "outgoing_messages_mime_size",
+      sql`octet_length(${table.mimeBase64}) <= 1333336`,
+    ),
+    check(
+      "outgoing_messages_recipients",
+      sql`jsonb_array_length(${table.to}) + jsonb_array_length(${table.cc}) + jsonb_array_length(${table.bcc}) between 1 and 100`,
+    ),
+    uniqueIndex("outgoing_messages_message_id_unique").on(table.messageId),
+    index("outgoing_messages_pending_idx").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+  ],
+);
+
+/** Registry provides integrity and a conservative reference-aware GC seam.
+ * Physical orphan objects may outlive DB failures; no age-based blob deletion. */
+export const blobs = pgTable(
+  "blobs",
+  {
+    id: uuid("id").primaryKey(),
+    storageKey: text("storage_key").notNull().unique(),
+    size: bigint("size", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check("blobs_size", sql`${table.size} >= 0`),
+    check("blobs_sha256", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
+export const messageAttachments = pgTable(
+  "message_attachments",
+  {
+    id: uuid("id").primaryKey(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    sourceMailboxId: uuid("source_mailbox_id").references(() => mailboxes.id, {
+      onDelete: "set null",
+    }),
+    sourceUidValidity: bigint("source_uid_validity", {
+      mode: "bigint",
+    }).notNull(),
+    sourceUid: bigint("source_uid", { mode: "bigint" }).notNull(),
+    partId: text("part_id").notNull(),
+    filename: text("filename"),
+    contentType: text("content_type").notNull(),
+    disposition: text("disposition"),
+    contentId: text("content_id"),
+    inline: boolean("inline").notNull(),
+    visible: boolean("visible").notNull(),
+    declaredSize: bigint("declared_size", { mode: "bigint" }),
+    blobId: uuid("blob_id").references(() => blobs.id, {
+      onDelete: "restrict",
+    }),
+    status: text("status").default("not_fetched").notNull(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("message_attachments_part_unique").on(
+      table.messageId,
+      table.partId,
+    ),
+    index("message_attachments_pending_idx").on(table.status),
+    check(
+      "message_attachments_status",
+      sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,
+    ),
+    check(
+      "message_attachments_ready",
+      sql`(${table.status} = 'ready') = (${table.blobId} is not null)`,
+    ),
+  ],
+);
+
+export const stagedAttachments = pgTable(
+  "staged_attachments",
+  {
+    id: uuid("id").primaryKey(),
+    draftId: uuid("draft_id"),
+    blobId: uuid("blob_id")
+      .notNull()
+      .references(() => blobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    status: text("status").default("ready").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check(
+      "staged_attachments_status",
+      sql`${table.status} in ('ready', 'removed', 'consumed')`,
+    ),
+    index("staged_attachments_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const outgoingMessageAttachments = pgTable(
+  "outgoing_message_attachments",
+  {
+    outgoingMessageId: uuid("outgoing_message_id")
+      .notNull()
+      .references(() => outgoingMessages.id, { onDelete: "restrict" }),
+    position: integer("position").notNull(),
+    resourceId: uuid("resource_id"),
+    contentId: text("content_id"),
+    inline: boolean("inline").default(false).notNull(),
+    blobId: uuid("blob_id")
+      .notNull()
+      .references(() => blobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    size: bigint("size", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.outgoingMessageId, table.position] }),
+    check("outgoing_attachment_position", sql`${table.position} >= 0`),
+  ],
+);
 
 export const instanceState = pgTable(
   "instance_state",
@@ -20,6 +246,7 @@ export const instanceState = pgTable(
     id: integer("id").primaryKey(),
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
     passwordAlgorithm: text("password_algorithm"),
+    conversationView: boolean("conversation_view").default(false).notNull(),
     passwordParameters: jsonb("password_parameters").$type<
       Record<string, number>
     >(),
@@ -159,6 +386,7 @@ export const mailAccounts = pgTable(
     displayName: text("display_name").notNull(),
     email: text("email").notNull(),
     enabled: boolean("enabled").default(true).notNull(),
+    sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
     providerType: text("provider_type").default("imap_smtp").notNull(),
     imapHost: text("imap_host").notNull(),
     imapPort: integer("imap_port").notNull(),
@@ -212,6 +440,10 @@ export const mailAccounts = pgTable(
     check(
       "mail_accounts_provider_type",
       sql`${table.providerType} = 'imap_smtp'`,
+    ),
+    check(
+      "mail_accounts_sent_copy_policy",
+      sql`${table.sentCopyPolicy} in ('server', 'maildock')`,
     ),
     check(
       "mail_accounts_imap_port",
@@ -381,6 +613,38 @@ export const mailboxes = pgTable(
   ],
 );
 
+export const mailboxRoles = pgTable(
+  "mailbox_roles",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.role] }),
+    check(
+      "mailbox_roles_role",
+      sql`${table.role} in ('archive', 'trash', 'sent', 'drafts', 'junk')`,
+    ),
+    check(
+      "mailbox_roles_source",
+      sql`${table.source} in ('special_use', 'manual')`,
+    ),
+    index("mailbox_roles_mailbox_idx").on(table.mailboxId),
+  ],
+);
+
 export type MailAddress = Readonly<{ name?: string; address?: string }>;
 export type MimePart = Readonly<{
   part: string | null;
@@ -405,6 +669,12 @@ export const messages = pgTable(
     providerMessageId: text("provider_message_id"),
     rfcMessageId: text("rfc_message_id"),
     subject: text("subject"),
+    searchBody: text("search_body").default("").notNull(),
+    searchVector: customType<{ data: string }>({ dataType: () => "tsvector" })(
+      "search_vector",
+    ).generatedAlwaysAs(
+      sql`maildock_search_vector(subject, "from", sender, "to", cc, search_body)`,
+    ),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     internalDate: timestamp("internal_date", { withTimezone: true }).notNull(),
     size: bigint("size", { mode: "bigint" }).notNull(),
@@ -421,6 +691,7 @@ export const messages = pgTable(
     cc: jsonb("cc").$type<readonly MailAddress[]>().default([]).notNull(),
     bcc: jsonb("bcc").$type<readonly MailAddress[]>().default([]).notNull(),
     inReplyTo: text("in_reply_to"),
+    references: text("references"),
     mimeStructure: jsonb("mime_structure").$type<MimePart>(),
     hasAttachments: boolean("has_attachments").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -431,9 +702,84 @@ export const messages = pgTable(
       .notNull(),
   },
   (table) => [
+    index("messages_search_gin_idx").using("gin", table.searchVector),
     index("messages_account_internal_date_idx").on(
       table.accountId,
       table.internalDate,
+    ),
+    uniqueIndex("messages_account_id_unique").on(table.accountId, table.id),
+  ],
+);
+
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    mergedInto: uuid("merged_into"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("conversations_account_id_unique").on(t.accountId, t.id),
+    foreignKey({
+      columns: [t.accountId, t.mergedInto],
+      foreignColumns: [t.accountId, t.id],
+    }),
+  ],
+);
+
+export const conversationMembers = pgTable(
+  "conversation_members",
+  {
+    messageId: uuid("message_id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull(),
+    normalizedMessageId: text("normalized_message_id"),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.accountId, t.conversationId],
+      foreignColumns: [conversations.accountId, conversations.id],
+    }),
+    foreignKey({
+      columns: [t.accountId, t.messageId],
+      foreignColumns: [messages.accountId, messages.id],
+    }).onDelete("cascade"),
+    index("conversation_members_group_idx").on(t.accountId, t.conversationId),
+    index("conversation_members_header_idx").on(
+      t.accountId,
+      t.normalizedMessageId,
+    ),
+  ],
+);
+
+export const conversationReferences = pgTable(
+  "conversation_references",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    headerId: text("header_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.headerId] }),
+    foreignKey({
+      columns: [t.accountId, t.conversationId],
+      foreignColumns: [conversations.accountId, conversations.id],
+    }),
+    index("conversation_references_group_idx").on(
+      t.accountId,
+      t.conversationId,
     ),
   ],
 );
@@ -452,6 +798,7 @@ export const mailboxMessages = pgTable(
     uid: bigint("uid", { mode: "bigint" }).notNull(),
     modseq: bigint("modseq", { mode: "bigint" }),
     flags: text("flags").array().default([]).notNull(),
+    actionHidden: boolean("action_hidden").default(false).notNull(),
     firstSynchronizedAt: timestamp("first_synchronized_at", {
       withTimezone: true,
     }).notNull(),
@@ -484,6 +831,7 @@ export const messageContents = pgTable(
       .references(() => messages.id, { onDelete: "cascade" }),
     status: text("status").default("not_fetched").notNull(),
     plainText: text("plain_text"),
+    searchText: text("search_text"),
     sanitizedHtml: text("sanitized_html"),
     remoteContentBlocked: boolean("remote_content_blocked")
       .default(false)
@@ -502,6 +850,70 @@ export const messageContents = pgTable(
     check(
       "message_contents_status",
       sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,
+    ),
+  ],
+);
+
+export const messageCommands = pgTable(
+  "message_commands",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    placementId: uuid("placement_id").references(() => mailboxMessages.id, {
+      onDelete: "set null",
+    }),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    status: text("status").default("pending").notNull(),
+    sourcePath: text("source_path").notNull(),
+    sourceUidValidity: bigint("source_uid_validity", {
+      mode: "bigint",
+    }).notNull(),
+    sourceUid: bigint("source_uid", { mode: "bigint" }).notNull(),
+    destinationMailboxId: uuid("destination_mailbox_id").references(
+      () => mailboxes.id,
+      { onDelete: "set null" },
+    ),
+    destinationPath: text("destination_path"),
+    destinationUidValidity: bigint("destination_uid_validity", {
+      mode: "bigint",
+    }),
+    destinationUid: bigint("destination_uid", { mode: "bigint" }),
+    originalFlags: text("original_flags").array().default([]).notNull(),
+    error: text("error"),
+    attempts: integer("attempts").default(0).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "message_commands_action",
+      sql`${table.action} in ('mark_read', 'mark_unread', 'flag', 'unflag', 'archive', 'trash')`,
+    ),
+    check(
+      "message_commands_status",
+      sql`${table.status} in ('pending', 'executing', 'succeeded', 'failed')`,
+    ),
+    index("message_commands_placement_status_idx").on(
+      table.placementId,
+      table.status,
+    ),
+    index("message_commands_account_created_idx").on(
+      table.accountId,
+      table.createdAt,
     ),
   ],
 );
@@ -553,6 +965,7 @@ export const mailboxMessageRelations = relations(
 );
 
 export const schema = {
+  outgoingMessages,
   instanceState,
   user,
   session,
@@ -563,9 +976,14 @@ export const schema = {
   mailAccounts,
   oauthAuthorizationStates,
   mailboxes,
+  mailboxRoles,
   messages,
+  conversations,
+  conversationMembers,
+  conversationReferences,
   mailboxMessages,
   messageContents,
+  messageCommands,
   userRelations,
   sessionRelations,
   accountRelations,
@@ -574,3 +992,123 @@ export const schema = {
   messageRelations,
   mailboxMessageRelations,
 };
+
+export const drafts = pgTable(
+  "drafts",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "restrict" }),
+    composeMode: text("compose_mode").notNull(),
+    source:
+      jsonb("source").$type<
+        import("../../../modules/mail/domain/compose-source").SourceContext
+      >(),
+    to: text("to").default("").notNull(),
+    cc: text("cc").default("").notNull(),
+    bcc: text("bcc").default("").notNull(),
+    subject: text("subject").default("").notNull(),
+    plainText: text("plain_text").default("").notNull(),
+    richDocument: jsonb("rich_document").$type<RichDocument>(),
+    revision: integer("revision").default(1).notNull(),
+    status: text("status").default("active").notNull(),
+    outgoingMessageId: uuid("outgoing_message_id").references(
+      () => outgoingMessages.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    check(
+      "drafts_mode",
+      sql`${t.composeMode} in ('new', 'reply', 'reply_all', 'forward')`,
+    ),
+    check("drafts_status", sql`${t.status} in ('active', 'consumed')`),
+    check("drafts_revision", sql`${t.revision} > 0`),
+    check(
+      "drafts_handoff",
+      sql`(${t.status} = 'consumed') = (${t.outgoingMessageId} is not null)`,
+    ),
+    check(
+      "drafts_source",
+      sql`(${t.composeMode} = 'new' and ${t.source} is null) or (${t.composeMode} <> 'new' and ${t.source} is not null and ${t.source}->>'mode' = ${t.composeMode})`,
+    ),
+    index("drafts_active_updated_idx").on(t.status, t.updatedAt),
+  ],
+);
+export const draftAttachments = pgTable(
+  "draft_attachments",
+  {
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    id: uuid("id").notNull(),
+    kind: text("kind").notNull(),
+    inline: boolean("inline").default(false).notNull(),
+    contentId: text("content_id"),
+    blobId: uuid("blob_id").references(() => blobs.id, {
+      onDelete: "restrict",
+    }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.draftId, t.id] }),
+    uniqueIndex("draft_attachments_position").on(t.draftId, t.position),
+    check("draft_attachments_kind", sql`${t.kind} in ('staged', 'incoming')`),
+    index("draft_attachments_blob_idx").on(t.blobId),
+  ],
+);
+
+export const remoteContentSenders = pgTable("remote_content_senders", {
+  address: text("address").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const signatures = pgTable("signatures", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  richDocument: jsonb("rich_document").$type<RichDocument>().notNull(),
+  revision: integer("revision").default(1).notNull(),
+});
+export const signatureResources = pgTable(
+  "signature_resources",
+  {
+    signatureId: uuid("signature_id")
+      .notNull()
+      .references(() => signatures.id, { onDelete: "cascade" }),
+    id: uuid("id").notNull(),
+    blobId: uuid("blob_id")
+      .notNull()
+      .references(() => blobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.signatureId, t.id] }),
+    index("signature_resources_blob_idx").on(t.blobId),
+  ],
+);
+export const accountSignatureDefaults = pgTable("account_signature_defaults", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => mailAccounts.id, { onDelete: "cascade" }),
+  new: uuid("new_signature_id").references(() => signatures.id, {
+    onDelete: "set null",
+  }),
+  reply: uuid("reply_signature_id").references(() => signatures.id, {
+    onDelete: "set null",
+  }),
+  forward: uuid("forward_signature_id").references(() => signatures.id, {
+    onDelete: "set null",
+  }),
+});

@@ -6,15 +6,23 @@ import { useRouter } from "next/navigation";
 
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { ConnectionReport } from "@/modules/accounts/domain/mail-provider";
+import type { SentCopyPolicy } from "@/modules/accounts/domain/account";
+import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
+import { SentCopyPolicyFields } from "@/components/sent-copy-settings";
 
 export function AccountForm({
   id,
   account,
+  sentRole,
 }: {
   id: string;
   account?: MailAccountView;
+  sentRole?: MailboxRoleView;
 }) {
   const router = useRouter();
+  const [sentCopyPolicy, setSentCopyPolicy] = useState<SentCopyPolicy>(
+    account?.sentCopyPolicy ?? "server",
+  );
   const [useImapCredentials, setUseImapCredentials] = useState(
     account?.smtp.useImapCredentials ?? true,
   );
@@ -33,6 +41,7 @@ export function AccountForm({
       displayName: data.get("displayName"),
       email: data.get("email"),
       enabled: data.get("enabled") === "on",
+      sentCopyPolicy,
       providerType: "imap_smtp",
       imap: {
         host: data.get("imapHost"),
@@ -242,6 +251,12 @@ export function AccountForm({
         ) : null}
       </fieldset>
 
+      <SentCopyPolicyFields
+        policy={sentCopyPolicy}
+        onChange={setSentCopyPolicy}
+        sentRole={sentRole}
+        disabled={!!pending}
+      />
       {report ? (
         <div className="test-results" aria-live="polite">
           <p className={report.imap.success ? "success" : "error"}>
@@ -264,13 +279,13 @@ export function AccountForm({
       <div className="actions">
         <button
           type="button"
-          className="secondary"
+          className="button secondary"
           disabled={!!pending}
           onClick={(event) => void request(event.currentTarget.form!, "test")}
         >
           {pending === "test" ? "Testing…" : "Test connection"}
         </button>
-        <button type="submit" disabled={!!pending}>
+        <button type="submit" className="button" disabled={!!pending}>
           {pending === "save" ? "Saving…" : "Save"}
         </button>
         <Link className="button-link secondary" href="/">

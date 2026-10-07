@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import type { RemoteMailbox } from "../../accounts/domain/mail-provider";
+import { MailboxRoleService } from "./mailbox-role-service";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailboxMessages,
@@ -284,5 +285,6 @@ export class MailboxService {
           );
       }
     });
+    await new MailboxRoleService(this.database).autodetect(accountId);
   }
 }

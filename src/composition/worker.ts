@@ -1,3 +1,10 @@
+import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
+import { AttachmentService } from "../modules/mail/application/attachment-service";
+import { createAttachmentLock } from "../modules/mail/infrastructure/attachment-lock";
+import {
+  enqueueAttachment,
+  AttachmentPoller,
+} from "../modules/mail/infrastructure/attachment-jobs";
 import { JobRuntime } from "../modules/jobs/infrastructure/job-runtime.js";
 import { getConfig } from "../shared/infrastructure/config/config.js";
 import { createLogger } from "../shared/infrastructure/logging/logger.js";
@@ -21,6 +28,22 @@ import {
   BackfillPoller,
   enqueueBackfill,
 } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
+import { MessageCommandService } from "../modules/mail/application/message-command-service.js";
+import { OutgoingMessageService } from "../modules/mail/application/outgoing-message-service.js";
+import { createOutgoingLock } from "../modules/mail/infrastructure/outgoing-lock.js";
+import { SentCopyService } from "../modules/mail/application/sent-copy-service.js";
+import {
+  enqueueSentCopy,
+  SentCopyPoller,
+} from "../modules/mail/infrastructure/sent-copy-jobs.js";
+import {
+  enqueueOutgoing,
+  OutgoingPoller,
+} from "../modules/mail/infrastructure/outgoing-jobs.js";
+import {
+  MessageCommandPoller,
+  enqueueMessageCommand,
+} from "../modules/mail/infrastructure/message-command-jobs.js";
 
 export function createWorkerComposition() {
   const config = getConfig();
@@ -63,13 +86,65 @@ export function createWorkerComposition() {
         enqueueBackfill(jobs.boss, accountId, mailboxId),
     },
   );
+  const blobStorage = new LocalBlobStorage(config.attachmentsPath);
+  const attachments = new AttachmentService(
+    database.db,
+    blobStorage,
+    config,
+    (id) => enqueueAttachment(jobs.boss, id),
+    accounts,
+    provider,
+    createAttachmentLock(database.client),
+    (accountId, mailboxId) =>
+      recentSyncScheduler.schedule(accountId, mailboxId),
+  );
   const withMailboxLock = createMailboxLock(database.client);
+  const sentCopy = new SentCopyService(
+    database.db,
+    accounts,
+    provider,
+    createOutgoingLock(database.client),
+    (id) => enqueueSentCopy(jobs.boss, id),
+    async (accountId, mailboxId, initial) =>
+      initial
+        ? recentSyncScheduler.schedule(accountId, mailboxId)
+        : enqueueDelta(jobs.boss, accountId, mailboxId, "manual"),
+    blobStorage,
+    config.maxOutgoingMimeBytes,
+  );
+  const outgoing = new OutgoingMessageService(
+    database.db,
+    (id) => enqueueOutgoing(jobs.boss, id),
+    accounts,
+    provider,
+    createOutgoingLock(database.client),
+    (id) => enqueueSentCopy(jobs.boss, id),
+    blobStorage,
+    config,
+  );
+  const commands = new MessageCommandService(
+    database.db,
+    (id) => enqueueMessageCommand(jobs.boss, id),
+    async (accountId, mailboxId) => {
+      await enqueueDelta(jobs.boss, accountId, mailboxId, "manual");
+    },
+    accounts,
+    provider,
+  );
   return {
+    attachments,
+    attachmentPoller: new AttachmentPoller(attachments),
+    outgoing,
+    sentCopy,
+    sentCopyPoller: new SentCopyPoller(sentCopy),
+    outgoingPoller: new OutgoingPoller(outgoing),
     config,
     logger,
     database,
     jobs,
     withMailboxLock,
+    commands,
+    commandPoller: new MessageCommandPoller(jobs.boss, commands),
     delta: new DeltaSyncService(
       database.db,
       accounts,

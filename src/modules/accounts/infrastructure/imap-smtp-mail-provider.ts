@@ -10,6 +10,9 @@ import {
 import nodemailer from "nodemailer";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { decodeAttachment } from "./decode-attachment";
+import { discoverAttachments } from "../../mail/domain/attachments";
+import { BlobLimitError } from "../../../shared/application/blob-storage";
 import type SMTPTransport from "nodemailer/lib/smtp-transport";
 
 import {
@@ -38,6 +41,12 @@ import {
   type DeltaMailboxSyncSink,
   type BackfillMailboxSyncRequest,
   type BackfillMailboxSyncSink,
+  type RemoteMutationRequest,
+  type RemoteMutationResult,
+  type SmtpDeliveryResult,
+  type SentCopyAppendRequest,
+  type SentCopyAppendResult,
+  type SentCopyLookupResult,
 } from "../domain/mail-provider";
 
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -100,7 +109,7 @@ type ImapClient = {
     content: Readable;
   }>;
   search(
-    query: { since: Date },
+    query: { since?: Date; header?: Record<string, string>; uid?: string },
     options: { uid: true },
   ): Promise<number[] | false | undefined>;
   fetch(
@@ -109,6 +118,7 @@ type ImapClient = {
       uid: true;
       flags: true;
       envelope?: true;
+      headers?: string[];
       bodyStructure?: true;
       internalDate?: true;
       size?: true;
@@ -117,9 +127,49 @@ type ImapClient = {
     }>,
     options: { uid: true; changedSince?: bigint },
   ): AsyncGenerator<FetchMessageObject, false | void, undefined>;
+  fetchOne?(
+    seq: string,
+    query: {
+      uid: true;
+      flags?: true;
+      modseq?: true;
+      envelope?: true;
+      bodyStructure?: true;
+      bodyParts?: (
+        string | { key: string; start: number; maxLength: number }
+      )[];
+    },
+    options: { uid: true },
+  ): Promise<FetchMessageObject | false | undefined>;
+  messageFlagsAdd?(
+    range: string,
+    flags: string[],
+    options: { uid: true; unchangedSince?: bigint },
+  ): Promise<boolean>;
+  messageFlagsRemove?(
+    range: string,
+    flags: string[],
+    options: { uid: true; unchangedSince?: bigint },
+  ): Promise<boolean>;
+  messageMove?(
+    range: string,
+    destination: string,
+    options: { uid: true },
+  ): Promise<{ uidValidity?: bigint; uidMap?: Map<number, number> } | false>;
+  append?(
+    path: string,
+    content: Buffer,
+    flags: string[],
+    internalDate: Date,
+  ): Promise<{ uidValidity?: bigint; uid?: number } | false>;
 };
 type SmtpTransport = {
   verify(): Promise<unknown>;
+  sendMail?(message: {
+    envelope: { from: string; to: string[] };
+    raw: Buffer;
+    messageId: string;
+  }): Promise<{ accepted: unknown[]; rejected: unknown[] }>;
   close(): void;
 };
 
@@ -166,6 +216,8 @@ export function smtpOptions(
     secure: !starttls,
     requireTLS: starttls,
     ignoreTLS: false,
+    logger: false,
+    debug: false,
     auth:
       connection.credential.kind === "password"
         ? { user: connection.username, pass: connection.credential.password }
@@ -411,16 +463,304 @@ export function normalizeMessage(
     internalDate: internalDate.toISOString(),
     size: message.size.toString(10),
     flags: [...(message.flags ?? [])].sort(),
-    envelope: normalizeEnvelope(message.envelope),
+    envelope: {
+      ...normalizeEnvelope(message.envelope),
+      ...(message.headers
+        ? {
+            references: message.headers
+              .toString("utf8")
+              .replace(/\r?\n[ \t]+/g, " ")
+              .match(/^references:[ \t]*([^\r\n]*)/im)?.[1]
+              ?.slice(-65536),
+          }
+        : {}),
+    },
     ...(mimeStructure ? { mimeStructure } : {}),
     hasAttachments: mimeHasAttachments(mimeStructure),
   };
 }
 
 export class ImapSmtpMailProvider implements MailProvider {
+  async appendMessage(
+    account: ProviderImapAccount,
+    request: SentCopyAppendRequest,
+    mime: Buffer,
+  ): Promise<SentCopyAppendResult> {
+    let client: ImapClient | undefined;
+    let appendStarted = false;
+    try {
+      client = this.factories.createImap(imapOptions(account.imap));
+      await client.connect();
+      // ImapFlow filters APPEND flags against the selected mailbox's
+      // PERMANENTFLAGS. EXAMINE may report none, silently dropping \Seen.
+      await client.mailboxOpen(request.remotePath, { readOnly: false });
+      if (!client.append) return { outcome: "failed" };
+      appendStarted = true;
+      const result = await client.append(
+        request.remotePath,
+        mime,
+        request.flags,
+        request.internalDate,
+      );
+      if (!result) return { outcome: "uncertain" };
+      return {
+        outcome: "saved",
+        ...(result.uidValidity === undefined
+          ? {}
+          : { uidValidity: result.uidValidity.toString() }),
+        ...(result.uid === undefined ? {} : { uid: result.uid.toString() }),
+      };
+    } catch {
+      return { outcome: appendStarted ? "uncertain" : "failed" };
+    } finally {
+      try {
+        await client?.logout();
+      } catch {
+        /* Cleanup cannot revoke success. */
+      }
+      try {
+        client?.close();
+      } catch {
+        /* No protocol details are logged. */
+      }
+    }
+  }
+
+  async findSentCopy(
+    account: ProviderImapAccount,
+    remotePath: string,
+    messageId: string,
+  ): Promise<SentCopyLookupResult> {
+    let client: ImapClient | undefined;
+    try {
+      client = this.factories.createImap(imapOptions(account.imap));
+      await client.connect();
+      const selected = await client.mailboxOpen(remotePath, { readOnly: true });
+      const uids = await client.search(
+        { header: { "Message-ID": messageId } },
+        { uid: true },
+      );
+      if (!Array.isArray(uids) || uids.length > 100 || !client.fetchOne)
+        return { outcome: "uncertain" };
+      // IMAP HEADER search is a substring search. Confirm exact envelope IDs
+      // before treating a hit as proof of this one Maildock-generated operation.
+      for (const uid of uids) {
+        const message = await client.fetchOne(
+          uid.toString(),
+          { uid: true, flags: true, envelope: true },
+          { uid: true },
+        );
+        if (message && message.envelope?.messageId === messageId)
+          return {
+            outcome: "found",
+            uidValidity: selected.uidValidity.toString(),
+            uid: message.uid.toString(),
+          };
+      }
+      return { outcome: "not_found" };
+    } catch {
+      return { outcome: "uncertain" };
+    } finally {
+      try {
+        await client?.logout();
+      } catch {
+        /* Read-only recovery cleanup. */
+      }
+      try {
+        client?.close();
+      } catch {
+        /* No protocol details are logged. */
+      }
+    }
+  }
+  async deliverMessage(
+    account: Pick<ProviderAccount, "accountId" | "smtp">,
+    envelope: { from: string; to: string[] },
+    mime: Buffer,
+  ): Promise<SmtpDeliveryResult> {
+    let transport: SmtpTransport | undefined;
+    let submissionStarted = false;
+    try {
+      // Nodemailer also creates an internal MIME node for raw transport metadata.
+      // Give it the snapshot's ID so even that metadata never generates a new ID.
+      const headerEnd = mime.indexOf("\r\n\r\n");
+      const messageId =
+        headerEnd >= 0
+          ? /^Message-ID: (<[^>\r\n]+>)[ \t]*\r?$/im.exec(
+              mime.subarray(0, headerEnd).toString("ascii"),
+            )?.[1]
+          : undefined;
+      if (!messageId)
+        return {
+          outcome: "definite_failure",
+          retryable: false,
+          message: "The outgoing MIME snapshot is invalid.",
+        };
+      transport = this.factories.createSmtp(smtpOptions(account.smtp));
+      // verify performs no MAIL/DATA submission. Only failures in this stage
+      // can be retried automatically, using structured transport codes.
+      await transport.verify();
+      if (!transport.sendMail)
+        return {
+          outcome: "definite_failure",
+          retryable: false,
+          message: "SMTP delivery is unavailable.",
+        };
+      submissionStarted = true;
+      const result = await transport.sendMail({
+        envelope,
+        raw: mime,
+        messageId,
+      });
+      if (!result.accepted.length) return { outcome: "uncertain" };
+      return {
+        outcome: "accepted",
+        acceptedCount: result.accepted.length,
+        rejectedCount: result.rejected.length,
+      };
+    } catch (error) {
+      const failure = error as {
+        code?: string;
+        command?: string;
+        responseCode?: number;
+      } | null;
+      if (!submissionStarted) {
+        const retryable = [
+          "ETIMEDOUT",
+          "ECONNECTION",
+          "EDNS",
+          "EAI_AGAIN",
+          "ENOTFOUND",
+          "ECONNREFUSED",
+          "EHOSTUNREACH",
+          "ENETUNREACH",
+        ].includes(failure?.code ?? "");
+        return {
+          outcome: "definite_failure",
+          retryable,
+          message: retryable
+            ? "SMTP connection could not be established."
+            : "SMTP authentication or configuration failed.",
+        };
+      }
+      // Nodemailer reports these explicit negative envelope replies before DATA.
+      // Socket errors can be labelled CONN even during DATA: never retry those.
+      if (
+        ["MAIL FROM", "RCPT TO"].includes(failure?.command ?? "") &&
+        failure?.responseCode &&
+        failure.responseCode >= 500 &&
+        failure.responseCode <= 599
+      ) {
+        return {
+          outcome: "definite_failure",
+          retryable: false,
+          message: "SMTP rejected the sender or recipients.",
+        };
+      }
+      return { outcome: "uncertain" };
+    } finally {
+      // A cleanup error must never replace a positive acceptance result.
+      try {
+        transport?.close();
+      } catch {
+        /* No message data is logged. */
+      }
+    }
+  }
   constructor(
     private readonly factories: ProtocolClientFactories = defaultFactories,
   ) {}
+
+  async mutateMessage(
+    account: ProviderImapAccount,
+    request: RemoteMutationRequest,
+  ): Promise<RemoteMutationResult> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    let connected = false;
+    let selected = false;
+    try {
+      await client.connect();
+      connected = true;
+      const mailbox = await client.mailboxOpen(request.sourcePath, {
+        readOnly: false,
+      });
+      selected = true;
+      if (mailbox.uidValidity.toString() !== request.uidValidity)
+        throw new MailboxEpochChangedError();
+      const uid = Number(request.uid);
+      if (!Number.isSafeInteger(uid) || uid < 1)
+        throw new Error("Invalid message UID.");
+      if (
+        !client.fetchOne ||
+        !client.messageFlagsAdd ||
+        !client.messageFlagsRemove ||
+        !client.messageMove
+      )
+        throw new Error("IMAP mutation methods are unavailable.");
+      const current = await client.fetchOne(
+        request.uid,
+        { uid: true, flags: true, modseq: true },
+        { uid: true },
+      );
+      if (!current || current.uid !== uid) return { outcome: "source_missing" };
+      if (request.action === "archive" || request.action === "trash") {
+        if (!client.capabilities.has("MOVE") || !request.destinationPath)
+          throw new Error("IMAP MOVE is unavailable.");
+        const moved = await client.messageMove(
+          request.uid,
+          request.destinationPath,
+          { uid: true },
+        );
+        if (!moved) return { outcome: "source_missing" };
+        const mapped = moved.uidMap?.get(uid);
+        return {
+          outcome: "applied",
+          ...(moved.uidValidity === undefined
+            ? {}
+            : { destinationUidValidity: moved.uidValidity.toString() }),
+          ...(mapped === undefined
+            ? {}
+            : { destinationUid: mapped.toString() }),
+        };
+      }
+      const flag =
+        request.action === "mark_read" || request.action === "mark_unread"
+          ? "\\Seen"
+          : "\\Flagged";
+      const add = request.action === "mark_read" || request.action === "flag";
+      const options = {
+        uid: true as const,
+        ...(request.modseq && current.modseq && client.enabled.has("CONDSTORE")
+          ? { unchangedSince: BigInt(request.modseq) }
+          : {}),
+      };
+      const changed = add
+        ? await client.messageFlagsAdd(request.uid, [flag], options)
+        : await client.messageFlagsRemove(request.uid, [flag], options);
+      return { outcome: changed ? "applied" : "conflict" };
+    } catch (error) {
+      if (
+        error instanceof MailboxEpochChangedError ||
+        error instanceof MailProviderOperationError
+      )
+        throw error;
+      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+    } finally {
+      if (selected)
+        try {
+          await client.mailboxClose();
+        } catch {
+          /* connection cleanup follows */
+        }
+      if (connected)
+        try {
+          await client.logout();
+        } catch {
+          /* close follows */
+        }
+      client.close();
+    }
+  }
 
   async testConnection(account: ProviderAccount): Promise<ConnectionReport> {
     return {
@@ -496,6 +836,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         uid: true,
         flags: true,
         envelope: true,
+        headers: ["references"] as string[],
         bodyStructure: true,
         internalDate: true,
         size: true,
@@ -587,6 +928,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         uid: true,
         flags: true,
         envelope: true,
+        headers: ["references"] as string[],
         bodyStructure: true,
         internalDate: true,
         size: true,
@@ -677,6 +1019,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           uid: true,
           flags: true,
           envelope: true,
+          headers: ["references"] as string[],
           bodyStructure: true,
           internalDate: true,
           size: true,
@@ -724,6 +1067,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           uid: true,
           flags: true,
           envelope: true,
+          headers: ["references"] as string[],
           bodyStructure: true,
           internalDate: true,
           size: true,
@@ -853,6 +1197,107 @@ export class ImapSmtpMailProvider implements MailProvider {
     } finally {
       if (selected) await client.mailboxClose().catch(() => false);
       if (connected) await client.logout().catch(() => undefined);
+      client.close();
+    }
+  }
+
+  async fetchAttachment<T>(
+    account: ProviderImapAccount,
+    request: {
+      remotePath: string;
+      uid: string;
+      expectedUidValidity: string;
+      partId: string;
+      maxBytes: number;
+    },
+    consume: (bytes: AsyncIterable<Uint8Array>) => Promise<T>,
+  ): Promise<T> {
+    const client = this.factories.createImap(imapOptions(account.imap));
+    try {
+      const uid = Number(request.uid);
+      if (
+        !/^[1-9]\d*$/.test(request.uid) ||
+        !Number.isInteger(uid) ||
+        uid < 1 ||
+        uid > 0xffffffff ||
+        !/^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(request.partId) ||
+        !client.fetchOne
+      )
+        throw Error("Invalid attachment identity.");
+      await client.connect();
+      const mailbox = await client.mailboxOpen(request.remotePath, {
+        readOnly: true,
+      });
+      if (mailbox.uidValidity.toString() !== request.expectedUidValidity)
+        throw new MailboxEpochChangedError();
+      const remote = await client.fetchOne(
+        request.uid,
+        { uid: true, bodyStructure: true },
+        { uid: true },
+      );
+      if (!remote || remote.uid !== uid || !remote.bodyStructure)
+        throw Error("Source message is unavailable.");
+      const structure = normalizeMimeStructure(remote.bodyStructure);
+      if (
+        !discoverAttachments(structure).some((p) => p.partId === request.partId)
+      )
+        throw Error("MIME part is not an attachment.");
+      let encoding: string | null = null;
+      function visit(node: RemoteMimePart, root = false) {
+        if (
+          (node.part ?? (root && !node.children.length ? "1" : null)) ===
+          request.partId
+        )
+          encoding = node.encoding;
+        node.children.forEach((child) => visit(child));
+      }
+      visit(structure, true);
+      const section =
+        request.partId === "1" && !structure.children.length
+          ? "TEXT"
+          : request.partId;
+      // Quoted-printable can use three wire bytes per decoded byte, plus soft
+      // wraps. Bound malformed streams without rejecting ordinary encodings.
+      const wireLimit = request.maxBytes * 4 + 128 * 1024;
+      async function* raw() {
+        let offset = 0;
+        const chunkSize = 64 * 1024;
+        while (true) {
+          const response = await client.fetchOne!(
+            request.uid,
+            {
+              uid: true,
+              bodyParts: [
+                { key: section, start: offset, maxLength: chunkSize },
+              ],
+            },
+            { uid: true },
+          );
+          const chunk =
+            response && response.uid === uid
+              ? response.bodyParts?.get(section.toLowerCase())
+              : undefined;
+          if (!chunk) throw Error("Attachment part is unavailable.");
+          if (chunk.length > chunkSize)
+            throw Error("Server ignored bounded attachment fetch.");
+          offset += chunk.length;
+          if (offset > wireLimit) throw new BlobLimitError();
+          if (chunk.length) yield chunk;
+          if (chunk.length < chunkSize) break;
+        }
+      }
+      async function* bounded() {
+        let size = 0;
+        for await (const chunk of decodeAttachment(raw(), encoding)) {
+          size += chunk.length;
+          if (size > request.maxBytes) throw new BlobLimitError();
+          yield chunk;
+        }
+      }
+      return await consume(bounded());
+    } finally {
+      await client.mailboxClose().catch(() => false);
+      await client.logout().catch(() => undefined);
       client.close();
     }
   }

@@ -7,6 +7,8 @@ dist/
 dist-worker/
 build/
 coverage/
+.security-results/
+.search-results/
 *.tsbuildinfo
 
 # Local configuration and secrets
@@ -16,7 +18,7 @@ coverage/
 
 # Runtime data
 data/
-attachments/
+/attachments/
 
 # Tooling and operating systems
 *.log

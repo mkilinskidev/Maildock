@@ -2,6 +2,11 @@ import { z } from "zod";
 
 export const transportSecuritySchema = z.enum(["tls", "starttls"]);
 export type TransportSecurity = z.infer<typeof transportSecuritySchema>;
+export const sentCopyPolicySchema = z.enum(["server", "maildock"]);
+export type SentCopyPolicy = z.infer<typeof sentCopyPolicySchema>;
+export const sentCopyPolicyUpdateSchema = z
+  .object({ sentCopyPolicy: sentCopyPolicySchema })
+  .strict();
 
 const hostSchema = z
   .string()
@@ -25,6 +30,7 @@ export const createAccountInputSchema = z
     displayName: z.string().trim().min(1).max(100),
     email: z.email().max(320),
     enabled: z.boolean().default(true),
+    sentCopyPolicy: sentCopyPolicySchema.optional(),
     providerType: z.literal("imap_smtp").default("imap_smtp"),
     imap: connectionSettingsSchema.extend({ password: passwordSchema }),
     smtp: connectionSettingsSchema.omit({ username: true }).extend({
@@ -55,6 +61,7 @@ export const updateAccountInputSchema = z
     displayName: z.string().trim().min(1).max(100),
     email: z.email().max(320),
     enabled: z.boolean(),
+    sentCopyPolicy: sentCopyPolicySchema.optional(),
     providerType: z.literal("imap_smtp"),
     imap: connectionSettingsSchema.extend({
       password: passwordSchema.optional(),

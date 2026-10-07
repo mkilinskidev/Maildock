@@ -40,7 +40,7 @@ export function LoginForm() {
       method="post"
       action="/api/auth/sign-in/username"
       onSubmit={submit}
-      className="card"
+      className="auth-card"
     >
       <label>
         Username
@@ -56,7 +56,9 @@ export function LoginForm() {
         />
       </label>
       {error ? <p className="error">{error}</p> : null}
-      <button disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
+      <button className="button" disabled={pending}>
+        {pending ? "Signing in…" : "Sign in"}
+      </button>
     </form>
   );
 }

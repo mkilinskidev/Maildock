@@ -2,7 +2,7 @@
 
 Maildock is a single-user, self-hosted web application intended to bring multiple email accounts into one browser interface.
 
-Maildock is in **early development**. Phase 1B provides one-owner setup/login, encrypted IMAP/SMTP account configuration, connection verification, and asynchronous IMAP mailbox discovery with a persisted hierarchy. It does **not** synchronize or fetch messages, send messages, fetch attachments, search mail, or render message content.
+Maildock is in **early development**. Phases 0–2E provide one-owner authentication, encrypted IMAP/SMTP and Microsoft OAuth accounts, mailbox/message synchronization, isolated message reading, reply/forward, durable sending and Sent-copy, and on-demand incoming/staged outgoing attachments. See [`docs/PHASE_2E.md`](docs/PHASE_2E.md) for attachment storage, limits and acceptance scenarios.
 
 The authoritative design is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), governed by the accepted records in [`docs/adr/`](docs/adr/).
 
@@ -30,7 +30,7 @@ maildock:account-credential:v1:<account-id>:imap
 maildock:account-credential:v1:<account-id>:smtp
 ```
 
-**Backup warning:** a PostgreSQL backup containing encrypted credentials is useless for credential recovery without the corresponding Maildock encryption key. Back up the key securely and separately from PostgreSQL. Losing it means stored provider credentials cannot be recovered and affected mail accounts must be reconfigured.
+**Backup warning:** `attachments_data` is now authoritative persistent application data. A complete backup requires PostgreSQL, the existing attachment volume, and the corresponding credential encryption keys/deployment secrets. A PostgreSQL backup alone is no longer complete. Preserve matched database/blob backups; keep encryption keys secure and separate. Losing the encryption keys prevents credential recovery.
 
 For controlled future rotation, `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` accepts a JSON object such as `{"v1":"<old-base64-key>"}`. Keep the old key available, configure a new active key/ID, restart, re-encrypt every stored credential with fresh IVs through a reviewed operator procedure, verify it, and only then remove the old key. Phase 1A provides the multi-key decryption seam but no rotation UI or job.
 

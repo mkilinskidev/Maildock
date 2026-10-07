@@ -1,0 +1,15 @@
+# Phase 2B — Durable Message Actions
+
+Message actions are persisted in `message_commands` with the source mailbox path, UIDVALIDITY, UID, original flags, and optional SPECIAL-USE destination. The HTTP request validates the local placement and account, writes a pending command and optimistic projection in one PostgreSQL transaction, and returns a command ID. pg-boss jobs carry only that ID. A worker reloads credentials and placement data from PostgreSQL, runs the remote action, records its result, and requests delta reconciliation. A poller requeues commands left pending after enqueue failures or worker restarts.
+
+The command worker uses the same mailbox advisory lock as recent, delta, and backfill sync. Before any UID mutation the IMAP adapter opens the source mailbox and checks its UIDVALIDITY. Flag actions use UID STORE, with UNCHANGEDSINCE when CONDSTORE and a local modseq are available. A conflict or missing UID fails the command and requests reconciliation.
+
+Account-level `mailbox_roles` records map Archive, Trash, Sent, Drafts, and Junk to stable local mailbox UUIDs. The mapping source is `special_use` or `manual`; remote `specialUse` metadata is never fabricated or altered. Discovery creates an automatic mapping only when exactly one active, selectable mailbox has the matching SPECIAL-USE attribute. It never overwrites an existing mapping. A manual mapping takes precedence, and clearing it runs autodetection again. If a mapped mailbox becomes missing or unselectable, the mapping remains visible but unavailable. A newly created mailbox with the same path does not inherit it; the same local mailbox can become available again when safely rediscovered. System folders can be reviewed and changed in account settings.
+
+Migration `0011` seeds unambiguous automatic mappings from mailbox metadata already stored before this phase. Sent, Drafts, and Junk mappings are available in settings for future features; Phase 2B message actions consume Archive and Trash.
+
+Archive and Trash resolve their destinations through these role mappings and require native IMAP MOVE. Names are never used to infer destinations. MOVE responses with COPYUID mapping persist destination UIDVALIDITY and UID. A MOVE attempt is marked executing before network I/O. If a worker restarts after that point without a committed result, it does not repeat MOVE: it fails the command as uncertain, restores the local projection, and reconciles source and destination. A missing source UID alone is never treated as success. This can report failure when the remote MOVE actually succeeded, but avoids a second destructive operation.
+
+The list projects flag changes and hides messages pending Archive or Trash. The UI polls command status and reloads authoritative local state on failure. Reconciliation may require the next mailbox poll if an immediate delta job cannot be queued.
+
+Deferred: permanent deletion and expunge, arbitrary folder moves, spam actions, undo, bulk actions, automatic read on open, compose/reply/forward, and a COPY plus delete fallback.

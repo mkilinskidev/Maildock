@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { Mail, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
+import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import { MessageList } from "@/components/message-list";
+import { SystemFolders } from "@/components/system-folders";
+import { AccountSignatureSettings } from "@/components/signature-settings";
+import type { SignatureCatalog } from "@/modules/mail/domain/signature";
+import { SentCopySettings } from "@/components/sent-copy-settings";
 
 function count(value: string | null): string {
   return value === null ? "" : new Intl.NumberFormat().format(BigInt(value));
@@ -46,13 +52,17 @@ function MailboxHierarchy({ mailboxes }: { mailboxes: MailboxView[] }) {
 export function AccountList({
   accounts,
   mailboxesByAccount,
+  rolesByAccount,
   oauthConfigured,
   oauthResult,
+  signatureCatalog,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
+  rolesByAccount: Record<string, MailboxRoleView[]>;
   oauthConfigured: boolean;
   oauthResult: { oauth?: string; oauth_error?: string };
+  signatureCatalog?: SignatureCatalog;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<string>();
@@ -132,66 +142,149 @@ export function AccountList({
   if (accounts.length === 0) {
     return (
       <div className="empty-state">
+        <Mail size={28} className="mx-auto mb-3 text-muted" />
         <h2>No mail accounts</h2>
         {oauthErrorMessage ? (
           <p className="error">{oauthErrorMessage}</p>
         ) : null}
-        <p>
-          Add your first email account to test and store its IMAP and SMTP
-          configuration.
-        </p>
-        {oauthConfigured ? (
-          <Link className="button-link" href="/api/oauth/microsoft/start">
-            Connect Microsoft account
+        <p>Add an email account to get started.</p>
+        <div className="actions justify-center">
+          {oauthConfigured ? (
+            <Link className="button-link" href="/api/oauth/microsoft/start">
+              Connect Microsoft account
+            </Link>
+          ) : null}
+          <Link className="button-link secondary" href="/accounts/new">
+            <Plus size={15} />
+            Configure IMAP/SMTP
           </Link>
-        ) : null}
-        <Link className="button-link secondary" href="/accounts/new">
-          Configure IMAP/SMTP manually
-        </Link>
+        </div>
       </div>
     );
   }
 
   return (
     <>
-      <div className="actions">
+      <div className="actions page-toolbar">
         {oauthConfigured ? (
           <Link className="button-link" href="/api/oauth/microsoft/start">
             Connect Microsoft account
           </Link>
         ) : null}
         <Link className="button-link secondary" href="/accounts/new">
-          Configure IMAP/SMTP manually
+          <Plus size={15} />
+          Configure IMAP/SMTP
         </Link>
       </div>
       {oauthResult.oauth === "connected" ? (
-        <p>Microsoft account connected.</p>
+        <p className="success">Microsoft account connected.</p>
       ) : null}
       {oauthErrorMessage ? <p className="error">{oauthErrorMessage}</p> : null}
-      {error ? <p className="error">{error}</p> : null}
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <div className="account-list">
         {accounts.map((account) => (
           <article className="account-card" key={account.id}>
-            <div className="account-details">
-              <h2>{account.displayName}</h2>
-              <p>{account.email}</p>
-              {account.authMethod === "oauth2" ? (
-                <p className="muted">
-                  Microsoft OAuth ·{" "}
-                  {account.oauthStatus === "reconnect_required"
+            <div className="account-card-head">
+              <span className="account-avatar">
+                {account.displayName.charAt(0)}
+              </span>
+              <div>
+                <h2>{account.displayName}</h2>
+                <p className="muted">{account.email}</p>
+              </div>
+              <span className={"status-pill" + (account.enabled ? "" : " off")}>
+                {account.enabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+            <div className="account-summary">
+              {account.authMethod === "oauth2"
+                ? "Microsoft OAuth · " +
+                  (account.oauthStatus === "reconnect_required"
                     ? "Reconnect required"
-                    : "Connected"}
-                </p>
-              ) : null}
-              <p className="muted">
-                {account.enabled ? "Enabled" : "Disabled"} ·{" "}
-                {account.connectionStatus === "verified"
-                  ? "Connection verified"
-                  : account.connectionStatus === "error"
-                    ? "Connection error"
-                    : "Not yet verified"}
-              </p>
-              <p className="muted">
+                    : "Connected") +
+                  " · "
+                : ""}
+              {account.connectionStatus === "verified"
+                ? "Connection verified"
+                : account.connectionStatus === "error"
+                  ? "Connection error"
+                  : "Connection not tested"}
+              {" · "}
+              {mailboxesByAccount[account.id]?.length ?? 0} mailboxes
+            </div>
+            {account.imapResult.error ? (
+              <p className="error">IMAP: {account.imapResult.error}</p>
+            ) : null}
+            {account.smtpResult.error ? (
+              <p className="error">SMTP: {account.smtpResult.error}</p>
+            ) : null}
+            {account.mailboxDiscovery.error ? (
+              <p className="error">{account.mailboxDiscovery.error}</p>
+            ) : null}
+            <div className="actions">
+              {account.authMethod === "oauth2" ? (
+                <Link
+                  className="button-link secondary"
+                  href={"/api/oauth/microsoft/start?accountId=" + account.id}
+                >
+                  Reconnect Microsoft account
+                </Link>
+              ) : (
+                <Link
+                  className="button-link secondary"
+                  href={"/accounts/" + account.id + "/edit"}
+                >
+                  Edit
+                </Link>
+              )}
+              <button
+                className="button secondary"
+                disabled={pending === account.id}
+                onClick={() => mutate(account.id, "test")}
+              >
+                Test connection
+              </button>
+              <button
+                className="button secondary"
+                disabled={pending === account.id || !account.enabled}
+                onClick={() => mutate(account.id, "discover")}
+              >
+                Refresh mailboxes
+              </button>
+              <button
+                className="button secondary"
+                disabled={pending === account.id}
+                onClick={() => mutate(account.id, "toggle", !account.enabled)}
+              >
+                {account.enabled ? "Disable" : "Enable"}
+              </button>
+              <button
+                className="button danger"
+                disabled={pending === account.id}
+                onClick={() => mutate(account.id, "delete")}
+              >
+                Delete
+              </button>
+            </div>
+            <AccountSignatureSettings
+              key={JSON.stringify(signatureCatalog)}
+              accountId={account.id}
+              initialCatalog={signatureCatalog}
+            />
+            <SentCopySettings
+              accountId={account.id}
+              initialPolicy={account.sentCopyPolicy ?? "server"}
+              sentRole={rolesByAccount[account.id]?.find(
+                (role) => role.role === "sent",
+              )}
+            />
+            <details className="details-panel">
+              <summary>Connection and discovery details</summary>
+              <p>
                 Last successful test:{" "}
                 {account.lastSuccessfulConnectionTestAt
                   ? new Date(
@@ -199,43 +292,35 @@ export function AccountList({
                     ).toLocaleString()
                   : "Never"}
               </p>
-              {account.imapResult.error ? (
-                <p className="error">IMAP: {account.imapResult.error}</p>
-              ) : null}
-              {account.smtpResult.error ? (
-                <p className="error">SMTP: {account.smtpResult.error}</p>
-              ) : null}
-              <p className="muted">
-                Mailboxes: {mailboxesByAccount[account.id]?.length ?? 0} ·{" "}
-                {account.mailboxDiscovery.status === "running" ||
-                account.mailboxDiscovery.status === "pending"
-                  ? "Discovering mailboxes…"
-                  : account.mailboxDiscovery.status === "success"
-                    ? `Last discovered ${new Date(account.mailboxDiscovery.lastSuccessfulAt!).toLocaleString()}`
-                    : account.mailboxDiscovery.status === "failed"
-                      ? "Discovery failed"
-                      : "Not yet discovered"}
+              <p>
+                Discovery: {account.mailboxDiscovery.status}
+                {account.mailboxDiscovery.lastSuccessfulAt
+                  ? " · Last successful " +
+                    new Date(
+                      account.mailboxDiscovery.lastSuccessfulAt,
+                    ).toLocaleString()
+                  : ""}
               </p>
-              {account.mailboxDiscovery.error ? (
-                <p className="error">{account.mailboxDiscovery.error}</p>
-              ) : null}
+              <SystemFolders
+                key={JSON.stringify(rolesByAccount[account.id] ?? [])}
+                accountId={account.id}
+                initialRoles={rolesByAccount[account.id] ?? []}
+                mailboxes={mailboxesByAccount[account.id] ?? []}
+              />
               <MailboxHierarchy
                 mailboxes={mailboxesByAccount[account.id] ?? []}
               />
               {(mailboxesByAccount[account.id] ?? [])
                 .filter((mailbox) => mailbox.selectable)
                 .map((mailbox) => (
-                  <details
-                    className="mailbox-messages"
-                    key={`messages-${mailbox.id}`}
-                  >
-                    <summary>Open {mailbox.name}</summary>
+                  <details className="mailbox-messages" key={mailbox.id}>
+                    <summary>Inspect {mailbox.name} messages</summary>
                     <MessageList accountId={account.id} mailbox={mailbox} />
                   </details>
                 ))}
               {account.mailboxDiscovery.status === "success" ? (
-                <details className="mailbox-diagnostics">
-                  <summary>Discovery diagnostics</summary>
+                <details className="details-panel">
+                  <summary>Advanced discovery diagnostics</summary>
                   <p>
                     Capabilities:{" "}
                     {account.mailboxDiscovery.capabilities.join(", ") ||
@@ -257,50 +342,7 @@ export function AccountList({
                   ))}
                 </details>
               ) : null}
-            </div>
-            <div className="actions">
-              {account.authMethod === "oauth2" ? (
-                <Link
-                  className="button-link secondary"
-                  href={`/api/oauth/microsoft/start?accountId=${account.id}`}
-                >
-                  Reconnect Microsoft account
-                </Link>
-              ) : (
-                <Link
-                  className="button-link secondary"
-                  href={`/accounts/${account.id}/edit`}
-                >
-                  Edit
-                </Link>
-              )}
-              <button
-                disabled={pending === account.id}
-                onClick={() => mutate(account.id, "test")}
-              >
-                Test connection
-              </button>
-              <button
-                disabled={pending === account.id || !account.enabled}
-                onClick={() => mutate(account.id, "discover")}
-              >
-                Refresh mailboxes
-              </button>
-              <button
-                className="secondary"
-                disabled={pending === account.id}
-                onClick={() => mutate(account.id, "toggle", !account.enabled)}
-              >
-                {account.enabled ? "Disable" : "Enable"}
-              </button>
-              <button
-                className="danger"
-                disabled={pending === account.id}
-                onClick={() => mutate(account.id, "delete")}
-              >
-                Delete
-              </button>
-            </div>
+            </details>
           </article>
         ))}
       </div>
