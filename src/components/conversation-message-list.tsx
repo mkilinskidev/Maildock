@@ -18,6 +18,9 @@ function ConversationGroup({
   representative,
   selectedId,
   refreshKey,
+  onLoaded,
+  checkedIds,
+  onToggle,
   onSelect,
 }: {
   accountId: string;
@@ -25,6 +28,9 @@ function ConversationGroup({
   representative: MessageListItem;
   selectedId: string;
   refreshKey: number;
+  onLoaded?: (key: string, rows: MessageListItem[]) => void;
+  checkedIds?: string[];
+  onToggle?: (message: MessageListItem) => void;
   onSelect: (message: ConversationMessage) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -81,6 +87,26 @@ function ConversationGroup({
     refreshKey,
     retry,
   ]);
+  useEffect(() => {
+    const key = `${accountId}:${mailboxId}:${representative.conversationId ?? representative.id}`;
+    onLoaded?.(
+      key,
+      expanded
+        ? items
+            .filter((item) => item.mailboxId)
+            .map((item) => ({ ...item, accountId }))
+        : [],
+    );
+    return () => onLoaded?.(key, []);
+  }, [
+    onLoaded,
+    expanded,
+    items,
+    accountId,
+    mailboxId,
+    representative.conversationId,
+    representative.id,
+  ]);
   return (
     <section className="conversation-group">
       <button
@@ -97,6 +123,14 @@ function ConversationGroup({
         <span className="conversation-subject">
           {normalizedSubject(representative.subject)}
         </span>
+        {representative.accountName ? (
+          <span
+            className="conversation-account"
+            title={representative.accountName}
+          >
+            {representative.accountName}
+          </span>
+        ) : null}
         {!representative.seen ? (
           <span
             className="unread-dot"
@@ -130,11 +164,17 @@ function ConversationGroup({
           {items.map((message) => (
             <MessageRow
               key={message.id}
-              message={message}
+              message={{ ...message, accountName: representative.accountName }}
               compact
+              checked={checkedIds?.includes(
+                `${accountId}:${message.mailboxId}:${message.id}`,
+              )}
+              onToggle={
+                onToggle ? () => onToggle({ ...message, accountId }) : undefined
+              }
               selected={selectedId === message.id}
               disabled={!message.mailboxId}
-              onSelect={() => onSelect(message)}
+              onSelect={() => onSelect({ ...message, accountId })}
             />
           ))}
         </div>
@@ -149,6 +189,9 @@ export function ConversationMessageList({
   messages,
   selectedId,
   refreshKey,
+  onLoaded,
+  checkedIds,
+  onToggle,
   onSelect,
 }: {
   accountId: string;
@@ -156,18 +199,26 @@ export function ConversationMessageList({
   messages: readonly MessageListItem[];
   selectedId: string;
   refreshKey: number;
+  onLoaded?: (key: string, rows: MessageListItem[]) => void;
+  checkedIds?: string[];
+  onToggle?: (message: MessageListItem) => void;
   onSelect: (message: ConversationMessage) => void;
 }) {
   return (
-    <div className="conversation-message-list">
+    <div
+      className={`conversation-message-list${checkedIds?.length ? " selection-mode" : ""}`}
+    >
       {messages.map((message) => (
         <ConversationGroup
           key={message.conversationId ?? message.id}
-          accountId={accountId}
-          mailboxId={mailboxId}
+          accountId={message.accountId ?? accountId}
+          mailboxId={message.mailboxId ?? mailboxId}
           representative={message}
           selectedId={selectedId}
           refreshKey={refreshKey}
+          onLoaded={onLoaded}
+          checkedIds={checkedIds}
+          onToggle={onToggle}
           onSelect={onSelect}
         />
       ))}

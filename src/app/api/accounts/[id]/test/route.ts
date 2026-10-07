@@ -2,7 +2,7 @@ import { z, ZodError } from "zod";
 
 import { MailAccountNotFoundError } from "@/modules/accounts/application/accounts-service";
 import { accountsService } from "@/modules/accounts/infrastructure/accounts";
-import { MicrosoftAuthorizationError } from "@/modules/accounts/infrastructure/microsoft-oauth";
+import { OAuthAuthorizationError } from "@/modules/accounts/domain/oauth-mail-provider";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 
 export async function POST(
@@ -21,7 +21,7 @@ export async function POST(
       ),
     });
   } catch (error) {
-    if (error instanceof MicrosoftAuthorizationError)
+    if (error instanceof OAuthAuthorizationError)
       return Response.json({ error: error.message }, { status: 409 });
     if (error instanceof MailAccountNotFoundError)
       return Response.json({ error: error.message }, { status: 404 });

@@ -19,6 +19,14 @@ describe("Phase 1G job priority", () => {
       options: { priority?: number; singletonKey?: string };
     }[] = [];
     const boss = {
+      getDb: () => ({
+        beginTransaction: async () => ({
+          db: { executeSql: async () => ({ rows: [] }) },
+          commit: async () => {},
+          rollback: async () => {},
+        }),
+      }),
+      findJobs: async () => [],
       send: async (
         queue: string,
         _data: unknown,
@@ -35,11 +43,19 @@ describe("Phase 1G job priority", () => {
     expect(sent).toEqual([
       {
         queue: MAILBOX_DELTA_SYNC_QUEUE,
-        options: { singletonKey: mailboxId, priority: 10 },
+        options: {
+          singletonKey: mailboxId,
+          priority: 10,
+          db: expect.any(Object),
+        },
       },
       {
         queue: MAILBOX_BACKFILL_SYNC_QUEUE,
-        options: { singletonKey: `${mailboxId}:50`, priority: -10 },
+        options: {
+          singletonKey: `${mailboxId}:50`,
+          priority: -10,
+          db: expect.any(Object),
+        },
       },
     ]);
   });

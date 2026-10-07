@@ -23,6 +23,19 @@ export function isSafeRaster(bytes: Uint8Array, type: string) {
   return false;
 }
 
+/** Generic CID resources may render only as an already-supported raster. */
+export function inlineRasterType(bytes: Uint8Array, declaredType: string) {
+  if (declaredType === "application/octet-stream") {
+    for (const type of SAFE_INLINE_IMAGE_TYPES)
+      if (isSafeRaster(bytes, type)) return type;
+    return null;
+  }
+  return SAFE_INLINE_IMAGE_TYPES.has(declaredType) &&
+    isSafeRaster(bytes, declaredType)
+    ? declaredType
+    : null;
+}
+
 export const EMAIL_BASE_CSS =
   "html{color-scheme:light;background:#fff;color:#20242b}body{font:15px/1.55 Arial,sans-serif;margin:16px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%!important}body>table{width:100%!important}td,th{overflow-wrap:anywhere}pre{white-space:pre-wrap}a{overflow-wrap:anywhere}";
 

@@ -65,6 +65,28 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe("received email reader", () => {
+  it("gives both inline status notices the same reader spacing class", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          document: "<p>HTML</p>",
+          blocked: false,
+          pending: true,
+          inlineFailures: 1,
+        }),
+      ),
+    );
+    await mount(<Reader />);
+    const notices = [...host.querySelectorAll(".reader-inline-status")];
+    expect(notices.map((notice) => notice.textContent)).toEqual([
+      "Preparing inline images…",
+      "Some inline images are unavailable.",
+    ]);
+    expect(
+      notices.every((notice) => notice.getAttribute("role") === "status"),
+    ).toBe(true);
+  });
   it("prefers rich HTML over plain alternative and maintains iframe boundary", async () => {
     vi.stubGlobal(
       "fetch",
@@ -177,10 +199,52 @@ describe("received email reader", () => {
         initialSenders={[{ address: "evil@example.test" }]}
       />,
     );
+    expect(host.querySelector("table")?.getAttribute("aria-labelledby")).toBe(
+      "trusted-senders-title",
+    );
+    expect(
+      [...host.querySelectorAll("th")].map((cell) => cell.textContent),
+    ).toEqual(["Email address", "Action"]);
+    expect(host.querySelector("tbody tr td")?.textContent).toBe(
+      "evil@example.test",
+    );
+    expect(host.querySelector("tbody button")?.getAttribute("aria-label")).toBe(
+      "Remove evil@example.test",
+    );
     await click("Remove");
     expect(host.textContent).toContain("No trusted senders");
+    expect(host.querySelector("table")).toBeNull();
+    expect(host.querySelector(".trusted-senders-empty")?.textContent).toContain(
+      "Remote images remain blocked by default.",
+    );
     expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toEqual({
       address: "evil@example.test",
     });
+  });
+  it("preserves long addresses and aligned row actions when removal fails", async () => {
+    const longAddress =
+      "windowsinsiderprogram-with-a-long-local-part@e-mails.microsoft.com";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 500 })),
+    );
+    await mount(
+      <RemoteContentSettings
+        initialSenders={[
+          { address: longAddress },
+          { address: "hello@mkilinski.dev" },
+        ]}
+      />,
+    );
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(2);
+    expect(host.querySelector("tbody td")?.textContent).toBe(longAddress);
+    expect(host.querySelectorAll("tbody tr td:last-child button")).toHaveLength(
+      2,
+    );
+    await click("Remove");
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(2);
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "Sender permission could not be removed.",
+    );
   });
 });

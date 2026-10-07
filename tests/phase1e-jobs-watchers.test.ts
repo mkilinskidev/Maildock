@@ -40,6 +40,15 @@ function boss() {
   const pending = new Set<string>();
   const sent: { queue: string; data: unknown; options: unknown }[] = [];
   const value = {
+    getDb: () => ({
+      beginTransaction: async () => ({
+        db: { executeSql: async () => ({ rows: [] }) },
+        commit: async () => {},
+        rollback: async () => {},
+      }),
+    }),
+    findJobs: async (_queue: string, options: { key: string }) =>
+      pending.has(options.key) ? [{}] : [],
     send: async (
       queue: string,
       data: unknown,
@@ -103,6 +112,54 @@ afterEach(() => {
 });
 
 describe("Phase 1E delta scheduling and IDLE", () => {
+  it("Phase 3F IDLE logs carry account and mailbox context without persistent writes", async () => {
+    vi.useFakeTimers();
+    const client = new FakeIdleClient();
+    const rows = [
+      {
+        accountId,
+        mailboxId,
+        remotePath: "INBOX",
+        capabilities: ["IDLE"],
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+      },
+    ];
+    const { manager, writes } = watchers(rows, () => client);
+    await manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "mail.idle_connected",
+        accountId,
+        mailboxId,
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+        mailboxPath: "INBOX",
+      }),
+      expect.any(String),
+    );
+    expect(writes.insert).not.toHaveBeenCalled();
+    await manager.stop();
+    const failed = new FakeIdleClient();
+    failed.connect.mockRejectedValueOnce(Error("secret"));
+    const next = watchers(rows, () => failed);
+    await next.manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "mail.idle_disconnected",
+        accountName: "Hotmail",
+        accountEmail: "owner@example.test",
+        mailboxPath: "INBOX",
+        accountId,
+        mailboxId,
+      }),
+      expect.any(String),
+    );
+    expect(next.writes.insert).not.toHaveBeenCalled();
+    await next.manager.stop();
+  });
   it("uses a mailbox singleton key to reject duplicate pending delta jobs", async () => {
     const jobs = boss();
     expect(await enqueueDelta(jobs.value, accountId, mailboxId, "poll")).toBe(
@@ -115,12 +172,11 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       {
         queue: MAILBOX_DELTA_SYNC_QUEUE,
         data: { version: 1, accountId, mailboxId, reason: "poll" },
-        options: { singletonKey: mailboxId, priority: 10 },
-      },
-      {
-        queue: MAILBOX_DELTA_SYNC_QUEUE,
-        data: { version: 1, accountId, mailboxId, reason: "idle" },
-        options: { singletonKey: mailboxId, priority: 10 },
+        options: {
+          singletonKey: mailboxId,
+          priority: 10,
+          db: expect.any(Object),
+        },
       },
     ]);
   });
@@ -137,7 +193,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     expect(jobs.sent).toHaveLength(1);
     await poller.start();
     poller.stop();
-    expect(jobs.sent).toHaveLength(2);
+    expect(jobs.sent).toHaveLength(1);
     expect(jobs.pending.size).toBe(1);
     expect(
       jobs.sent.every(
@@ -205,8 +261,8 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       client.emit(event, { seq: 42 });
       expect(jobs.sent).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(500);
-      expect(jobs.sent).toHaveLength(2);
-      expect(jobs.sent[1]?.data).toMatchObject({ reason: "idle" });
+      expect(jobs.sent).toHaveLength(1);
+      expect(jobs.sent[0]?.data).toMatchObject({ reason: "idle" });
       expect(jobs.pending.size).toBe(1);
       expect(writes.update).not.toHaveBeenCalled();
       expect(writes.delete).not.toHaveBeenCalled();
@@ -280,12 +336,17 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     );
     await manager.start();
     await vi.advanceTimersByTimeAsync(0);
+    // Network error events stay owned by IDLE; close drives its reconnect loop.
+    clients[0]!.emit(
+      "error",
+      Object.assign(Error("Socket timeout"), { code: "ETIMEOUT" }),
+    );
     clients[0]!.emit("close");
     await vi.advanceTimersByTimeAsync(999);
     expect(clients).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(clients).toHaveLength(2);
-    expect(jobs.sent).toHaveLength(2);
+    expect(jobs.sent).toHaveLength(1);
     clients[1]!.emit("close");
     await vi.advanceTimersByTimeAsync(0);
     await manager.stop();

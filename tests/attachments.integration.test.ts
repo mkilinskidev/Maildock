@@ -322,6 +322,174 @@ describe("durable attachment and MIME lifecycle", () => {
       .where(eq(messageContents.messageId, messageId));
   }
   const blockedOptions = { loadImages: false, trustSender: false };
+  async function genericCid(declaredType = "application/octet-stream") {
+    // Redacted reproduction: HTML first in related, named binary attachment
+    // with <data>, plus a normal PDF. No private invoice/payment data retained.
+    const structure = part("", {
+      type: "multipart/related",
+      disposition: null,
+      filename: null,
+      parameters: { type: "text/html" },
+      children: [
+        part("1", { type: "text/html", disposition: null, filename: null }),
+        part("2", {
+          type: declaredType,
+          filename: "create-qr-code",
+          contentId: "<data>",
+        }),
+        part("3"),
+      ],
+    });
+    await database.db
+      .update(messages)
+      .set({ mimeStructure: structure })
+      .where(eq(messages.id, messageId));
+    await database.db
+      .update(messageAttachments)
+      .set({
+        contentType: declaredType,
+        contentId: "<data>",
+        disposition: "attachment",
+        filename: "create-qr-code",
+        inline: false,
+        visible: true,
+      })
+      .where(eq(messageAttachments.id, incomingId));
+    await richHtml(
+      '<img src="cid:data"><img src="https://tracker.invalid/pixel">',
+    );
+    return new EmailRenderingService(database.db, content, attachments);
+  }
+  it.each([
+    ["image/png", png],
+    [
+      "image/gif",
+      Buffer.from(
+        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        "base64",
+      ),
+    ],
+  ])(
+    "renders unique octet-stream CID %s without changing attachment metadata or remote permission",
+    async (type, bytes) => {
+      const renderer = await genericCid();
+      remoteBytes = bytes;
+      const first = await renderer.render(
+        accountId,
+        mailboxId,
+        messageId,
+        blockedOptions,
+      );
+      expect(first.pending).toBe(true);
+      expect(first.inlineFailures).toBe(0);
+      expect(enqueue).toHaveBeenCalledExactlyOnceWith(incomingId);
+      await attachments.run(incomingId);
+      const ready = await renderer.render(
+        accountId,
+        mailboxId,
+        messageId,
+        blockedOptions,
+      );
+      expect(ready.pending).toBe(false);
+      expect(ready.inlineFailures).toBe(0);
+      expect(ready.blocked).toBe(true);
+      const dom = new JSDOM(ready.document!);
+      expect(
+        [...dom.window.document.querySelectorAll("img")].map((img) =>
+          img.getAttribute("src"),
+        ),
+      ).toEqual([`data:${type};base64,${bytes.toString("base64")}`, null]);
+      expect(ready.document).toContain("img-src data:;");
+      dom.window.close();
+      const [stored] = await database.db
+        .select()
+        .from(messageAttachments)
+        .where(eq(messageAttachments.id, incomingId));
+      expect(stored).toMatchObject({
+        contentType: "application/octet-stream",
+        contentId: "<data>",
+        filename: "create-qr-code",
+        disposition: "attachment",
+        inline: false,
+        visible: true,
+      });
+      expect((await attachments.download(incomingId)).bytes).toEqual(bytes);
+      await expect(
+        attachments.inlineResource(randomUUID(), incomingId, "data"),
+      ).rejects.toThrow("Inline resource is unavailable");
+      await expect(
+        attachments.inlineResource(messageId, incomingId, "other"),
+      ).rejects.toThrow("Inline resource is unavailable");
+    },
+  );
+  it.each([
+    ["application/octet-stream", Buffer.from("not an image")],
+    ["application/octet-stream", pdf],
+    [
+      "application/octet-stream",
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+    ],
+    ["application/octet-stream", Buffer.from("BMunsupported bitmap")],
+    ["image/png", Buffer.from("GIF89a")],
+    ["image/png", Buffer.from("invalid PNG")],
+  ])(
+    "rejects invalid/unsupported CID bytes declared as %s",
+    async (type, bytes) => {
+      const renderer = await genericCid(type);
+      remoteBytes = bytes;
+      await renderer.render(accountId, mailboxId, messageId, blockedOptions);
+      await attachments.run(incomingId);
+      const result = await renderer.render(
+        accountId,
+        mailboxId,
+        messageId,
+        blockedOptions,
+      );
+      expect(result.inlineFailures).toBe(1);
+      expect(result.document).not.toContain("data:image/");
+      await expect(
+        attachments.inlineResource(messageId, incomingId, "data"),
+      ).rejects.toThrow("Inline image format is invalid");
+    },
+  );
+  it("rejects duplicate generic CID before preparation", async () => {
+    const renderer = await genericCid();
+    await database.db.insert(messageAttachments).values({
+      id: randomUUID(),
+      messageId,
+      sourceMailboxId: mailboxId,
+      sourceUidValidity: 7n,
+      sourceUid: 42n,
+      partId: "4",
+      contentType: "application/octet-stream",
+      contentId: "data",
+      inline: true,
+      visible: false,
+    });
+    const result = await renderer.render(
+      accountId,
+      mailboxId,
+      messageId,
+      blockedOptions,
+    );
+    expect(result.inlineFailures).toBe(1);
+    expect(result.pending).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(result.document).not.toContain("data:image/");
+  });
+  it("does not sniff explicitly unsupported CID types even when bytes are PNG", async () => {
+    const renderer = await genericCid("image/svg+xml");
+    remoteBytes = png;
+    const result = await renderer.render(
+      accountId,
+      mailboxId,
+      messageId,
+      blockedOptions,
+    );
+    expect(result.inlineFailures).toBe(1);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(result.document).not.toContain("data:image/");
+  });
   it("fetches only referenced CID on demand, reuses verified cache, and keeps inline visibility", async () => {
     await richHtml('<p>HTML</p><img src="cid:%3Clogo%3E">');
     const renderer = new EmailRenderingService(

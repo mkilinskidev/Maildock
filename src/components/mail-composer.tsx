@@ -251,7 +251,7 @@ export function MailComposer({
           if (!revision.current && result.revision > 1 && !sameContent) {
             conflict.current = true;
             throw Error(
-              "This draft changed in another tab. Reopen it from Local drafts.",
+              "This draft changed in another tab. Reopen it from Maildock drafts.",
             );
           }
           revision.current = result.revision;
@@ -541,6 +541,7 @@ export function MailComposer({
           className="icon-button"
           type="button"
           aria-label="Close composer"
+          title="Save draft and close"
           disabled={
             submitting || attachments.some((a) => a.status === "uploading")
           }
@@ -690,6 +691,18 @@ export function MailComposer({
         {error ? (
           <p role="alert" className="error">
             {error}
+          </p>
+        ) : null}
+        {!submitting &&
+        (!from || attachmentsBlocked || !editorValid || !signatureReady) ? (
+          <p className="composer-send-hint" role="status">
+            {!from
+              ? "Select an available sending account."
+              : !signatureReady
+                ? "Loading signatures before sending…"
+                : !editorValid
+                  ? "Undo unsupported formatting before sending."
+                  : "Wait for attachments to finish downloading or uploading, or remove failed attachments."}
           </p>
         ) : null}
         <div className="composer-footer-actions">

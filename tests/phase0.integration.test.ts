@@ -1,3 +1,5 @@
+import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
+import { applicationEvents } from "@/shared/infrastructure/database/schema";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -984,9 +986,26 @@ describe("Phase 0 PostgreSQL foundations", () => {
       },
     ]);
     const mailbox = (await mailboxService.listForAccount(accountId))[0]!;
-    const service = new MessageService(db, accounts, provider, config);
+    const service = new MessageService(
+      db,
+      accounts,
+      provider,
+      config,
+      undefined,
+      undefined,
+      undefined,
+      new ApplicationEventService(db),
+    );
 
     await service.runRecentSync(accountId, mailbox.id);
+    expect(
+      (
+        await db
+          .select()
+          .from(applicationEvents)
+          .where(eq(applicationEvents.accountId, accountId))
+      ).map((e) => e.event),
+    ).toContain("mail.recent_sync_completed");
     expect(await db.select().from(messages)).toHaveLength(2);
     expect(await db.select().from(mailboxMessages)).toHaveLength(2);
     const firstPage = await service.list(accountId, mailbox.id, 1);
@@ -1021,6 +1040,14 @@ describe("Phase 0 PostgreSQL foundations", () => {
     await expect(service.runRecentSync(accountId, mailbox.id)).rejects.toThrow(
       "simulated later batch failure",
     );
+    expect(
+      (
+        await db
+          .select()
+          .from(applicationEvents)
+          .where(eq(applicationEvents.accountId, accountId))
+      ).map((e) => e.event),
+    ).toContain("mail.recent_sync_failed");
     expect(await db.select().from(mailboxMessages)).toHaveLength(3);
     expect((await mailboxService.listForAccount(accountId))[0]).toMatchObject({
       recentSync: { status: "failed" },

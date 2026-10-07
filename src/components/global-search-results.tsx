@@ -1,6 +1,7 @@
 "use client";
+import { messageDate } from "@/shared/application/message-date";
 import { useEffect, useState } from "react";
-import { Search, LoaderCircle } from "lucide-react";
+import { Search, LoaderCircle, Flag, Paperclip } from "lucide-react";
 import type {
   SearchPage,
   SearchResult,
@@ -19,6 +20,7 @@ export function GlobalSearchResults({
 }) {
   const [page, setPage] = useState<SearchPage>();
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -46,13 +48,23 @@ export function GlobalSearchResults({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, refreshKey]);
+  }, [query, refreshKey, retry]);
   return (
     <div className="mail-rows global-search-results" aria-live="polite">
       {error ? (
         <div className="pane-empty" role="alert">
           <strong>Search could not be completed</strong>
           <p>{error}</p>
+          <button
+            className="button secondary"
+            onClick={() => {
+              setError("");
+              setPage(undefined);
+              setRetry((n) => n + 1);
+            }}
+          >
+            Retry search
+          </button>
         </div>
       ) : !page ? (
         <div className="pane-empty" role="status">
@@ -84,24 +96,34 @@ export function GlobalSearchResults({
               aria-current={item.id === selectedId ? "true" : undefined}
             >
               <span className="mail-row-top">
+                <span className="mail-row-marker">
+                  {!item.seen ? (
+                    <span className="unread-dot" aria-label="Unread" />
+                  ) : null}
+                </span>
                 <strong>
                   {item.from[0]?.name ||
                     item.from[0]?.address ||
                     "Unknown sender"}
                 </strong>
-                <time dateTime={item.date}>
-                  {new Date(item.date).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                  })}
+                <time dateTime={item.date} title={messageDate(item.date).title}>
+                  {messageDate(item.date).text}
                 </time>
               </span>
               <span className="mail-row-subject">
                 {item.subject || "(No subject)"}
               </span>
-              <span className="search-snippet">{item.snippet}</span>
+              <span className="mail-row-snippet search-snippet">
+                {item.snippet}
+              </span>
               <span className="mail-row-bottom">
                 {item.accountName} · {item.mailboxName}
+                {item.flagged ? <Flag size={12} aria-label="Flagged" /> : null}
+                {item.hasAttachments ? (
+                  <>
+                    <Paperclip size={12} aria-hidden="true" /> Attachment
+                  </>
+                ) : null}
               </span>
             </button>
           ))}

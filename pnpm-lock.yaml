@@ -162,6 +162,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  imapflow@2.0.6: a35102b6a3b8b2e4c735870e77014ab58365acc536ae32ab4439d8b60dc64acc
+  pg-boss@12.33.7: b9affbd73ab38cf158f4d6f9ec46569e4b31a7ae5a774f2c6528f2e231d5fe41
+
 importers:
 
   .:
@@ -210,7 +214,7 @@ importers:
         version: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9)
       imapflow:
         specifier: 2.0.6
-        version: 2.0.6
+        version: 2.0.6(patch_hash=a35102b6a3b8b2e4c735870e77014ab58365acc536ae32ab4439d8b60dc64acc)
       jsdom:
         specifier: 30.1.1
         version: 30.1.1(@noble/hashes@2.4.0)
@@ -231,7 +235,7 @@ importers:
         version: 10.0.10
       pg-boss:
         specifier: 12.33.7
-        version: 12.33.7
+        version: 12.33.7(patch_hash=b9affbd73ab38cf158f4d6f9ec46569e4b31a7ae5a774f2c6528f2e231d5fe41)
       pino:
         specifier: 10.3.1
         version: 10.3.1
@@ -7332,7 +7336,7 @@ snapshots:
 
   ignore@7.0.10: {}
 
-  imapflow@2.0.6:
+  imapflow@2.0.6(patch_hash=a35102b6a3b8b2e4c735870e77014ab58365acc536ae32ab4439d8b60dc64acc):
     dependencies:
       '@zone-eu/mailsplit': 5.4.17
       encoding-japanese: 2.4.0
@@ -7986,7 +7990,7 @@ snapshots:
 
   peberminta@0.10.0: {}
 
-  pg-boss@12.33.7:
+  pg-boss@12.33.7(patch_hash=b9affbd73ab38cf158f4d6f9ec46569e4b31a7ae5a774f2c6528f2e231d5fe41):
     dependencies:
       cron-parser: 5.10.1
       pg: 8.23.0

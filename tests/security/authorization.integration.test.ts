@@ -1,3 +1,13 @@
+import { PATCH as moveAccount } from "../../src/app/api/accounts/[id]/order/route";
+import { AccountsService } from "../../src/modules/accounts/application/accounts-service";
+import type { MailProvider } from "../../src/modules/accounts/domain/mail-provider";
+import {
+  GET as oauthConfigRead,
+  PUT as oauthConfigSave,
+} from "../../src/app/api/settings/oauth-providers/route";
+import { createOAuthComposition } from "../../src/modules/accounts/infrastructure/oauth-composition";
+import { AesGcmSecretEncryption } from "../../src/shared/infrastructure/crypto/aes-gcm-secret-encryption";
+import { GET as applicationLogs } from "../../src/app/api/application-events/route";
 import { randomUUID } from "node:crypto";
 import { SignatureService } from "../../src/modules/mail/application/signature-service";
 import { plainTextDocument } from "../../src/modules/mail/domain/rich-document";
@@ -57,6 +67,8 @@ const runtime = vi.hoisted(() => ({
   attachments: undefined as unknown,
   signatures: undefined as unknown,
   guard: undefined as unknown,
+  oauth: undefined as unknown,
+  accounts: undefined as unknown,
 }));
 vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   get db() {
@@ -64,6 +76,17 @@ vi.mock("@/shared/infrastructure/database/runtime-database", () => ({
   },
 }));
 vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
+  get accountsService() {
+    return runtime.accounts;
+  },
+  get oauthProviders() {
+    return (runtime.oauth as ReturnType<typeof createOAuthComposition>)
+      .registry;
+  },
+  get oauthProviderConfigs() {
+    return (runtime.oauth as ReturnType<typeof createOAuthComposition>)
+      .configurations;
+  },
   get messageContentService() {
     return runtime.content;
   },
@@ -98,6 +121,12 @@ import {
 } from "../../src/app/api/signatures/[id]/route";
 import { POST as signatureSnapshot } from "../../src/app/api/signatures/[id]/snapshot/route";
 import { PUT as signatureDefaults } from "../../src/app/api/accounts/[id]/signatures/route";
+import {
+  GET as notificationSettings,
+  PUT as saveNotificationSettings,
+} from "../../src/app/api/settings/notifications/route";
+import { POST as notificationPoll } from "../../src/app/api/notifications/route";
+import { defaultNotificationPreferences } from "../../src/modules/mail/domain/notifications";
 
 describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", () => {
   let container: StartedTestContainer;
@@ -156,6 +185,22 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       DEFAULT_ATTACHMENT_LIMITS,
       enqueue,
     );
+    runtime.oauth = createOAuthComposition(
+      database.db,
+      new AesGcmSecretEncryption(
+        config.credentialsEncryption.activeKeyId,
+        config.credentialsEncryption.keys,
+      ),
+      config,
+    );
+    runtime.accounts = new AccountsService(
+      database.db,
+      new AesGcmSecretEncryption(
+        config.credentialsEncryption.activeKeyId,
+        config.credentialsEncryption.keys,
+      ),
+      {} as MailProvider,
+    );
     runtime.db = database.db;
     runtime.content = content;
     runtime.attachments = attachments;
@@ -191,6 +236,163 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       ...(method !== "GET" ? { body } : {}),
     });
   }
+  it("protects persisted account order using real owner sessions and Origin checks", async () => {
+    const rows = await database.db
+      .insert(mailAccounts)
+      .values(
+        ["First", "Second"].map((displayName) => ({
+          id: randomUUID(),
+          displayName,
+          email: "owner@test",
+          imapHost: "unused.test",
+          imapPort: 993,
+          imapSecurity: "tls",
+          imapUsername: "owner",
+          imapPassword: { v: 1 } as never,
+          smtpHost: "unused.test",
+          smtpPort: 465,
+          smtpSecurity: "tls",
+        })),
+      )
+      .returning();
+    const context = { params: Promise.resolve({ id: rows[0].id }) };
+    const body = JSON.stringify({ direction: "down" });
+    expect((await moveAccount(req("PATCH", body, false), context)).status).toBe(
+      401,
+    );
+    const forged = req("PATCH", body);
+    forged.headers.set("cookie", "maildock.session_token=guessed");
+    expect((await moveAccount(forged, context)).status).toBe(401);
+    for (const requestOrigin of [null, "null", "http://evil.test"])
+      expect(
+        (await moveAccount(req("PATCH", body, true, requestOrigin), context))
+          .status,
+      ).toBe(403);
+    const accounts = runtime.accounts as AccountsService;
+    expect((await accounts.list()).map((a) => a.id)).toEqual(
+      rows.map((a) => a.id),
+    );
+    const response = await moveAccount(req("PATCH", body), context);
+    expect(response.status).toBe(200);
+    expect((await accounts.list()).map((a) => a.id)).toEqual([
+      rows[1].id,
+      rows[0].id,
+    ]);
+  });
+  it("protects OAuth configuration with actual owner sessions and Origin/CSRF checks", async () => {
+    const body = JSON.stringify({
+      providerId: "microsoft",
+      clientId: "application-id",
+      clientSecret: "provider-private-secret",
+    });
+    expect((await oauthConfigRead(req("GET", "", false))).status).toBe(401);
+    expect((await oauthConfigSave(req("PUT", body, false))).status).toBe(401);
+    for (const requestOrigin of [
+      null,
+      "http://evil.test",
+      `${origin}.evil.test`,
+    ]) {
+      expect(
+        (await oauthConfigSave(req("PUT", body, true, requestOrigin))).status,
+      ).toBe(403);
+    }
+    expect(
+      (
+        await oauthConfigSave(
+          req(
+            "PUT",
+            JSON.stringify({ providerId: "unknown", clientId: "client" }),
+          ),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await oauthConfigSave(
+          req("PUT", JSON.stringify({ providerId: "microsoft", clientId: "" })),
+        )
+      ).status,
+    ).toBe(400);
+    const saved = await oauthConfigSave(req("PUT", body));
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({
+      hasClientSecret: true,
+      configured: true,
+      redirectUri: `${origin}/api/oauth/microsoft/callback`,
+    });
+    const read = await oauthConfigRead(req("GET"));
+    const data = await read.json();
+    expect(data.providers).toHaveLength(2);
+    expect(data.providers[0].id).toBe("microsoft");
+    expect(data.providers[1]).toMatchObject({
+      id: "google",
+      name: "Google",
+      configured: false,
+      redirectUri: `${origin}/api/oauth/google/callback`,
+    });
+    expect(JSON.stringify(data)).not.toMatch(
+      /provider-private-secret|ciphertext|encryptedClientSecret|authTag/,
+    );
+    const kept = await oauthConfigSave(
+      req(
+        "PUT",
+        JSON.stringify({
+          providerId: "microsoft",
+          clientId: "updated-client",
+          clientSecret: "",
+        }),
+      ),
+    );
+    expect(await kept.json()).toMatchObject({
+      hasClientSecret: true,
+      configured: true,
+    });
+  });
+
+  it("secures Google DB-backed configuration with real owner auth and write-only secrets", async () => {
+    const body = JSON.stringify({
+      providerId: "google",
+      clientId: "google-id",
+      clientSecret: "google-private-secret",
+    });
+    expect((await oauthConfigSave(req("PUT", body, false))).status).toBe(401);
+    expect(
+      (await oauthConfigSave(req("PUT", body, true, "https://evil.example")))
+        .status,
+    ).toBe(403);
+    expect((await oauthConfigSave(req("PUT", body))).status).toBe(200);
+    const view = await (await oauthConfigRead(req("GET"))).json();
+    expect(view.providers.map((p: { id: string }) => p.id)).toEqual([
+      "microsoft",
+      "google",
+    ]);
+    expect(view.providers[1]).toMatchObject({
+      configured: true,
+      enabled: true,
+      hasClientSecret: true,
+      redirectUri: `${origin}/api/oauth/google/callback`,
+    });
+    expect(JSON.stringify(view)).not.toMatch(
+      /google-private-secret|ciphertext|encryptedClientSecret|authTag/,
+    );
+    const kept = await oauthConfigSave(
+      req(
+        "PUT",
+        JSON.stringify({
+          providerId: "google",
+          clientId: "google-id",
+          clientSecret: "",
+          enabled: false,
+        }),
+      ),
+    );
+    expect(await kept.json()).toMatchObject({
+      configured: false,
+      enabled: false,
+      hasClientSecret: true,
+    });
+  });
+
   async function seed(
     html = '<p>Body</p><img src="http://127.0.0.1:54321/img">',
     resources: MimeResource[] = [],
@@ -301,6 +503,77 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       .where(eq(messageAttachments.id, part.id));
     return blobId;
   }
+  it("Phase 3F protects diagnostic history with real owner sessions", async () => {
+    expect((await applicationLogs(req("GET", "", false))).status).toBe(401);
+    const response = await applicationLogs(req("GET"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect((await response.json()).events).toEqual([]);
+  });
+  it("protects notification settings and durable consumption using real owner sessions and Origin checks", async () => {
+    expect((await notificationSettings(req("GET", "", false))).status).toBe(
+      401,
+    );
+    for (const authenticated of [false, true]) {
+      const status = authenticated ? 403 : 401;
+      const requestOrigin = authenticated ? "http://evil.test" : origin;
+      expect(
+        (
+          await saveNotificationSettings(
+            req(
+              "PUT",
+              JSON.stringify(defaultNotificationPreferences),
+              authenticated,
+              requestOrigin,
+            ),
+          )
+        ).status,
+      ).toBe(status);
+      expect(
+        (
+          await notificationPoll(
+            req("POST", '{"action":"poll"}', authenticated, requestOrigin),
+          )
+        ).status,
+      ).toBe(status);
+    }
+    const noOrigin = req("POST", '{"action":"poll"}');
+    noOrigin.headers.delete("Origin");
+    expect((await notificationPoll(noOrigin)).status).toBe(403);
+    expect(
+      (
+        await saveNotificationSettings(
+          req(
+            "PUT",
+            JSON.stringify({
+              ...defaultNotificationPreferences,
+              enabled: true,
+            }),
+          ),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await (await notificationSettings(req("GET"))).json()).enabled,
+    ).toBe(true);
+    expect(
+      (await notificationPoll(req("POST", '{"action":"start"}'))).status,
+    ).toBe(200);
+    expect(
+      (await notificationPoll(req("POST", '{"action":"poll"}'))).status,
+    ).toBe(200);
+    for (const body of [
+      "{}",
+      '{"action":"other"}',
+      '{"action":"poll","checkpoint":100}',
+      "null",
+    ]) {
+      expect((await notificationPoll(req("POST", body))).status).toBe(400);
+    }
+    expect(
+      (await saveNotificationSettings(req("PUT", '{"enabled":true}'))).status,
+    ).toBe(400);
+  });
   it("protects all signature APIs with real owner auth and mutation Origin checks", async () => {
     const id = randomUUID(),
       draftId = randomUUID();

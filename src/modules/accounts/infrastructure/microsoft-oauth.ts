@@ -1,3 +1,8 @@
+import {
+  OAuthAuthorizationError,
+  type OAuthMailProvider,
+} from "../domain/oauth-mail-provider";
+import { OAuthProviderConfigs } from "./oauth-provider-configs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, gt, lte } from "drizzle-orm";
 import {
@@ -27,7 +32,7 @@ export const microsoftScopes = [
 const authority = "https://login.microsoftonline.com/common";
 const stateContext = "maildock:microsoft-oauth-state:v1";
 
-export class MicrosoftAuthorizationError extends Error {
+export class MicrosoftAuthorizationError extends OAuthAuthorizationError {
   constructor(
     message = "Microsoft authorization expired or was revoked. Reconnect the account.",
   ) {
@@ -36,32 +41,72 @@ export class MicrosoftAuthorizationError extends Error {
   }
 }
 
-export class MicrosoftOAuthService {
+export class MicrosoftOAuthProvider implements OAuthMailProvider {
+  readonly id = "microsoft";
+  private readonly configurations: OAuthProviderConfigs;
   constructor(
     private readonly database: Database,
     private readonly encryption: SecretEncryption,
     private readonly config: Pick<AppConfig, "appOrigin" | "microsoft">,
-  ) {}
-
-  get configured() {
-    return Boolean(
-      this.config.microsoft.clientId && this.config.microsoft.clientSecret,
+  ) {
+    this.configurations = new OAuthProviderConfigs(
+      database,
+      encryption,
+      config.appOrigin,
     );
+  }
+
+  getDefinition() {
+    return {
+      id: this.id,
+      name: "Microsoft",
+      description: "Outlook / Microsoft 365",
+      authorizationPath: "/api/oauth/microsoft/start",
+      callbackPath: "/api/oauth/microsoft/callback",
+    };
+  }
+  getMailDefaults() {
+    return {
+      imapHost: "outlook.office365.com",
+      imapPort: 993,
+      imapSecurity: "tls" as const,
+      smtpHost: "smtp.office365.com",
+      smtpPort: 587,
+      smtpSecurity: "starttls" as const,
+    };
+  }
+  async bootstrap() {
+    await this.configurations.bootstrap(this.id, this.config.microsoft);
+  }
+  async isConfigured() {
+    await this.bootstrap();
+    return (await this.configurations.view(this.getDefinition())).configured;
   }
 
   private redirectUri() {
     return `${this.config.appOrigin}/api/oauth/microsoft/callback`;
   }
 
-  private client(cachePlugin?: ICachePlugin) {
-    if (!this.configured)
+  private async applicationCredentials() {
+    await this.bootstrap();
+    const credentials = await this.configurations.credentials(this.id);
+    if (!credentials)
       throw new MicrosoftAuthorizationError(
         "Microsoft account connection is not configured.",
       );
+    return credentials;
+  }
+
+  private async client(
+    cachePlugin?: ICachePlugin,
+    applicationCredentials?: { clientId: string; clientSecret: string },
+  ) {
+    const credentials =
+      applicationCredentials ?? (await this.applicationCredentials());
     return new ConfidentialClientApplication({
       auth: {
-        clientId: this.config.microsoft.clientId,
-        clientSecret: this.config.microsoft.clientSecret,
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
         authority,
       },
       cache: { cachePlugin },
@@ -86,6 +131,7 @@ export class MicrosoftOAuthService {
           and(
             eq(mailAccounts.id, accountId),
             eq(mailAccounts.authMethod, "oauth2"),
+            eq(mailAccounts.oauthProviderId, this.id),
           ),
         );
       if (!account)
@@ -96,13 +142,14 @@ export class MicrosoftOAuthService {
     const state = randomBytes(32).toString("base64url");
     const pkce = await new CryptoProvider().generatePkceCodes();
     await this.database.insert(oauthAuthorizationStates).values({
+      providerId: this.id,
       stateHash: createHash("sha256").update(state).digest("hex"),
       sessionId,
       codeVerifier: this.encryption.encrypt(pkce.verifier, stateContext),
       accountId: accountId ?? null,
       expiresAt: new Date(Date.now() + 10 * 60_000),
     });
-    return this.client().getAuthCodeUrl({
+    return (await this.client()).getAuthCodeUrl({
       scopes: microsoftScopes,
       redirectUri: this.redirectUri(),
       state,
@@ -132,6 +179,7 @@ export class MicrosoftOAuthService {
             createHash("sha256").update(state).digest("hex"),
           ),
           eq(oauthAuthorizationStates.sessionId, sessionId),
+          eq(oauthAuthorizationStates.providerId, this.id),
           gt(oauthAuthorizationStates.expiresAt, new Date()),
         ),
       )
@@ -151,7 +199,7 @@ export class MicrosoftOAuthService {
         "Microsoft did not return an authorization code.",
       );
     let serialized = "";
-    const client = this.client({
+    const client = await this.client({
       beforeCacheAccess: async () => undefined,
       afterCacheAccess: async (context) => {
         if (context.cacheHasChanged)
@@ -195,7 +243,11 @@ export class MicrosoftOAuthService {
         .select({ homeAccountId: mailAccounts.oauthHomeAccountId })
         .from(mailAccounts)
         .where(
-          and(eq(mailAccounts.id, id), eq(mailAccounts.authMethod, "oauth2")),
+          and(
+            eq(mailAccounts.id, id),
+            eq(mailAccounts.authMethod, "oauth2"),
+            eq(mailAccounts.oauthProviderId, this.id),
+          ),
         );
       if (!current || current.homeAccountId !== result.account.homeAccountId) {
         throw new MicrosoftAuthorizationError(
@@ -206,7 +258,6 @@ export class MicrosoftOAuthService {
         .update(mailAccounts)
         .set({
           email,
-          displayName: result.account.name || email,
           imapUsername: email,
           oauthCache: encrypted,
           oauthHomeAccountId: result.account.homeAccountId,
@@ -219,7 +270,11 @@ export class MicrosoftOAuthService {
           updatedAt: new Date(),
         })
         .where(
-          and(eq(mailAccounts.id, id), eq(mailAccounts.authMethod, "oauth2")),
+          and(
+            eq(mailAccounts.id, id),
+            eq(mailAccounts.authMethod, "oauth2"),
+            eq(mailAccounts.oauthProviderId, this.id),
+          ),
         )
         .returning({ id: mailAccounts.id });
       if (!updated)
@@ -230,21 +285,18 @@ export class MicrosoftOAuthService {
       await this.database.insert(mailAccounts).values({
         id,
         displayName: result.account.name || email,
+        senderDisplayName: result.account.name || email,
         email,
         enabled: true,
         providerType: "imap_smtp",
         authMethod: "oauth2",
+        oauthProviderId: this.id,
         oauthCache: encrypted,
         oauthHomeAccountId: result.account.homeAccountId,
         oauthStatus: "connected",
-        imapHost: "outlook.office365.com",
-        imapPort: 993,
-        imapSecurity: "tls",
+        ...this.getMailDefaults(),
         imapUsername: email,
         imapPassword: null,
-        smtpHost: "smtp.office365.com",
-        smtpPort: 587,
-        smtpSecurity: "starttls",
         smtpUsesImapCredentials: true,
         smtpUsername: null,
         smtpPassword: null,
@@ -254,6 +306,9 @@ export class MicrosoftOAuthService {
   }
 
   async accessToken(accountId: string): Promise<string> {
+    // Resolve installation configuration before holding an account transaction:
+    // this also works when the database pool has only one connection.
+    const applicationCredentials = await this.applicationCredentials();
     try {
       return await this.database.transaction(async (tx) => {
         const [row] = await tx
@@ -263,6 +318,7 @@ export class MicrosoftOAuthService {
             and(
               eq(mailAccounts.id, accountId),
               eq(mailAccounts.authMethod, "oauth2"),
+              eq(mailAccounts.oauthProviderId, this.id),
             ),
           )
           .for("update");
@@ -277,25 +333,28 @@ export class MicrosoftOAuthService {
           row.oauthCache,
           accountCredentialContext(accountId, "oauth-cache"),
         );
-        const client = this.client({
-          beforeCacheAccess: async (context) =>
-            context.tokenCache.deserialize(cache),
-          afterCacheAccess: async (context) => {
-            if (context.cacheHasChanged) {
-              cache = context.tokenCache.serialize();
-              await tx
-                .update(mailAccounts)
-                .set({
-                  oauthCache: this.encryption.encrypt(
-                    cache,
-                    accountCredentialContext(accountId, "oauth-cache"),
-                  ),
-                  updatedAt: new Date(),
-                })
-                .where(eq(mailAccounts.id, accountId));
-            }
+        const client = await this.client(
+          {
+            beforeCacheAccess: async (context) =>
+              context.tokenCache.deserialize(cache),
+            afterCacheAccess: async (context) => {
+              if (context.cacheHasChanged) {
+                cache = context.tokenCache.serialize();
+                await tx
+                  .update(mailAccounts)
+                  .set({
+                    oauthCache: this.encryption.encrypt(
+                      cache,
+                      accountCredentialContext(accountId, "oauth-cache"),
+                    ),
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(mailAccounts.id, accountId));
+              }
+            },
           },
-        });
+          applicationCredentials,
+        );
         try {
           // MSAL handles access token expiry, refresh, and rotated refresh tokens in its cache.
           const accounts = await client.getTokenCache().getAllAccounts();
@@ -337,6 +396,7 @@ export class MicrosoftOAuthService {
             and(
               eq(mailAccounts.id, accountId),
               eq(mailAccounts.authMethod, "oauth2"),
+              eq(mailAccounts.oauthProviderId, this.id),
             ),
           );
       }

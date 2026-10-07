@@ -1,8 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
   accountCredentialContext,
+  accountIdentitySchema,
   createAccountInputSchema,
   updateAccountInputSchema,
   sentCopyPolicyUpdateSchema,
@@ -20,7 +22,7 @@ import type { SecretEncryption } from "../../../shared/application/secret-encryp
 import type { MailboxDiscoveryScheduler } from "./mailbox-discovery-scheduler";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import { mailAccounts } from "../../../shared/infrastructure/database/schema";
-import type { MicrosoftOAuthService } from "../infrastructure/microsoft-oauth";
+import type { OAuthProviderRegistry } from "./oauth-provider-registry";
 
 export class MailAccountNotFoundError extends Error {
   constructor() {
@@ -40,12 +42,17 @@ type AccountRow = typeof mailAccounts.$inferSelect;
 
 export type MailAccountView = Readonly<{
   id: string;
+  sortOrder: number;
   displayName: string;
+  senderDisplayName: string;
   email: string;
   enabled: boolean;
   sentCopyPolicy: SentCopyPolicy;
   providerType: "imap_smtp";
   authMethod: "password" | "oauth2";
+  oauthProviderId?: string | null;
+  oauthProviderName?: string | null;
+  oauthAuthorizationPath?: string | null;
   oauthStatus: "connected" | "reconnect_required" | null;
   imap: Readonly<{
     host: string;
@@ -84,15 +91,27 @@ export type MailAccountView = Readonly<{
   updatedAt: string;
 }>;
 
-function toView(row: AccountRow): MailAccountView {
+function toView(
+  row: AccountRow,
+  oauth?: OAuthProviderRegistry,
+): MailAccountView {
+  const definition = oauth
+    ?.list()
+    .find((provider) => provider.id === row.oauthProviderId)
+    ?.getDefinition();
   return {
     id: row.id,
+    sortOrder: row.sortOrder,
     displayName: row.displayName,
+    senderDisplayName: row.senderDisplayName,
     email: row.email,
     enabled: row.enabled,
     sentCopyPolicy: row.sentCopyPolicy as SentCopyPolicy,
     providerType: "imap_smtp",
     authMethod: row.authMethod as "password" | "oauth2",
+    oauthProviderId: row.oauthProviderId,
+    oauthProviderName: definition?.name ?? row.oauthProviderId,
+    oauthAuthorizationPath: definition?.authorizationPath ?? null,
     oauthStatus: row.oauthStatus as MailAccountView["oauthStatus"],
     imap: {
       host: row.imapHost,
@@ -142,19 +161,63 @@ export class AccountsService {
     private readonly encryption: SecretEncryption,
     private readonly provider: MailProvider,
     private readonly discoveryScheduler?: MailboxDiscoveryScheduler,
-    private readonly oauth?: MicrosoftOAuthService,
+    private readonly oauth?: OAuthProviderRegistry,
+    private readonly events?: ApplicationEventService,
   ) {}
 
   async list(): Promise<MailAccountView[]> {
     const rows = await this.database
       .select()
       .from(mailAccounts)
-      .orderBy(mailAccounts.createdAt);
-    return rows.map(toView);
+      .orderBy(mailAccounts.sortOrder, mailAccounts.createdAt, mailAccounts.id);
+    return rows.map((row) => toView(row, this.oauth));
+  }
+
+  async move(id: string, direction: "up" | "down"): Promise<MailAccountView[]> {
+    z.uuid().parse(id);
+    z.enum(["up", "down"]).parse(direction);
+    return this.database.transaction(async (transaction) => {
+      // Serialize relative moves so simultaneous requests use the latest order.
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtext('maildock-account-order'))`,
+      );
+      const rows = await transaction
+        .select()
+        .from(mailAccounts)
+        .orderBy(
+          mailAccounts.sortOrder,
+          mailAccounts.createdAt,
+          mailAccounts.id,
+        )
+        .for("update");
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) throw new MailAccountNotFoundError();
+      const neighbor = rows[index + (direction === "up" ? -1 : 1)];
+      if (neighbor) {
+        const current = rows[index];
+        await transaction
+          .update(mailAccounts)
+          .set({ sortOrder: neighbor.sortOrder })
+          .where(eq(mailAccounts.id, current.id));
+        await transaction
+          .update(mailAccounts)
+          .set({ sortOrder: current.sortOrder })
+          .where(eq(mailAccounts.id, neighbor.id));
+      }
+      const ordered = await transaction
+        .select()
+        .from(mailAccounts)
+        .orderBy(
+          mailAccounts.sortOrder,
+          mailAccounts.createdAt,
+          mailAccounts.id,
+        );
+      return ordered.map((row) => toView(row, this.oauth));
+    });
   }
 
   async get(id: string): Promise<MailAccountView> {
-    return toView(await this.getRow(id));
+    return toView(await this.getRow(id), this.oauth);
   }
 
   async create(input: CreateAccountInput): Promise<MailAccountView> {
@@ -165,6 +228,7 @@ export class AccountsService {
       .values({
         id: parsed.id,
         displayName: parsed.displayName,
+        senderDisplayName: parsed.senderDisplayName ?? parsed.displayName,
         email: parsed.email.toLowerCase(),
         enabled: parsed.enabled,
         sentCopyPolicy: parsed.sentCopyPolicy ?? "server",
@@ -196,7 +260,7 @@ export class AccountsService {
       .returning();
     if (!created) throw new Error("Mail account was not created.");
     if (created.enabled) await this.scheduleDiscovery(created.id);
-    return created.enabled ? this.get(created.id) : toView(created);
+    return created.enabled ? this.get(created.id) : toView(created, this.oauth);
   }
 
   async update(
@@ -239,6 +303,8 @@ export class AccountsService {
       .update(mailAccounts)
       .set({
         displayName: parsed.displayName,
+        senderDisplayName:
+          parsed.senderDisplayName ?? current.senderDisplayName,
         email: parsed.email.toLowerCase(),
         enabled: parsed.enabled,
         sentCopyPolicy: parsed.sentCopyPolicy ?? current.sentCopyPolicy,
@@ -271,7 +337,41 @@ export class AccountsService {
       .returning();
     if (!updated) throw new MailAccountNotFoundError();
     if (updated.enabled) await this.scheduleDiscovery(updated.id);
-    return updated.enabled ? this.get(updated.id) : toView(updated);
+    return updated.enabled ? this.get(updated.id) : toView(updated, this.oauth);
+  }
+
+  async updateIdentity(
+    id: string,
+    input: unknown,
+    database = this.database,
+  ): Promise<void> {
+    const parsed = accountIdentitySchema.parse(input);
+    const [current] = await database
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, id))
+      .for("update");
+    if (!current) throw new MailAccountNotFoundError();
+    if (
+      current.authMethod === "oauth2" &&
+      parsed.email.toLowerCase() !== current.email.toLowerCase()
+    ) {
+      throw new z.ZodError([
+        {
+          code: "custom",
+          path: ["email"],
+          message: "OAuth mailbox identity is managed by the provider.",
+        },
+      ]);
+    }
+    await database
+      .update(mailAccounts)
+      .set({
+        ...parsed,
+        email: parsed.email.toLowerCase(),
+        updatedAt: new Date(),
+      })
+      .where(eq(mailAccounts.id, id));
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<MailAccountView> {
@@ -282,7 +382,7 @@ export class AccountsService {
       .returning();
     if (!updated) throw new MailAccountNotFoundError();
     if (enabled) await this.scheduleDiscovery(id);
-    return enabled ? this.get(id) : toView(updated);
+    return enabled ? this.get(id) : toView(updated, this.oauth);
   }
 
   async delete(id: string): Promise<void> {
@@ -326,6 +426,19 @@ export class AccountsService {
         updatedAt: new Date(),
       })
       .where(eq(mailAccounts.id, id));
+    await this.events?.record(
+      bothSuccessful ? "account.connected" : "account.connection_failed",
+      {
+        accountId: id,
+        details: {
+          category: !report.imap.success
+            ? report.imap.category
+            : !report.smtp.success
+              ? report.smtp.category
+              : undefined,
+        },
+      },
+    );
     return report;
   }
 
@@ -455,7 +568,9 @@ export class AccountsService {
         throw new Error("OAuth credential resolver is unavailable.");
       return {
         kind: "oauth2",
-        accessToken: await this.oauth.accessToken(row.id),
+        accessToken: await this.oauth
+          .get(row.oauthProviderId)
+          .accessToken(row.id),
       };
     }
     return {

@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
 import { and, eq, ne } from "drizzle-orm";
 
@@ -33,12 +34,12 @@ export async function enqueueBackfill(
   mailboxId: string,
   frontier?: string | null,
 ): Promise<boolean> {
-  const id = await boss.send(
+  return enqueueCoalescedSync(
+    boss,
     MAILBOX_BACKFILL_SYNC_QUEUE,
     { version: 1, accountId, mailboxId },
     { singletonKey: `${mailboxId}:${frontier ?? "initial"}`, priority: -10 },
   );
-  return id !== null;
 }
 
 export async function registerBackfillWorker(
@@ -83,7 +84,7 @@ export async function registerBackfillWorker(
       // The active singleton still owns its key. A fresh key permits exactly one
       // continuation; the poller repairs a crash between commit and enqueue.
       if (more)
-        await boss.send(MAILBOX_BACKFILL_SYNC_QUEUE, payload, {
+        await enqueueCoalescedSync(boss, MAILBOX_BACKFILL_SYNC_QUEUE, payload, {
           singletonKey: `${payload.mailboxId}:${more}`,
           priority: -10,
           startAfter: 5,

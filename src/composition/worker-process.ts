@@ -11,10 +11,17 @@ import { registerSentCopyWorker } from "../modules/mail/infrastructure/sent-copy
 
 const worker = createWorkerComposition();
 let stopping = false;
+const retentionTimer = setInterval(
+  () => void worker.events.cleanup(),
+  60 * 60_000,
+);
+retentionTimer.unref();
+void worker.events.cleanup();
 
 async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
+  clearInterval(retentionTimer);
   worker.logger.info(
     { event: "worker.shutdown", signal },
     "Worker shutting down",

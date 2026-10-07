@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  pgSequence,
   primaryKey,
   text,
   timestamp,
@@ -247,6 +248,29 @@ export const instanceState = pgTable(
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
     passwordAlgorithm: text("password_algorithm"),
     conversationView: boolean("conversation_view").default(false).notNull(),
+    notificationPreferences: jsonb("notification_preferences")
+      .$type<
+        import("../../../modules/mail/domain/notifications").NotificationPreferences
+      >()
+      .default({
+        enabled: false,
+        folders: "inbox",
+        accountIds: null,
+        backgroundOnly: true,
+      })
+      .notNull(),
+    notificationSequence: bigint("notification_sequence", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    notificationCheckpoint: bigint("notification_checkpoint", {
+      mode: "bigint",
+    })
+      .default(sql`0`)
+      .notNull(),
+    autoRead: jsonb("auto_read")
+      .$type<{ mode: "immediately" | "after" | "manually"; seconds: number }>()
+      .default({ mode: "after", seconds: 2 })
+      .notNull(),
     passwordParameters: jsonb("password_parameters").$type<
       Record<string, number>
     >(),
@@ -379,11 +403,20 @@ export const loginThrottle = pgTable("login_throttle", {
     .notNull(),
 });
 
+export const mailAccountOrderSequence = pgSequence("mail_account_order_seq", {
+  maxValue: 2147483647,
+  startWith: 1,
+});
+
 export const mailAccounts = pgTable(
   "mail_accounts",
   {
     id: uuid("id").primaryKey(),
+    sortOrder: integer("sort_order")
+      .default(sql`nextval('mail_account_order_seq')`)
+      .notNull(),
     displayName: text("display_name").notNull(),
+    senderDisplayName: text("sender_display_name").default("").notNull(),
     email: text("email").notNull(),
     enabled: boolean("enabled").default(true).notNull(),
     sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
@@ -394,6 +427,7 @@ export const mailAccounts = pgTable(
     imapUsername: text("imap_username").notNull(),
     imapPassword: jsonb("imap_password").$type<EncryptedEnvelope>(),
     authMethod: text("auth_method").default("password").notNull(),
+    oauthProviderId: text("oauth_provider_id"),
     oauthCache: jsonb("oauth_cache").$type<EncryptedEnvelope>(),
     oauthHomeAccountId: text("oauth_home_account_id"),
     oauthStatus: text("oauth_status"),
@@ -437,6 +471,7 @@ export const mailAccounts = pgTable(
       .notNull(),
   },
   (table) => [
+    check("mail_accounts_sort_order", sql`${table.sortOrder} > 0`),
     check(
       "mail_accounts_provider_type",
       sql`${table.providerType} = 'imap_smtp'`,
@@ -483,14 +518,34 @@ export const mailAccounts = pgTable(
     ),
     check(
       "mail_accounts_auth_credential",
-      sql`(${table.authMethod} = 'password' and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthHomeAccountId} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
+      sql`(${table.authMethod} = 'password' and ${table.oauthProviderId} is null and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.oauthProviderId} is not null and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
     ),
     index("mail_accounts_enabled_idx").on(table.enabled),
     index("mail_accounts_email_idx").on(table.email),
   ],
 );
 
+export const oauthProviderConfigs = pgTable("oauth_provider_configs", {
+  providerId: text("provider_id").primaryKey(),
+  enabled: boolean("enabled").default(true).notNull(),
+  clientId: text("client_id").notNull(),
+  encryptedClientSecret: jsonb(
+    "encrypted_client_secret",
+  ).$type<EncryptedEnvelope>(),
+  settings: jsonb("settings")
+    .$type<Record<string, unknown>>()
+    .default({})
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export const oauthAuthorizationStates = pgTable("oauth_authorization_states", {
+  providerId: text("provider_id").notNull(),
   stateHash: text("state_hash").primaryKey(),
   sessionId: text("session_id").notNull(),
   codeVerifier: jsonb("code_verifier").$type<EncryptedEnvelope>().notNull(),
@@ -823,6 +878,37 @@ export const mailboxMessages = pgTable(
   ],
 );
 
+export const notificationEvents = pgTable(
+  "notification_events",
+  {
+    sequence: bigint("sequence", { mode: "bigint" }).primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    uidValidity: bigint("uid_validity", { mode: "bigint" }).notNull(),
+    uid: bigint("uid", { mode: "bigint" }).notNull(),
+    sender: text("sender").notNull(),
+    subject: text("subject").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("notification_events_remote_identity").on(
+      t.mailboxId,
+      t.uidValidity,
+      t.uid,
+    ),
+    index("notification_events_created_idx").on(t.createdAt),
+  ],
+);
+
 export const messageContents = pgTable(
   "message_contents",
   {
@@ -975,6 +1061,7 @@ export const schema = {
   loginThrottle,
   mailAccounts,
   oauthAuthorizationStates,
+  oauthProviderConfigs,
   mailboxes,
   mailboxRoles,
   messages,
@@ -1112,3 +1199,43 @@ export const accountSignatureDefaults = pgTable("account_signature_defaults", {
     onDelete: "set null",
   }),
 });
+
+export const applicationEvents = pgTable(
+  "application_events",
+  {
+    id: uuid("id").primaryKey(),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 3 })
+      .defaultNow()
+      .notNull(),
+    level: text("level").notNull(),
+    area: text("area").notNull(),
+    event: text("event")
+      .$type<
+        import("../../../modules/diagnostics/domain/application-event").ApplicationEventName
+      >()
+      .notNull(),
+    accountId: uuid("account_id").references(() => mailAccounts.id, {
+      onDelete: "set null",
+    }),
+    mailboxId: uuid("mailbox_id").references(() => mailboxes.id, {
+      onDelete: "set null",
+    }),
+    message: text("message").notNull(),
+    details:
+      jsonb("details").$type<
+        import("../../../modules/diagnostics/domain/application-event").DiagnosticDetails
+      >(),
+  },
+  (t) => [
+    check(
+      "application_events_level",
+      sql`${t.level} in ('info','warning','error')`,
+    ),
+    check(
+      "application_events_area",
+      sql`${t.area} in ('system','account','sync','imap','smtp','jobs')`,
+    ),
+    index("application_events_recent_idx").on(t.createdAt, t.id),
+    index("application_events_account_idx").on(t.accountId, t.createdAt, t.id),
+  ],
+);

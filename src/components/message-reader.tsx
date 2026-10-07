@@ -1,16 +1,6 @@
 "use client";
-import {
-  Reply,
-  ReplyAll,
-  Forward,
-  Archive,
-  Trash2,
-  Star,
-  Eye,
-  EyeOff,
-  MailOpen,
-  CircleAlert,
-} from "lucide-react";
+import { MailOpen, CircleAlert } from "lucide-react";
+import { MailToolbar } from "./mail-toolbar";
 import { RichEmailBody } from "./rich-email-body";
 import { AttachmentList } from "./attachment-list";
 import type { AttachmentView } from "@/modules/mail/domain/attachments";
@@ -48,6 +38,12 @@ function address(values: Address[]) {
 export type MessageAction =
   "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "unflag";
 export function MessageReader({
+  emptyTitle = "Select a message",
+  emptyDescription = "Choose a message from the list to read it here.",
+  readerError = "",
+  retryMessage,
+  providerDrafts = false,
+  hideActions = false,
   selectedId,
   detail,
   loadingDetail,
@@ -62,6 +58,12 @@ export function MessageReader({
   renderUrl,
   contentPollIntervalMs,
 }: {
+  emptyTitle?: string;
+  emptyDescription?: string;
+  readerError?: string;
+  retryMessage?: () => void;
+  providerDrafts?: boolean;
+  hideActions?: boolean;
   selectedId: string;
   detail: MessageDetail | null;
   loadingDetail: boolean;
@@ -83,9 +85,25 @@ export function MessageReader({
       {!selectedId ? (
         <div className="pane-empty reader-empty">
           <MailOpen size={30} strokeWidth={1.4} />
-          <strong>Select a message</strong>
-          <p>Choose a message from the list to read it here.</p>
+          <strong>{emptyTitle}</strong>
+          <p>{emptyDescription}</p>
         </div>
+      ) : null}
+      {selectedId && readerError ? (
+        <div className="reader-error" role="alert">
+          <strong>Message could not be loaded</strong>
+          <p>{readerError}</p>
+          <button className="button secondary" onClick={retryMessage}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {providerDrafts ? (
+        <p className="provider-drafts-note">
+          These drafts are stored by your email provider and can be read here.
+          To continue writing, open them in your provider&apos;s app. Messages
+          you write here are saved in Maildock drafts.
+        </p>
       ) : null}
       {selectedId && loadingDetail && !detail ? (
         <div className="mail-detail-header">
@@ -98,80 +116,18 @@ export function MessageReader({
       ) : null}
       {detail ? (
         <>
+          {!hideActions ? (
+            <MailToolbar
+              count={0}
+              seen={selectedMessage?.seen ?? detail.seen}
+              flagged={selectedMessage?.flagged ?? detail.flagged}
+              preparing={preparing}
+              prepare={prepare}
+              act={act}
+              moveAvailable={moveAvailable}
+            />
+          ) : null}
           <header className="mail-detail-header">
-            <div
-              className="message-actions"
-              role="toolbar"
-              aria-label="Message actions"
-            >
-              {(
-                [
-                  { mode: "reply", label: "Reply", Icon: Reply },
-                  {
-                    mode: "reply_all",
-                    label: "Reply All",
-                    Icon: ReplyAll,
-                  },
-                  { mode: "forward", label: "Forward", Icon: Forward },
-                ] as const
-              ).map(({ mode, label, Icon }) => (
-                <button
-                  key={mode}
-                  className="icon-button"
-                  title={label}
-                  aria-label={label}
-                  disabled={preparing}
-                  onClick={() => void prepare(mode)}
-                >
-                  <Icon size={17} />
-                </button>
-              ))}
-              <button
-                className="icon-button"
-                title="Archive"
-                aria-label="Archive"
-                disabled={!moveAvailable("archive")}
-                onClick={() => void act("archive")}
-              >
-                <Archive size={17} />
-              </button>
-              <button
-                className="icon-button"
-                title="Move to Trash"
-                aria-label="Move to Trash"
-                disabled={!moveAvailable("trash")}
-                onClick={() => void act("trash")}
-              >
-                <Trash2 size={17} />
-              </button>
-              <button
-                className="icon-button"
-                title={selectedMessage?.seen ? "Mark unread" : "Mark read"}
-                aria-label={selectedMessage?.seen ? "Mark unread" : "Mark read"}
-                onClick={() =>
-                  void act(selectedMessage?.seen ? "mark_unread" : "mark_read")
-                }
-              >
-                {selectedMessage?.seen ? (
-                  <EyeOff size={17} />
-                ) : (
-                  <Eye size={17} />
-                )}
-              </button>
-              <button
-                className="icon-button"
-                title={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                aria-label={selectedMessage?.flagged ? "Unflag" : "Flag"}
-                onClick={() =>
-                  void act(selectedMessage?.flagged ? "unflag" : "flag")
-                }
-              >
-                <Star
-                  size={17}
-                  fill={selectedMessage?.flagged ? "currentColor" : "none"}
-                />
-              </button>
-            </div>
             {preparing ? <p role="status">Preparing message…</p> : null}
             {prepareError ? (
               <p role="alert" className="error">

@@ -84,7 +84,11 @@ export class EmailRenderingService {
         (a) => a.contentId && normalizeContentId(a.contentId) === cid,
       );
       const part = matches.length === 1 ? matches[0] : null;
-      if (!part || !SAFE_INLINE_IMAGE_TYPES.has(part.contentType)) {
+      if (
+        !part ||
+        (!SAFE_INLINE_IMAGE_TYPES.has(part.contentType) &&
+          part.contentType !== "application/octet-stream")
+      ) {
         inlineFailures++;
         continue;
       }

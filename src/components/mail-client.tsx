@@ -1,4 +1,7 @@
 "use client";
+import { MailboxTree } from "./mailbox-tree";
+import { DesktopNotifications } from "./desktop-notifications";
+import { MaildockBrand } from "./maildock-brand";
 import { DraftList } from "./draft-list";
 import { GlobalSearchResults } from "./global-search-results";
 import type { SearchResult } from "@/modules/mail/application/search-service";
@@ -8,21 +11,22 @@ import {
 } from "@/shared/application/content-polling";
 import { FlatMessageList } from "./flat-message-list";
 import { ConversationMessageList } from "./conversation-message-list";
-import { MessageReader, type MessageDetail } from "./message-reader";
+import { MailToolbar } from "./mail-toolbar";
+import {
+  autoReadDelay,
+  defaultAutoRead,
+  editingTarget,
+  type AutoReadPreference,
+} from "@/modules/mail/domain/mail-interactions";
+import {
+  MessageReader,
+  type MessageAction,
+  type MessageDetail,
+} from "./message-reader";
 import type { DraftView } from "@/modules/mail/domain/draft";
 
 import Link from "next/link";
-import {
-  Inbox,
-  Archive,
-  Mail,
-  MailOpen,
-  Plus,
-  RefreshCw,
-  Settings2,
-  Search,
-  X,
-} from "lucide-react";
+import { MailOpen, Plus, RefreshCw, Settings2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
@@ -43,6 +47,16 @@ import type {
   ComposeMode,
   ComposePrefill,
 } from "@/modules/mail/domain/compose-source";
+
+type ActionTarget = {
+  id: string;
+  accountId: string;
+  mailboxId: string;
+  seen: boolean;
+  flagged: boolean;
+};
+const targetKey = (item: ActionTarget) =>
+  `${item.accountId}:${item.mailboxId}:${item.id}`;
 
 type SendFeedback = {
   status: string;
@@ -73,13 +87,23 @@ export function MailClient({
   mailboxesByAccount,
   rolesByAccount,
   initialConversationView = false,
+  initialAutoRead = defaultAutoRead,
   contentPollIntervalMs = DEFAULT_CONTENT_POLL_INTERVAL_MS,
+  initialNotificationsEnabled = false,
+  initialNotification,
 }: {
   accounts: MailAccountView[];
   mailboxesByAccount: Record<string, MailboxView[]>;
   rolesByAccount: Record<string, MailboxRoleView[]>;
   initialConversationView?: boolean;
+  initialAutoRead?: AutoReadPreference;
   contentPollIntervalMs?: number;
+  initialNotificationsEnabled?: boolean;
+  initialNotification?: {
+    accountId: string;
+    mailboxId?: string;
+    messageId?: string;
+  };
 }) {
   const conversationView = initialConversationView;
   const listModeRef = useRef(conversationView);
@@ -174,7 +198,10 @@ export function MailClient({
       clearInterval(timer);
     };
   }, [outgoing]);
-  const [accountId, setAccountId] = useState(first?.id ?? "");
+  const [allInboxes, setAllInboxes] = useState(!initialNotification);
+  const [accountId, setAccountId] = useState(
+    initialNotification?.accountId ?? first?.id ?? "",
+  );
   const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
     useState(mailboxesByAccount);
   const [liveRolesByAccount, setLiveRolesByAccount] = useState(rolesByAccount);
@@ -182,11 +209,14 @@ export function MailClient({
   const folders = liveMailboxesByAccount[accountId] ?? [];
   const [mailboxId, setMailboxId] = useState(
     () =>
+      initialNotification?.mailboxId ??
       folders.find((item) => item.remotePath.toUpperCase() === "INBOX")?.id ??
       folders.find((item) => item.selectable)?.id ??
       "",
   );
-  const activeLocationRef = useRef(`${accountId}:${mailboxId}`);
+  const activeLocationRef = useRef(
+    allInboxes ? "all-inboxes" : `${accountId}:${mailboxId}`,
+  );
   const [messages, setMessages] = useState<MessageListItem[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(Boolean(first));
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -198,7 +228,9 @@ export function MailClient({
   const loadingPageRef = useRef(false);
   const pageRequestIdRef = useRef(0);
   const loadedMoreRef = useRef(false);
-  const [normalSelectedId, setSelectedId] = useState("");
+  const [normalSelectedId, setSelectedId] = useState(
+    initialNotification?.messageId ?? "",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSelection, setSearchSelection] = useState<SearchResult>();
   const [searchRefresh, setSearchRefresh] = useState(0);
@@ -209,6 +241,7 @@ export function MailClient({
   const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
+  const [readerError, setReaderError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -219,17 +252,79 @@ export function MailClient({
         accountId: string;
         mailboxId: string;
         adjustmentKey: string | null;
+        targetKey: string;
+        feedbackId?: string;
+        target: ActionTarget;
+        previous?: MessageListItem;
+        index: number;
+        location: string;
       }
     >
   >({});
+  const [bulkSelection, setBulkSelection] = useState<ActionTarget[]>([]);
+  const [conversationRows, setConversationRows] = useState<
+    Record<string, MessageListItem[]>
+  >({});
+  const registerConversationRows = useCallback(
+    (key: string, rows: MessageListItem[]) => {
+      setConversationRows((current) => ({ ...current, [key]: rows }));
+    },
+    [],
+  );
+  const activeActions = useRef(new Set<string>());
+  const reconciledCommands = useRef(new Set<string>());
+  const feedbackGroups = useRef(
+    new Map<
+      string,
+      {
+        action: MessageAction;
+        remaining: number;
+        succeeded: number;
+        failed: number;
+      }
+    >(),
+  );
+  const [actionFeedback, setActionFeedback] = useState("");
+  const [actionError, setActionError] = useState("");
+  function finishFeedback(id: string | undefined, succeeded: boolean) {
+    if (!id) return;
+    const group = feedbackGroups.current.get(id);
+    if (!group) return;
+    group.remaining--;
+    group[succeeded ? "succeeded" : "failed"]++;
+    if (group.remaining) return;
+    feedbackGroups.current.delete(id);
+    const verb = {
+      mark_read: "marked as read",
+      mark_unread: "marked as unread",
+      archive: "archived",
+      trash: "moved to Trash",
+      flag: "flagged",
+      unflag: "unflagged",
+    }[group.action];
+    setActionFeedback(
+      [
+        group.succeeded
+          ? `${group.succeeded === 1 ? "Message" : `${group.succeeded} messages`} ${verb}`
+          : "",
+        group.failed
+          ? `${group.failed} message action${group.failed === 1 ? "" : "s"} failed`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    );
+  }
   const [countAdjustments, setCountAdjustments] = useState<CountAdjustment[]>(
     [],
   );
   const folder = folders.find((item) => item.id === mailboxId);
-  const base = `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
-  const location = `${accountId}:${mailboxId}`;
+  const base = allInboxes
+    ? "/api/mail/all-inboxes"
+    : `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
+  const location = allInboxes ? "all-inboxes" : `${accountId}:${mailboxId}`;
   const selectedMember =
-    conversationView &&
+    (conversationView || allInboxes) &&
     memberSelection?.location === location &&
     memberSelection.message.id === selectedId
       ? memberSelection.message
@@ -246,15 +341,19 @@ export function MailClient({
     });
     setSelectedId(message.id);
     setDetail(null);
+    setReaderError("");
     setLoadingDetail(true);
     setError("");
   }
+  const inboxSelection = allInboxes
+    ? (selectedMember ?? messages.find((item) => item.id === selectedId))
+    : undefined;
   const actionAccountId = searchActive
     ? (searchSelection?.accountId ?? accountId)
-    : accountId;
+    : (inboxSelection?.accountId ?? accountId);
   const actionMailboxId = searchActive
     ? (searchSelection?.mailboxId ?? mailboxId)
-    : (selectedMember?.mailboxId ?? mailboxId);
+    : (inboxSelection?.mailboxId ?? selectedMember?.mailboxId ?? mailboxId);
   const messageBase = `/api/accounts/${actionAccountId}/mailboxes/${actionMailboxId}/messages`;
   const preparationKey = `${actionAccountId}:${actionMailboxId}:${selectedId}`;
   const preparing = preparingState && prepareLocation === preparationKey;
@@ -310,34 +409,75 @@ export function MailClient({
     }
   }
 
-  const selectedMessage = searchActive
-    ? searchSelection
-    : conversationView && detail?.id === selectedId
+  const selectedMessage =
+    detail?.id === selectedId
       ? detail
-      : (selectedMember ?? messages.find((item) => item.id === selectedId));
-  const moveAvailable = (action: "archive" | "trash") => {
-    const mapping = liveRolesByAccount[actionAccountId]?.find(
+      : searchActive
+        ? searchSelection
+        : ((conversationView ? selectedMember : undefined) ??
+          messages.find((item) => item.id === selectedId));
+  function canMove(target: ActionTarget, action: "archive" | "trash") {
+    const account = accounts.find((item) => item.id === target.accountId);
+    const mapping = liveRolesByAccount[target.accountId]?.find(
       (item) => item.role === action,
     );
     return Boolean(
-      readerAccount?.enabled &&
-      readerAccount.mailboxDiscovery.capabilities.includes("MOVE") &&
+      account?.enabled &&
+      account.mailboxDiscovery.capabilities.includes("MOVE") &&
       mapping?.available &&
-      mapping.mailboxId !== actionMailboxId,
+      mapping.mailboxId !== target.mailboxId,
     );
-  };
+  }
+  const openedTarget: ActionTarget | undefined =
+    selectedId && selectedMessage && (!showDrafts || searchActive)
+      ? {
+          id: selectedId,
+          accountId: actionAccountId,
+          mailboxId: actionMailboxId,
+          seen: selectedMessage.seen,
+          flagged: selectedMessage.flagged,
+        }
+      : undefined;
+  const moveAvailable = (action: "archive" | "trash") =>
+    Boolean(openedTarget && canMove(openedTarget, action));
 
   async function act(
-    action:
-      "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "unflag",
+    action: MessageAction,
+    explicitTarget?: ActionTarget,
+    feedbackId?: string,
+    automatic = false,
   ) {
-    if (!selectedId || !selectedMessage) return;
-    const targetId = selectedId;
-    const previous = [...messages];
+    const target = explicitTarget ?? openedTarget;
+    if (!target) return;
+    const key = targetKey(target);
+    if (
+      activeActions.current.has(key) ||
+      (action === "mark_read" && target.seen) ||
+      ((action === "archive" || action === "trash") && !canMove(target, action))
+    ) {
+      finishFeedback(feedbackId, false);
+      return;
+    }
+    if (!automatic && !feedbackId) {
+      feedbackId = crypto.randomUUID();
+      feedbackGroups.current.set(feedbackId, {
+        action,
+        remaining: 1,
+        succeeded: 0,
+        failed: 0,
+      });
+    }
+    setActionError("");
+    activeActions.current.add(key);
+    const targetId = target.id;
+    const requestLocation = location;
+    const previous = messages.find((item) => item.id === targetId);
+    const index = messages.findIndex((item) => item.id === targetId);
+    const moving = action === "archive" || action === "trash";
     const countDelta =
-      action === "mark_read" && !selectedMessage.seen
+      action === "mark_read" && !target.seen
         ? -1
-        : action === "mark_unread" && selectedMessage.seen
+        : action === "mark_unread" && target.seen
           ? 1
           : 0;
     const adjustmentKey = countDelta === 0 ? null : crypto.randomUUID();
@@ -346,110 +486,312 @@ export function MailClient({
         ...current,
         {
           key: adjustmentKey,
-          mailboxId: actionMailboxId,
+          mailboxId: target.mailboxId,
           delta: countDelta,
           completedAt: null,
         },
       ]);
+    const flags = {
+      seen:
+        action === "mark_read"
+          ? true
+          : action === "mark_unread"
+            ? false
+            : target.seen,
+      flagged:
+        action === "flag" ? true : action === "unflag" ? false : target.flagged,
+    };
     setError("");
-    if (
-      !searchActive &&
-      !conversationView &&
-      (action === "archive" || action === "trash")
-    ) {
-      const index = messages.findIndex((item) => item.id === targetId);
-      const next = messages[index + 1] ?? messages[index - 1];
-      setMessages((current) => current.filter((item) => item.id !== targetId));
-      setSelectedId(next?.id ?? "");
-      setDetail(null);
-      setLoadingDetail(Boolean(next));
-    } else if (!searchActive && !conversationView) {
+    if (!searchActive && !conversationView) {
       setMessages((current) =>
-        current.map((item) =>
-          item.id === targetId
-            ? {
-                ...item,
-                seen:
-                  action === "mark_read"
-                    ? true
-                    : action === "mark_unread"
-                      ? false
-                      : item.seen,
-                flagged:
-                  action === "flag"
-                    ? true
-                    : action === "unflag"
-                      ? false
-                      : item.flagged,
-              }
-            : item,
-        ),
+        moving
+          ? current.filter((item) => item.id !== targetId)
+          : current.map((item) =>
+              item.id === targetId ? { ...item, ...flags } : item,
+            ),
       );
     }
+    if (openedTarget && targetKey(openedTarget) === key) {
+      if (moving) {
+        if (searchActive) setSearchSelection(undefined);
+        else if (!conversationView && !explicitTarget) {
+          const next = messages[index + 1] ?? messages[index - 1];
+          setSelectedId(next?.id ?? "");
+          setMemberSelection(
+            next
+              ? {
+                  message: { ...next, mailboxId: next.mailboxId ?? mailboxId },
+                  location,
+                }
+              : undefined,
+          );
+          setLoadingDetail(Boolean(next));
+        } else setSelectedId("");
+        setDetail(null);
+        setReaderError("");
+        if (conversationView || searchActive || explicitTarget)
+          setLoadingDetail(false);
+      } else {
+        setDetail((current) =>
+          current?.id === targetId ? { ...current, ...flags } : current,
+        );
+        setMemberSelection((current) =>
+          current?.message.id === targetId
+            ? { ...current, message: { ...current.message, ...flags } }
+            : current,
+        );
+        setSearchSelection((current) =>
+          current?.id === targetId ? { ...current, ...flags } : current,
+        );
+      }
+    }
+    setBulkSelection((current) =>
+      moving
+        ? current.filter((item) => targetKey(item) !== key)
+        : current.map((item) =>
+            targetKey(item) === key ? { ...item, ...flags } : item,
+          ),
+    );
     try {
-      const response = await fetch(`${messageBase}/${targetId}/actions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
+      const response = await fetch(
+        `/api/accounts/${target.accountId}/mailboxes/${target.mailboxId}/messages/${targetId}/actions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+      );
       const result = (await response.json()) as { id?: string; error?: string };
       if (!response.ok || !result.id)
-        throw new Error(result.error ?? "Message action could not be queued.");
+        throw Error(result.error ?? "Message action could not be queued.");
       setPendingCommands((current) => ({
         ...current,
         [result.id!]: {
-          accountId: actionAccountId,
-          mailboxId: actionMailboxId,
+          accountId: target.accountId,
+          mailboxId: target.mailboxId,
           adjustmentKey,
+          targetKey: key,
+          feedbackId,
+          target,
+          previous,
+          index,
+          location: selectionLocation,
         },
       }));
-      if (searchActive) {
-        setSearchRefresh((n) => n + 1);
-        if (action === "archive" || action === "trash") {
-          setSearchSelection((current) =>
-            current?.id === targetId ? undefined : current,
-          );
-          setDetail((current) => (current?.id === targetId ? null : current));
-        } else {
-          setSearchSelection((current) =>
-            current?.id === targetId
-              ? {
-                  ...current,
-                  seen:
-                    action === "mark_read"
-                      ? true
-                      : action === "mark_unread"
-                        ? false
-                        : current.seen,
-                  flagged:
-                    action === "flag"
-                      ? true
-                      : action === "unflag"
-                        ? false
-                        : current.flagged,
-                }
-              : current,
-          );
-        }
-      }
+      if (searchActive) setSearchRefresh((n) => n + 1);
     } catch (failure) {
+      activeActions.current.delete(key);
+      finishFeedback(feedbackId, false);
       if (adjustmentKey)
         setCountAdjustments((current) =>
           current.filter((item) => item.key !== adjustmentKey),
         );
-      if (activeLocationRef.current === `${accountId}:${mailboxId}`) {
-        if (!searchActive) {
-          setMessages(previous);
-          setSelectedId(targetId);
-        }
-        setError(
-          failure instanceof Error
-            ? failure.message
-            : "Message action could not be queued.",
+      if (activeLocationRef.current === requestLocation) {
+        // Restore only this item: other queued commands retain their projection.
+        if (!searchActive && !conversationView && previous)
+          setMessages((current) => {
+            if (current.some((item) => item.id === targetId))
+              return current.map((item) =>
+                item.id === targetId
+                  ? { ...item, seen: target.seen, flagged: target.flagged }
+                  : item,
+              );
+            const next = [...current];
+            next.splice(Math.max(0, index), 0, {
+              ...previous,
+              seen: target.seen,
+              flagged: target.flagged,
+            });
+            return next;
+          });
+        setBulkSelection((current) =>
+          current.map((item) => (targetKey(item) === key ? target : item)),
         );
+        if (!moving) {
+          setDetail((current) =>
+            current?.id === targetId
+              ? { ...current, seen: target.seen, flagged: target.flagged }
+              : current,
+          );
+          setMemberSelection((current) =>
+            current?.message.id === targetId
+              ? {
+                  ...current,
+                  message: {
+                    ...current.message,
+                    seen: target.seen,
+                    flagged: target.flagged,
+                  },
+                }
+              : current,
+          );
+          setSearchSelection((current) =>
+            current?.id === targetId
+              ? { ...current, seen: target.seen, flagged: target.flagged }
+              : current,
+          );
+        }
+        setRetryNonce((n) => n + 1);
+        setSearchRefresh((n) => n + 1);
       }
+      setActionError(
+        failure instanceof Error
+          ? failure.message
+          : "Message action could not be queued.",
+      );
     }
   }
+
+  const selectionLocation = `${location}:${searchActive}:${showDrafts}:${conversationView}`;
+  const [selectionScope, setSelectionScope] = useState(selectionLocation);
+  const selectedTargets =
+    selectionScope === selectionLocation ? bulkSelection : [];
+  if (selectionScope !== selectionLocation) {
+    setSelectionScope(selectionLocation);
+    setBulkSelection([]);
+    setConversationRows({});
+  }
+  function rowTarget(message: MessageListItem): ActionTarget | undefined {
+    const contextAccount = allInboxes ? message.accountId : accountId;
+    const contextMailbox = allInboxes
+      ? message.mailboxId
+      : (message.mailboxId ?? mailboxId);
+    if (!contextAccount || !contextMailbox) return;
+    return {
+      id: message.id,
+      accountId: contextAccount,
+      mailboxId: contextMailbox,
+      seen: message.seen,
+      flagged: message.flagged,
+    };
+  }
+  const loadedRows = conversationView
+    ? Object.values(conversationRows).flat()
+    : messages;
+  const loadedTargets = loadedRows
+    .map(rowTarget)
+    .filter((item): item is ActionTarget => Boolean(item));
+  function toggleSelection(message: MessageListItem) {
+    const target = rowTarget(message);
+    if (!target) return;
+    setBulkSelection((current) =>
+      current.some((item) => targetKey(item) === targetKey(target))
+        ? current.filter((item) => targetKey(item) !== targetKey(target))
+        : [...current, target],
+    );
+  }
+  async function bulkAct(action: MessageAction) {
+    const targets = selectedTargets
+      .map((target) =>
+        openedTarget && targetKey(openedTarget) === targetKey(target)
+          ? openedTarget
+          : (loadedTargets.find(
+              (item) => targetKey(item) === targetKey(target),
+            ) ?? target),
+      )
+      .filter(
+        (target) =>
+          !activeActions.current.has(targetKey(target)) &&
+          (action !== "mark_read" || !target.seen) &&
+          (action !== "mark_unread" || target.seen),
+      );
+    if (
+      !targets.length ||
+      ((action === "archive" || action === "trash") &&
+        !targets.every((target) => canMove(target, action)))
+    )
+      return;
+    const id = crypto.randomUUID();
+    feedbackGroups.current.set(id, {
+      action,
+      remaining: targets.length,
+      succeeded: 0,
+      failed: 0,
+    });
+    await Promise.allSettled(targets.map((target) => act(action, target, id)));
+  }
+
+  const autoReadAction = useRef(act);
+  useEffect(() => {
+    autoReadAction.current = act;
+  });
+  const attemptedAutoRead = useRef("");
+  const openKey =
+    !composing && !showDrafts && openedTarget
+      ? `${selectionLocation}:${targetKey(openedTarget)}`
+      : "";
+  const autoReadSeen = openedTarget?.seen;
+  useEffect(() => {
+    attemptedAutoRead.current = "";
+  }, [openKey]);
+  useEffect(() => {
+    const delay = autoReadDelay(initialAutoRead);
+    if (
+      !openKey ||
+      autoReadSeen !== false ||
+      delay === null ||
+      attemptedAutoRead.current === openKey
+    )
+      return;
+    const timer = setTimeout(() => {
+      attemptedAutoRead.current = openKey;
+      void autoReadAction.current("mark_read", undefined, undefined, true);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [openKey, autoReadSeen, initialAutoRead]);
+
+  useEffect(() => {
+    function shortcut(event: KeyboardEvent) {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        event.altKey ||
+        editingTarget(event.target)
+      )
+        return;
+      if (event.ctrlKey || event.metaKey) {
+        if (composing && event.key === "Enter" && !event.shiftKey) {
+          const form =
+            document.querySelector<HTMLFormElement>("form.mail-composer");
+          if (form) {
+            event.preventDefault();
+            form.requestSubmit();
+          }
+        }
+        return;
+      }
+      if (composing || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "c" && accounts.some(sendingAccountAvailable)) {
+        event.preventDefault();
+        preparationGeneration.current++;
+        setPreparing(false);
+        setDraft(undefined);
+        setPrefill(undefined);
+        setComposing(true);
+      } else if (
+        !selectedTargets.length &&
+        openedTarget &&
+        ["r", "a", "f"].includes(key)
+      ) {
+        event.preventDefault();
+        void prepare(
+          key === "r" ? "reply" : key === "a" ? "reply_all" : "forward",
+        );
+      } else if (
+        event.key === "Delete" &&
+        (selectedTargets.length
+          ? selectedTargets.every((item) => canMove(item, "trash"))
+          : moveAvailable("trash"))
+      ) {
+        event.preventDefault();
+        void (selectedTargets.length ? bulkAct("trash") : act("trash"));
+      }
+    }
+    document.addEventListener("keydown", shortcut);
+    return () => document.removeEventListener("keydown", shortcut);
+  });
 
   useEffect(() => {
     const entries = Object.entries(pendingCommands);
@@ -462,7 +804,13 @@ export function MailClient({
       idsByAccount.set(command.accountId, ids);
     }
     const timer = setInterval(() => {
-      for (const [commandAccountId, ids] of idsByAccount)
+      const batches = [...idsByAccount].flatMap(([id, ids]) =>
+        Array.from(
+          { length: Math.ceil(ids.length / 50) },
+          (_, index) => [id, ids.slice(index * 50, (index + 1) * 50)] as const,
+        ),
+      );
+      for (const [commandAccountId, ids] of batches)
         void fetch(
           `/api/accounts/${commandAccountId}/message-commands?${ids.map((id) => `id=${encodeURIComponent(id)}`).join("&")}`,
           { cache: "no-store" },
@@ -482,9 +830,78 @@ export function MailClient({
           .then((result) => {
             if (cancelled) return;
             const finished = result.commands.filter(
-              (item) => item.status === "failed" || item.status === "succeeded",
+              (item) =>
+                !reconciledCommands.current.has(item.id) &&
+                (item.status === "failed" || item.status === "succeeded"),
             );
             if (!finished.length) return;
+            for (const item of finished) {
+              reconciledCommands.current.add(item.id);
+              const command = pendingCommands[item.id];
+              if (command) {
+                activeActions.current.delete(command.targetKey);
+                finishFeedback(command.feedbackId, item.status === "succeeded");
+                if (
+                  item.status === "failed" &&
+                  command.location === selectionLocation
+                ) {
+                  const target = command.target;
+                  if (!searchActive && !conversationView && command.previous) {
+                    const previous = command.previous;
+                    setMessages((current) => {
+                      if (current.some((message) => message.id === target.id))
+                        return current.map((message) =>
+                          message.id === target.id
+                            ? {
+                                ...message,
+                                seen: target.seen,
+                                flagged: target.flagged,
+                              }
+                            : message,
+                        );
+                      const next = [...current];
+                      next.splice(Math.max(0, command.index), 0, previous);
+                      return next;
+                    });
+                  }
+                  setDetail((current) =>
+                    current?.id === target.id
+                      ? {
+                          ...current,
+                          seen: target.seen,
+                          flagged: target.flagged,
+                        }
+                      : current,
+                  );
+                  setMemberSelection((current) =>
+                    current?.message.id === target.id
+                      ? {
+                          ...current,
+                          message: {
+                            ...current.message,
+                            seen: target.seen,
+                            flagged: target.flagged,
+                          },
+                        }
+                      : current,
+                  );
+                  setSearchSelection((current) =>
+                    current?.id === target.id
+                      ? {
+                          ...current,
+                          seen: target.seen,
+                          flagged: target.flagged,
+                        }
+                      : current,
+                  );
+                  setBulkSelection((current) =>
+                    current.filter(
+                      (item) => targetKey(item) !== command.targetKey,
+                    ),
+                  );
+                }
+              }
+            }
             setCountAdjustments((current) =>
               current.flatMap((adjustment) => {
                 const match = finished.find(
@@ -510,20 +927,15 @@ export function MailClient({
             }
             const failure = finished.find((item) => item.status === "failed");
             if (failure) {
+              setActionError(failure.error ?? "Message action failed.");
               const source = pendingCommands[failure.id];
-              if (source && (source.accountId === accountId || searchActive)) {
-                setError(failure.error ?? "Message action failed.");
-                if (source.mailboxId === mailboxId)
-                  void fetch(`${base}?pageSize=50`, { cache: "no-store" }).then(
-                    async (response) => {
-                      if (response.ok && !cancelled)
-                        setMessages(
-                          (
-                            (await response.json()) as MessagePage
-                          ).items.slice(),
-                        );
-                    },
-                  );
+              if (
+                source &&
+                (source.accountId === accountId || searchActive || allInboxes)
+              ) {
+                setRetryNonce((n) => n + 1);
+                setListReloadNonce((n) => n + 1);
+                setSearchRefresh((n) => n + 1);
               }
             }
           })
@@ -541,6 +953,8 @@ export function MailClient({
     conversationView,
     searchActive,
     actionAccountId,
+    allInboxes,
+    selectionLocation,
   ]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
@@ -569,46 +983,52 @@ export function MailClient({
     const load = () => {
       if (document.visibilityState !== "visible" || busy) return;
       busy = true;
-      fetch(`/api/accounts/${accountId}/mailboxes`, { cache: "no-store" })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Mailboxes could not be loaded.");
-          return response.json() as Promise<{
-            mailboxes: MailboxView[];
-            roles: MailboxRoleView[];
-          }>;
-        })
-        .then((result) => {
-          if (!cancelled) {
-            setLiveMailboxesByAccount((current) => ({
-              ...current,
-              [accountId]: result.mailboxes,
-            }));
-            setLiveRolesByAccount((current) => ({
-              ...current,
-              [accountId]: result.roles,
-            }));
-            setCountAdjustments((current) =>
-              current.filter((adjustment) => {
-                if (!adjustment.completedAt) return true;
-                const mailbox = result.mailboxes.find(
-                  (item) => item.id === adjustment.mailboxId,
+      void Promise.allSettled(
+        accounts.map(async ({ id: pollAccountId }) => {
+          return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
+            cache: "no-store",
+          })
+            .then(async (response) => {
+              if (!response.ok)
+                throw new Error("Mailboxes could not be loaded.");
+              return response.json() as Promise<{
+                mailboxes: MailboxView[];
+                roles: MailboxRoleView[];
+              }>;
+            })
+            .then((result) => {
+              if (!cancelled) {
+                setLiveMailboxesByAccount((current) => ({
+                  ...current,
+                  [pollAccountId]: result.mailboxes,
+                }));
+                setLiveRolesByAccount((current) => ({
+                  ...current,
+                  [pollAccountId]: result.roles,
+                }));
+                setCountAdjustments((current) =>
+                  current.filter((adjustment) => {
+                    if (!adjustment.completedAt) return true;
+                    const mailbox = result.mailboxes.find(
+                      (item) => item.id === adjustment.mailboxId,
+                    );
+                    const synchronizedAt = mailbox?.deltaSync.lastSuccessfulAt;
+                    return (
+                      !synchronizedAt ||
+                      new Date(synchronizedAt).getTime() <
+                        new Date(adjustment.completedAt).getTime()
+                    );
+                  }),
                 );
-                const synchronizedAt = mailbox?.deltaSync.lastSuccessfulAt;
-                return (
-                  !synchronizedAt ||
-                  new Date(synchronizedAt).getTime() <
-                    new Date(adjustment.completedAt).getTime()
-                );
-              }),
-            );
-          }
-        })
-        .catch(() => {
-          // Keep the last known counts; the next poll retries.
-        })
-        .finally(() => {
-          busy = false;
-        });
+              }
+            })
+            .catch(() => {
+              // Keep the last known counts; the next poll retries.
+            });
+        }),
+      ).finally(() => {
+        busy = false;
+      });
     };
     load();
     const timer = setInterval(load, 20_000);
@@ -618,10 +1038,10 @@ export function MailClient({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", load);
     };
-  }, [accountId, folderReloadNonce]);
+  }, [accounts, accountId, folderReloadNonce]);
 
   useEffect(() => {
-    if (!accountId || !mailboxId) return;
+    if (!allInboxes && (!accountId || !mailboxId)) return;
     let cancelled = false;
     let busy = false;
     const load = () => {
@@ -644,6 +1064,7 @@ export function MailClient({
               setSelectedId("");
               setMemberSelection(undefined);
               setDetail(null);
+              setReaderError("");
               listRef.current?.scrollTo({ top: 0 });
             }
             applyFirstPage(result);
@@ -671,6 +1092,7 @@ export function MailClient({
     mailboxId,
     base,
     applyFirstPage,
+    allInboxes,
     conversationView,
     listReloadNonce,
   ]);
@@ -736,7 +1158,7 @@ export function MailClient({
   }, [base, nextCursor, loadingMessages, paginationError, pageRequestVersion]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || (showDrafts && !searchActive)) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const url = `${messageBase}/${selectedId}`;
@@ -776,7 +1198,7 @@ export function MailClient({
     function handleError(failure: unknown) {
       if (!cancelled) {
         setLoadingDetail(false);
-        setError(
+        setReaderError(
           failure instanceof Error
             ? failure.message
             : "Message could not be loaded.",
@@ -795,12 +1217,13 @@ export function MailClient({
     retryNonce,
     contentPollIntervalMs,
     searchActive,
+    showDrafts,
   ]);
 
   async function retryContent() {
     if (!selectedId) return;
     setRetrying(true);
-    setError("");
+    setReaderError("");
     try {
       const response = await fetch(`${messageBase}/${selectedId}/content`, {
         method: "POST",
@@ -819,7 +1242,7 @@ export function MailClient({
       );
       setRetryNonce((value) => value + 1);
     } catch (failure) {
-      setError(
+      setReaderError(
         failure instanceof Error
           ? failure.message
           : "Content could not be requested.",
@@ -830,42 +1253,110 @@ export function MailClient({
   }
 
   async function refresh() {
-    if (!mailboxId) return;
+    if (!mailboxId || refreshing) return;
     setRefreshing(true);
     setError("");
     try {
       const response = await fetch(`${base}/refresh`, { method: "POST" });
       if (!response.ok)
         throw new Error("Synchronization could not be requested.");
-      window.setTimeout(async () => {
-        const result = await fetch(`${base}?pageSize=50`);
-        if (result.ok) applyFirstPage((await result.json()) as MessagePage);
-        setFolderReloadNonce((value) => value + 1);
-        setRefreshing(false);
-      }, 2500);
-    } catch {
-      setError("Synchronization could not be requested.");
+      setActionFeedback(
+        "Sync requested. Messages update as synchronization completes.",
+      );
+      const result = await fetch(`${base}?pageSize=50`);
+      if (!result.ok)
+        throw new Error(
+          "Sync was requested, but the message list could not be refreshed. Please retry.",
+        );
+      applyFirstPage((await result.json()) as MessagePage);
+      setFolderReloadNonce((value) => value + 1);
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Synchronization could not be requested. Please retry.",
+      );
+    } finally {
       setRefreshing(false);
     }
   }
 
-  const activeAccount = accounts.find((account) => account.id === accountId);
-  const readerAccount = accounts.find(
-    (account) => account.id === actionAccountId,
-  );
-  const visibleFolders = folders.filter(
-    (item) => item.selectable && item.lifecycleStatus === "active",
-  );
+  function navigate(nextAccountId: string, nextMailboxId: string, all = false) {
+    setSearchQuery("");
+    setSearchSelection(undefined);
+    setShowDrafts(false);
+    if (
+      all === allInboxes &&
+      nextAccountId === accountId &&
+      nextMailboxId === mailboxId
+    )
+      return;
+    setMessages([]);
+    setNextCursor(null);
+    setPaginationError("");
+    setLoadingMore(false);
+    pageRequestIdRef.current++;
+    loadingPageRef.current = false;
+    loadedMoreRef.current = false;
+    listRef.current?.scrollTo({ top: 0 });
+    setSelectedId("");
+    setMemberSelection(undefined);
+    setDetail(null);
+    setReaderError("");
+    setError("");
+    setLoadingDetail(false);
+    setLoadingMessages(all || Boolean(nextMailboxId));
+    activeLocationRef.current = all
+      ? "all-inboxes"
+      : `${nextAccountId}:${nextMailboxId}`;
+    setAccountId(nextAccountId);
+    setMailboxId(nextMailboxId);
+    setAllInboxes(all);
+  }
+  function unread(item: MailboxView) {
+    if (item.unseenCount === null) return null;
+    const projected =
+      BigInt(item.unseenCount) +
+      BigInt(
+        countAdjustments
+          .filter((a) => a.mailboxId === item.id)
+          .reduce((sum, a) => sum + a.delta, 0),
+      );
+    return projected > 0n ? projected.toString() : null;
+  }
 
   return (
     <main className="mail-app">
+      {initialNotificationsEnabled ? (
+        <DesktopNotifications
+          onOpen={(event) => {
+            navigate(event.accountId, event.mailboxId);
+            setComposing(false);
+            setBulkSelection([]);
+            setSelectedId(event.messageId);
+            setMemberSelection(undefined);
+            setDetail(null);
+            setReaderError("");
+            setLoadingDetail(true);
+            setListReloadNonce((value) => value + 1);
+          }}
+        />
+      ) : null}
       <header className="app-bar">
-        <div className="app-brand">
-          <span className="brand-mark">
-            <Mail size={16} strokeWidth={2} />
-          </span>
-          Maildock
-        </div>
+        <button
+          className="button compose-action"
+          disabled={composing || !accounts.some(sendingAccountAvailable)}
+          onClick={() => {
+            preparationGeneration.current++;
+            setPreparing(false);
+            setDraft(undefined);
+            setPrefill(undefined);
+            setComposing(true);
+          }}
+        >
+          <Plus size={15} />
+          New message
+        </button>
         <div className="global-search-input">
           <Search size={16} aria-hidden="true" />
           <input
@@ -877,6 +1368,7 @@ export function MailClient({
               setSearchQuery(event.target.value);
               setSearchSelection(undefined);
               if (searchActive || event.target.value.trim()) setDetail(null);
+              setReaderError("");
               setError("");
               setLoadingDetail(
                 searchActive &&
@@ -893,6 +1385,7 @@ export function MailClient({
                 setSearchQuery("");
                 setSearchSelection(undefined);
                 if (searchActive) setDetail(null);
+                setReaderError("");
                 setError("");
                 setLoadingDetail(searchActive && Boolean(normalSelectedId));
               }}
@@ -907,164 +1400,49 @@ export function MailClient({
         </div>
       </header>
       <aside className="mail-sidebar">
-        {accounts.length > 0 ? (
-          <>
-            <div className="account-identity">
-              <span className="account-avatar">
-                {activeAccount?.displayName?.charAt(0) || "M"}
-              </span>
-              <select
-                aria-label="Account"
-                value={accountId}
-                onChange={(event) => {
-                  const id = event.target.value;
-                  setSearchQuery("");
-                  setSearchSelection(undefined);
-                  setMessages([]);
-                  setNextCursor(null);
-                  setPaginationError("");
-                  setLoadingMore(false);
-                  pageRequestIdRef.current += 1;
-                  loadingPageRef.current = false;
-                  loadedMoreRef.current = false;
-                  listRef.current?.scrollTo({ top: 0 });
-                  setSelectedId("");
-                  setDetail(null);
-                  setError("");
-                  setLoadingMessages(true);
-                  setAccountId(id);
-                  const next = liveMailboxesByAccount[id] ?? [];
-                  const nextMailboxId =
-                    next.find(
-                      (item) => item.remotePath.toUpperCase() === "INBOX",
-                    )?.id ??
-                    next.find((item) => item.selectable)?.id ??
-                    "";
-                  activeLocationRef.current = `${id}:${nextMailboxId}`;
-                  setMailboxId(nextMailboxId);
-                }}
-              >
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.displayName}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="account-email" title={activeAccount?.email}>
-              {activeAccount?.email}
-            </div>
-            <div className="sidebar-label">Mailboxes</div>
-            <button
-              className="button compose-action"
-              disabled={composing || !accounts.some(sendingAccountAvailable)}
-              onClick={() => {
-                preparationGeneration.current++;
-                setPreparing(false);
-                setDraft(undefined);
-                setPrefill(undefined);
-                setComposing(true);
-              }}
-            >
-              <Plus size={15} />
-              Compose
-            </button>
-            <nav className="mail-folders" aria-label="Mailboxes">
-              <button
-                className={showDrafts ? "active" : ""}
-                aria-current={showDrafts ? "page" : undefined}
-                onClick={() => {
-                  setSearchQuery("");
-                  setSearchSelection(undefined);
-                  setShowDrafts(true);
-                  setDraftListGeneration((n) => n + 1);
-                }}
-              >
-                <Mail size={16} />
-                <span className="folder-name">Local drafts</span>
-              </button>
-              {visibleFolders.map((item) => {
-                const inbox = item.remotePath.toUpperCase() === "INBOX";
-                const Icon = inbox ? Inbox : Archive;
-                const projected =
-                  item.unseenCount === null
-                    ? null
-                    : BigInt(item.unseenCount) +
-                      BigInt(
-                        countAdjustments
-                          .filter(
-                            (adjustment) => adjustment.mailboxId === item.id,
-                          )
-                          .reduce(
-                            (sum, adjustment) => sum + adjustment.delta,
-                            0,
-                          ),
-                      );
-                const unread =
-                  projected !== null && projected > 0n
-                    ? projected.toString()
-                    : null;
-                return (
-                  <button
-                    key={item.id}
-                    className={
-                      !showDrafts && item.id === mailboxId ? "active" : ""
-                    }
-                    title={item.remotePath}
-                    aria-current={
-                      !showDrafts && item.id === mailboxId ? "page" : undefined
-                    }
-                    onClick={() => {
-                      setSearchQuery("");
-                      setSearchSelection(undefined);
-                      setShowDrafts(false);
-                      if (item.id === mailboxId) return;
-                      setMessages([]);
-                      setNextCursor(null);
-                      setPaginationError("");
-                      setLoadingMore(false);
-                      pageRequestIdRef.current += 1;
-                      loadingPageRef.current = false;
-                      loadedMoreRef.current = false;
-                      listRef.current?.scrollTo({ top: 0 });
-                      setSelectedId("");
-                      setDetail(null);
-                      setError("");
-                      setLoadingMessages(true);
-                      activeLocationRef.current = `${accountId}:${item.id}`;
-                      setMailboxId(item.id);
-                    }}
-                  >
-                    <Icon size={16} strokeWidth={1.8} />
-                    <span className="folder-name">{item.name}</span>
-                    {unread ? (
-                      <span
-                        className="folder-count unread"
-                        title="Unread messages"
-                      >
-                        {formatCount(unread)}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </nav>
-          </>
-        ) : (
+        <div className="sidebar-brand">
+          <MaildockBrand />
+        </div>
+        <MailboxTree
+          accounts={accounts}
+          boxes={liveMailboxesByAccount}
+          roles={liveRolesByAccount}
+          accountId={accountId}
+          mailboxId={mailboxId}
+          allInboxes={allInboxes}
+          showDrafts={showDrafts}
+          searchActive={searchActive}
+          unread={unread}
+          onSelect={navigate}
+          onDrafts={() => {
+            setSearchQuery("");
+            setSearchSelection(undefined);
+            setShowDrafts(true);
+            if (!composing) {
+              setSelectedId("");
+              setMemberSelection(undefined);
+              setDetail(null);
+              setReaderError("");
+              setLoadingDetail(false);
+            }
+            setReaderError("");
+            setError("");
+            setDraftListGeneration((n) => n + 1);
+          }}
+        />
+        {!accounts.length ? (
           <div className="pane-empty">
-            <Mail size={25} />
             <strong>No accounts yet</strong>
-            <p>Add an account to see your mailboxes.</p>
+            <p>
+              <Link href="/accounts?add=1">Add an account</Link> to see your
+              mailboxes.
+            </p>
           </div>
-        )}
+        ) : null}
         <div className="mail-sidebar-footer">
           <Link href="/accounts">
             <Settings2 size={15} />
             Accounts & settings
-          </Link>
-          <Link href="/accounts/new">
-            <Plus size={15} />
-            Add account
           </Link>
           <LogoutButton />
         </div>
@@ -1076,33 +1454,71 @@ export function MailClient({
               {searchActive
                 ? "Search results"
                 : showDrafts
-                  ? "Local drafts"
-                  : (folder?.name ?? "Mail")}
+                  ? "Maildock drafts"
+                  : allInboxes
+                    ? "All Inboxes"
+                    : (folder?.name ?? "Mail")}
             </h1>
             <small>
               {searchActive
                 ? "All accounts · All mailboxes"
                 : showDrafts
-                  ? "Stored in Maildock only"
-                  : folder
-                    ? formatCount(folder.synchronizedMessageCount) +
-                      " synchronized messages"
-                    : "Select a mailbox"}
+                  ? "Saved in Maildock · Not synced to your email provider"
+                  : allInboxes
+                    ? "Enabled accounts · Inbox mailboxes"
+                    : folder
+                      ? formatCount(folder.synchronizedMessageCount) +
+                        " synchronized messages"
+                      : "Select a mailbox"}
             </small>
           </div>
-          <button
-            className="icon-button"
-            onClick={() => void refresh()}
-            disabled={searchActive || showDrafts || refreshing || !mailboxId}
-            title="Sync mailbox"
-            aria-label="Sync mailbox"
-          >
-            <RefreshCw size={17} className={refreshing ? "animate-spin" : ""} />
-          </button>
+          <div className="mail-pane-controls">
+            {!searchActive && !showDrafts ? (
+              <label
+                className="mail-select-all"
+                title="Select all loaded messages"
+              >
+                <input
+                  type="checkbox"
+                  aria-label="Select all loaded messages"
+                  disabled={!loadedTargets.length}
+                  checked={
+                    Boolean(loadedTargets.length) &&
+                    loadedTargets.every((target) =>
+                      selectedTargets.some(
+                        (item) => targetKey(item) === targetKey(target),
+                      ),
+                    )
+                  }
+                  onChange={(event) =>
+                    setBulkSelection(event.target.checked ? loadedTargets : [])
+                  }
+                />
+              </label>
+            ) : null}
+            <button
+              className="icon-button"
+              onClick={() => void refresh()}
+              disabled={
+                searchActive ||
+                showDrafts ||
+                refreshing ||
+                !mailboxId ||
+                allInboxes
+              }
+              title="Sync mailbox"
+              aria-label="Sync mailbox"
+            >
+              <RefreshCw
+                size={17}
+                className={refreshing ? "animate-spin" : ""}
+              />
+            </button>
+          </div>
         </header>
-        {error ? (
+        {error || actionError ? (
           <p className="mail-error error" role="alert">
-            {error}
+            {actionError || error}
           </p>
         ) : null}
         {searchActive ? (
@@ -1120,6 +1536,7 @@ export function MailClient({
                 return;
               setSearchSelection(item);
               setDetail(null);
+              setReaderError("");
               setLoadingDetail(true);
               setError("");
             }}
@@ -1127,6 +1544,7 @@ export function MailClient({
         ) : showDrafts ? (
           <DraftList
             disabled={composing}
+            accounts={accounts}
             refreshKey={draftListGeneration}
             onResume={(value) => {
               if (composing) return;
@@ -1137,7 +1555,7 @@ export function MailClient({
           />
         ) : (
           <div className="mail-rows" ref={listRef}>
-            {loadingMessages && mailboxId ? (
+            {loadingMessages && (mailboxId || allInboxes) ? (
               Array.from({ length: 5 }, (_, index) => (
                 <div className="skeleton-row" key={index}>
                   <div
@@ -1161,6 +1579,9 @@ export function MailClient({
                 mailboxId={mailboxId}
                 messages={messages}
                 selectedId={selectedId}
+                onLoaded={registerConversationRows}
+                checkedIds={selectedTargets.map(targetKey)}
+                onToggle={toggleSelection}
                 refreshKey={retryNonce + folderReloadNonce + listReloadNonce}
                 onSelect={(message) =>
                   selectMessage(message, message.mailboxId ?? mailboxId)
@@ -1168,9 +1589,13 @@ export function MailClient({
               />
             ) : (
               <FlatMessageList
+                checkedIds={selectedTargets.map((item) => item.id)}
+                onToggle={toggleSelection}
                 messages={messages}
                 selectedId={selectedId}
-                onSelect={(message) => selectMessage(message, mailboxId)}
+                onSelect={(message) =>
+                  selectMessage(message, message.mailboxId ?? mailboxId)
+                }
               />
             )}
 
@@ -1201,13 +1626,54 @@ export function MailClient({
               <div className="pane-empty">
                 <MailOpen size={26} strokeWidth={1.5} />
                 <strong>
-                  {mailboxId ? "Nothing here yet" : "No mailbox selected"}
+                  {!accounts.length ||
+                  !accounts.some((a) => a.enabled) ||
+                  mailboxId ||
+                  allInboxes
+                    ? !accounts.length
+                      ? "Add your first email account"
+                      : !accounts.some((a) => a.enabled)
+                        ? "All accounts are disabled"
+                        : folder &&
+                            [
+                              folder.recentSync?.status,
+                              folder.deltaSync?.status,
+                            ].includes("failed")
+                          ? "Mail could not be synchronized"
+                          : folder &&
+                              !folder.recentSync?.lastSuccessfulAt &&
+                              !folder.deltaSync?.lastSuccessfulAt
+                            ? "Waiting for mail to sync"
+                            : "No messages"
+                    : "No mailbox selected"}
                 </strong>
                 <p>
-                  {mailboxId
-                    ? "Messages will appear here when synchronized."
+                  {!accounts.length ||
+                  !accounts.some((a) => a.enabled) ||
+                  mailboxId ||
+                  allInboxes
+                    ? !accounts.length
+                      ? "Add an account in Settings to start reading and sending mail."
+                      : !accounts.some((a) => a.enabled)
+                        ? "Enable an account in Settings to synchronize mail."
+                        : folder &&
+                            [
+                              folder.recentSync?.status,
+                              folder.deltaSync?.status,
+                            ].includes("failed")
+                          ? "Check account Diagnostics in Settings, then request sync again."
+                          : folder &&
+                              !folder.recentSync?.lastSuccessfulAt &&
+                              !folder.deltaSync?.lastSuccessfulAt
+                            ? "Messages will appear as synchronization completes."
+                            : "This mailbox has no messages to display."
                     : "Choose a mailbox from the sidebar."}
                 </p>
+                {!accounts.length ? (
+                  <Link className="button-link" href="/accounts?add=1">
+                    Add account
+                  </Link>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1217,6 +1683,35 @@ export function MailClient({
         className={`mail-detail-pane${!composing && detail ? " mail-reader" : ""}`}
         aria-label="Message detail"
       >
+        {actionFeedback ? (
+          <div className="send-feedback" role="status">
+            {actionFeedback}
+            <button
+              className="icon-button"
+              aria-label="Dismiss action status"
+              onClick={() => setActionFeedback("")}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
+        {!composing && (selectedTargets.length || openedTarget) ? (
+          <MailToolbar
+            count={selectedTargets.length}
+            seen={openedTarget?.seen}
+            flagged={openedTarget?.flagged}
+            preparing={preparing}
+            prepare={prepare}
+            act={(action) =>
+              selectedTargets.length ? bulkAct(action) : act(action)
+            }
+            moveAvailable={(action) =>
+              selectedTargets.length
+                ? selectedTargets.every((item) => canMove(item, action))
+                : moveAvailable(action)
+            }
+          />
+        ) : null}
         {Object.entries(outgoing).map(([id, item]) => (
           <div
             className={`send-feedback send-${item.status}${item.status === "sent" && ["failed", "uncertain"].includes(item.sentCopyStatus ?? "") ? " send-copy-warning" : ""}`}
@@ -1272,11 +1767,34 @@ export function MailClient({
           />
         ) : (
           <MessageReader
+            hideActions
+            emptyTitle={showDrafts ? "Select a draft" : undefined}
+            emptyDescription={
+              showDrafts
+                ? "Choose a Maildock draft to continue writing."
+                : undefined
+            }
+            readerError={readerError}
+            retryMessage={() => {
+              setReaderError("");
+              setLoadingDetail(true);
+              setRetryNonce((n) => n + 1);
+            }}
+            providerDrafts={
+              !searchActive &&
+              !showDrafts &&
+              liveRolesByAccount[accountId]?.some(
+                (role) =>
+                  role.role === "drafts" &&
+                  role.available &&
+                  role.mailboxId === mailboxId,
+              )
+            }
             contentPollIntervalMs={contentPollIntervalMs}
             renderUrl={`${messageBase}/${selectedId}/render`}
-            selectedId={selectedId}
-            detail={detail}
-            loadingDetail={loadingDetail}
+            selectedId={showDrafts && !searchActive ? "" : selectedId}
+            detail={showDrafts && !searchActive ? null : detail}
+            loadingDetail={showDrafts && !searchActive ? false : loadingDetail}
             selectedMessage={selectedMessage}
             preparing={preparing}
             prepareError={prepareError}

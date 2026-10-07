@@ -11,7 +11,6 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
-  mailAccounts,
   mailboxes,
   messages,
   mailboxMessages,
@@ -94,19 +93,8 @@ describe("Phase 2I PostgreSQL global search", () => {
       for (const statement of migration.sql)
         await database.db.execute(sql.raw(statement));
     for (let i = 0; i < 2; i++) {
-      await database.db.insert(mailAccounts).values({
-        id: accounts[i],
-        displayName: i ? "DPoczta" : "Hotmail",
-        email: `owner${i}@example.com`,
-        imapHost: "imap.test",
-        imapPort: 993,
-        imapSecurity: "tls",
-        imapUsername: "owner",
-        imapPassword: {} as never,
-        smtpHost: "smtp.test",
-        smtpPort: 465,
-        smtpSecurity: "tls",
-      });
+      // Use legacy columns while the final forward migration is pending.
+      await database.client`INSERT INTO mail_accounts (id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) VALUES (${accounts[i]},${i ? "DPoczta" : "Hotmail"},${`owner${i}@example.com`},'imap.test',993,'tls','owner','{}','smtp.test',465,'tls')`;
       await database.db.insert(mailboxes).values({
         id: boxes[i],
         accountId: accounts[i],

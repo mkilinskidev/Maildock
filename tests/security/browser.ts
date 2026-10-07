@@ -11,7 +11,10 @@ import {
 } from "playwright";
 import { attackFixtures, hostileMime, png } from "./fixtures";
 import { parseFixture } from "./pipeline";
-import { renderEmailDocument } from "../../src/modules/mail/infrastructure/render-email-document";
+import {
+  inlineRasterType,
+  renderEmailDocument,
+} from "../../src/modules/mail/infrastructure/render-email-document";
 import { createContentSecurityPolicy } from "../../src/shared/infrastructure/security/content-security-policy";
 import { verifyComposeBrowser } from "./compose-browser";
 
@@ -77,6 +80,26 @@ const fake = Buffer.concat([
     `<svg xmlns="http://www.w3.org/2000/svg" onload="parent.document.getElementById('sentinel').textContent='PWNED'"><image href="${trapOrigin}/polyglot"/></svg>`,
   ),
 ]);
+const genericClean = (
+  await parseFixture(
+    hostileMime(
+      `<img src="cid:data"><img src="${trapOrigin}/generic-tracker">`,
+      [{ cid: "<data>", type: "application/octet-stream", bytes: png }],
+    ),
+  )
+).clean;
+const detectedType = inlineRasterType(png, "application/octet-stream");
+assert.equal(detectedType, "image/png");
+documents.set(
+  "generic-cid:false",
+  renderEmailDocument(
+    genericClean.html,
+    false,
+    new Map([
+      ["data", `data:${detectedType};base64,${png.toString("base64")}`],
+    ]),
+  ),
+);
 documents.set(
   "cid:false",
   renderEmailDocument(
@@ -279,7 +302,7 @@ try {
     }
     await context.close();
   }
-  for (const name of ["cid", "defense"]) {
+  for (const name of ["cid", "generic-cid", "defense"]) {
     const context: BrowserContext = await browser.newContext();
     const dialogs: string[] = [];
     context.on("page", (p) =>
@@ -296,7 +319,7 @@ try {
     );
     await page.waitForTimeout(800);
     const frame: Frame = page.frames().find((f) => f !== page.mainFrame())!;
-    if (name === "cid") {
+    if (name === "cid" || name === "generic-cid") {
       const sizes = await frame.locator("img").evaluateAll((images) =>
         images.map((i) => ({
           complete: (i as HTMLImageElement).complete,
@@ -308,9 +331,12 @@ try {
         { complete: true, width: 0 },
       ]);
       results.push({
+        fixture: name,
         cid: {
           validRasterWidth: 1,
-          magicPrefixedSvgWidth: 0,
+          ...(name === "cid"
+            ? { magicPrefixedSvgWidth: 0 }
+            : { blockedRemoteWidth: 0 }),
           remoteRequests: [...received],
         },
       });

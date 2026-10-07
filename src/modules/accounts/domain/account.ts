@@ -16,6 +16,21 @@ const hostSchema = z
   .refine((value) => !/[\s\u0000-\u001f\u007f]/.test(value), "Invalid host.");
 const usernameSchema = z.string().trim().min(1).max(320);
 const passwordSchema = z.string().min(1).max(4096);
+export const senderDisplayNameSchema = z
+  .string()
+  .trim()
+  .max(200)
+  .refine(
+    (value) => !/[\u0000-\u001f\u007f]/.test(value),
+    "Invalid sender name.",
+  );
+export const accountIdentitySchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(100),
+    senderDisplayName: senderDisplayNameSchema,
+    email: z.email().max(320),
+  })
+  .strict();
 
 export const connectionSettingsSchema = z.object({
   host: hostSchema,
@@ -28,6 +43,7 @@ export const createAccountInputSchema = z
   .object({
     id: z.uuid(),
     displayName: z.string().trim().min(1).max(100),
+    senderDisplayName: senderDisplayNameSchema.optional(),
     email: z.email().max(320),
     enabled: z.boolean().default(true),
     sentCopyPolicy: sentCopyPolicySchema.optional(),
@@ -59,6 +75,7 @@ export const createAccountInputSchema = z
 export const updateAccountInputSchema = z
   .object({
     displayName: z.string().trim().min(1).max(100),
+    senderDisplayName: senderDisplayNameSchema.optional(),
     email: z.email().max(320),
     enabled: z.boolean(),
     sentCopyPolicy: sentCopyPolicySchema.optional(),

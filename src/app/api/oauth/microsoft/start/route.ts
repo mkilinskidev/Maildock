@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   const origin = getConfig().appOrigin;
   const session = await getCurrentSession();
   if (!session) return Response.redirect(new URL("/login", origin));
-  if (!microsoftOAuth.configured)
+  if (!(await microsoftOAuth.isConfigured()))
     return Response.redirect(
       new URL("/accounts?oauth_error=configuration", origin),
     );

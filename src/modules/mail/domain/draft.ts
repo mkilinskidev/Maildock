@@ -6,7 +6,7 @@ import { richDocumentSchema, type RichDocument } from "./rich-document";
 export class DraftConflictError extends Error {
   constructor() {
     super(
-      "This draft changed in another tab, was sent, or was discarded. Reopen it from Local drafts before continuing.",
+      "This draft changed in another tab, was sent, or was discarded. Reopen it from Maildock drafts before continuing.",
     );
   }
 }

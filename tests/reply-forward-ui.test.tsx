@@ -191,7 +191,9 @@ describe("reader reply and forward actions", () => {
     await act(async () =>
       root!.render(
         <MailClient
+          initialAutoRead={{ mode: "manually", seconds: 2 }}
           initialConversationView={grouped}
+          initialNotification={{ accountId, mailboxId: inboxId }}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
           rolesByAccount={{ [accountId]: roles }}
@@ -293,6 +295,11 @@ describe("reader reply and forward actions", () => {
     ).toBe(true);
     await act(async () =>
       [...host.querySelectorAll<HTMLButtonElement>(".mail-folders button")]
+        .find((button) => button.textContent === "Other folders")!
+        .click(),
+    );
+    await act(async () =>
+      [...host.querySelectorAll<HTMLButtonElement>(".mail-folders button")]
         .find(
           (button) =>
             button.querySelector(".folder-name")?.textContent === "Sent",
@@ -315,7 +322,9 @@ describe("reader reply and forward actions", () => {
     await act(async () =>
       root!.render(
         <MailClient
+          initialAutoRead={{ mode: "manually", seconds: 2 }}
           initialConversationView={false}
+          initialNotification={{ accountId, mailboxId: inboxId }}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
           rolesByAccount={{ [accountId]: [] }}
@@ -463,7 +472,7 @@ describe("reader reply and forward actions", () => {
       expect(host.querySelector(".mail-composer")).not.toBeNull();
       expect(host.querySelector(".mail-body")).toBeNull();
       const compose = [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === "Compose",
+        (button) => button.textContent === "New message",
       )!;
       expect(compose.disabled).toBe(true);
 

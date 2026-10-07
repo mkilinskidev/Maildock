@@ -113,6 +113,7 @@ describe("sidebar unread count", () => {
     await act(async () => {
       root!.render(
         <MailClient
+          initialNotification={{ accountId, mailboxId: inboxId }}
           accounts={[account]}
           mailboxesByAccount={{ [accountId]: [inbox, other] }}
           rolesByAccount={{ [accountId]: [] }}
@@ -136,6 +137,12 @@ describe("sidebar unread count", () => {
     expect(
       host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
     ).toBe("4");
+    await act(async () => {
+      const disclosure = [...host.querySelectorAll("button")].find(
+        (b) => b.textContent === "Other folders",
+      )!;
+      disclosure.click();
+    });
     await act(async () => {
       (host.querySelector('[title="Other"]') as HTMLButtonElement).click();
     });

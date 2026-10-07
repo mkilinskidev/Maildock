@@ -1,3 +1,5 @@
+import { createOAuthComposition } from "../modules/accounts/infrastructure/oauth-composition";
+import { ApplicationEventService } from "../modules/diagnostics/application/application-event-service";
 import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
 import { AttachmentService } from "../modules/mail/application/attachment-service";
 import { createAttachmentLock } from "../modules/mail/infrastructure/attachment-lock";
@@ -11,7 +13,6 @@ import { createLogger } from "../shared/infrastructure/logging/logger.js";
 import { createWorkerDatabase } from "../shared/infrastructure/database/database-worker.js";
 import { AesGcmSecretEncryption } from "../shared/infrastructure/crypto/aes-gcm-secret-encryption.js";
 import { AccountsService } from "../modules/accounts/application/accounts-service.js";
-import { MicrosoftOAuthService } from "../modules/accounts/infrastructure/microsoft-oauth.js";
 import { ImapSmtpMailProvider } from "../modules/accounts/infrastructure/imap-smtp-mail-provider.js";
 import { MailboxService } from "../modules/mail/application/mailbox-service.js";
 import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-discovery-service.js";
@@ -49,6 +50,7 @@ export function createWorkerComposition() {
   const config = getConfig();
   const logger = createLogger(config);
   const database = createWorkerDatabase(config);
+  const events = new ApplicationEventService(database.db, logger);
   const provider = new ImapSmtpMailProvider();
   const encryption = new AesGcmSecretEncryption(
     config.credentialsEncryption.activeKeyId,
@@ -59,7 +61,8 @@ export function createWorkerComposition() {
     encryption,
     provider,
     undefined,
-    new MicrosoftOAuthService(database.db, encryption, config),
+    createOAuthComposition(database.db, encryption, config).registry,
+    events,
   );
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
@@ -85,6 +88,7 @@ export function createWorkerComposition() {
       schedule: (accountId, mailboxId) =>
         enqueueBackfill(jobs.boss, accountId, mailboxId),
     },
+    events,
   );
   const blobStorage = new LocalBlobStorage(config.attachmentsPath);
   const attachments = new AttachmentService(
@@ -121,6 +125,7 @@ export function createWorkerComposition() {
     (id) => enqueueSentCopy(jobs.boss, id),
     blobStorage,
     config,
+    events,
   );
   const commands = new MessageCommandService(
     database.db,
@@ -132,6 +137,7 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    events,
     attachments,
     attachmentPoller: new AttachmentPoller(attachments),
     outgoing,
@@ -152,6 +158,7 @@ export function createWorkerComposition() {
       messages,
       config.messageFetchBatchSize,
       logger,
+      events,
     ),
     poller: new DeltaPoller(
       database.db,

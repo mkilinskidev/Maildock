@@ -122,7 +122,10 @@ describe("global header search overlay", () => {
       if (url.includes("/messages?pageSize"))
         return Response.json({ items: [normal], nextCursor: null });
       if (url.endsWith("/mailboxes"))
-        return Response.json({ mailboxes: boxes.a, roles: [] });
+        return Response.json({
+          mailboxes: url.includes("/accounts/b/") ? boxes.b : boxes.a,
+          roles: [],
+        });
       if (url.includes("/conversations/"))
         return Response.json({ items: [normal] });
       return Response.json({});
@@ -134,6 +137,7 @@ describe("global header search overlay", () => {
     await act(async () =>
       root.render(
         <MailClient
+          initialNotification={{ accountId: "a", mailboxId: "inbox" }}
           accounts={accounts}
           mailboxesByAccount={boxes}
           rolesByAccount={{}}
@@ -190,10 +194,9 @@ describe("global header search overlay", () => {
     expect(
       host.querySelector("[data-reader-url]")?.getAttribute("data-reader-url"),
     ).toBe("/api/accounts/b/mailboxes/sent/messages/cross/render");
-    expect(
-      (host.querySelector('select[aria-label="Account"]') as HTMLSelectElement)
-        .value,
-    ).toBe("a");
+    expect(host.querySelector('select[aria-label="Account"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Hotmail"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="DPoczta"]')).not.toBeNull();
     expect(
       fetcher.mock.calls.some(
         ([url]) =>

@@ -13,26 +13,33 @@ export function LoginForm() {
     setPending(true);
     setError(undefined);
     const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/auth/sign-in/username", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: data.get("username"),
-        password: data.get("password"),
-        rememberMe: false,
-      }),
-    });
-    if (response.ok) {
-      router.replace("/");
-      router.refresh();
-      return;
+    try {
+      const response = await fetch("/api/auth/sign-in/username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: data.get("username"),
+          password: data.get("password"),
+          rememberMe: false,
+        }),
+      });
+      if (response.ok) {
+        router.replace("/");
+        router.refresh();
+        return;
+      }
+      setError(
+        response.status === 429
+          ? "Too many attempts. Try again later."
+          : response.status === 401 || response.status === 403
+            ? "Invalid username or password."
+            : "Sign in is temporarily unavailable. Please try again.",
+      );
+    } catch {
+      setError("Sign in is temporarily unavailable. Please try again.");
+    } finally {
+      setPending(false);
     }
-    setError(
-      response.status === 429
-        ? "Too many attempts. Try again later."
-        : "Invalid username or password.",
-    );
-    setPending(false);
   }
 
   return (
@@ -55,7 +62,11 @@ export function LoginForm() {
           autoComplete="current-password"
         />
       </label>
-      {error ? <p className="error">{error}</p> : null}
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <button className="button" disabled={pending}>
         {pending ? "Signing in…" : "Sign in"}
       </button>

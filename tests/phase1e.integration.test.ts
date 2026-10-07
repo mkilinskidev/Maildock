@@ -1,5 +1,11 @@
+import { MailProviderOperationError } from "@/modules/accounts/domain/mail-provider";
+import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
+import { applicationEvents } from "@/shared/infrastructure/database/schema";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { NotificationService } from "@/modules/mail/application/notification-service";
+import { defaultNotificationPreferences } from "@/modules/mail/domain/notifications";
+import { eq, sql } from "drizzle-orm";
 import {
   GenericContainer,
   Wait,
@@ -39,6 +45,10 @@ import {
   mailAccounts,
   mailboxes,
   mailboxMessages,
+  notificationEvents,
+  instanceState,
+  messageCommands,
+  outgoingMessages,
 } from "@/shared/infrastructure/database/schema";
 
 const accountId = "00000000-0000-4000-8000-0000000000e1";
@@ -75,6 +85,11 @@ describe("Phase 1E persisted delta state", () => {
   let accounts: AccountsService;
   let messagesService: MessageService;
   let delta: DeltaSyncService;
+  let events: ApplicationEventService;
+  const operationalLogger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+  } as unknown as Logger;
   let runProvider: (sink: DeltaMailboxSyncSink) => Promise<void>;
   let recentRequests: string[];
 
@@ -139,11 +154,24 @@ describe("Phase 1E persisted delta state", () => {
         return true;
       },
     });
-    delta = new DeltaSyncService(db, accounts, provider, messagesService, 2);
+    events = new ApplicationEventService(db, operationalLogger);
+    delta = new DeltaSyncService(
+      db,
+      accounts,
+      provider,
+      messagesService,
+      2,
+      operationalLogger,
+      events,
+    );
   });
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    await db.delete(applicationEvents);
+    await db.delete(outgoingMessages);
     await db.delete(mailAccounts);
+    await db.delete(instanceState);
     recentRequests.length = 0;
     await accounts.create({
       id: accountId,
@@ -228,6 +256,523 @@ describe("Phase 1E persisted delta state", () => {
   async function sync() {
     await delta.run(accountId, (await mailbox()).id, "poll");
   }
+
+  async function arrive(uid: number, boxId?: string, remote = metadata(uid)) {
+    boxId ??= (await mailbox()).id;
+    runProvider = async (sink) => {
+      await sink.selected("10");
+      await sink.newBatch([remote], String(uid));
+    };
+    await delta.run(accountId, boxId, "poll");
+  }
+  async function extraBox() {
+    const id = randomUUID();
+    await db.insert(mailboxes).values({
+      id,
+      accountId,
+      remotePath: "Archive",
+      name: "Archive",
+      selectable: true,
+      firstDiscoveredAt: new Date(),
+      lastDiscoveredAt: new Date(),
+      uidValidity: 10n,
+      recentSyncStatus: "success",
+      recentSyncUidValidity: 10n,
+      recentSyncMessageCount: 1,
+      deltaUidValidity: 10n,
+    });
+    return id;
+  }
+  it("Phase 3F enriches operational polling logs without persisting successful polls", async () => {
+    await sync();
+    expect(operationalLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "mail.delta_sync_completed",
+        accountId,
+        mailboxId: (await mailbox()).id,
+        accountName: "Phase 1E",
+        accountEmail: "phase1e@example.test",
+        mailboxPath: "INBOX",
+        reason: "poll",
+        newCount: 0,
+      }),
+      expect.any(String),
+    );
+    expect(await db.select().from(applicationEvents)).toHaveLength(0);
+  });
+  it("Phase 3F persists safe failures and retains human context in Pino", async () => {
+    runProvider = async () => {
+      throw Error("password=DO_NOT_PERSIST");
+    };
+    await expect(sync()).rejects.toThrow("DO_NOT_PERSIST");
+    expect(operationalLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountName: "Phase 1E",
+        accountEmail: "phase1e@example.test",
+        mailboxPath: "INBOX",
+        accountId,
+        mailboxId: (await mailbox()).id,
+        category: "internal_error",
+      }),
+      expect.any(String),
+    );
+    const rows = await db.select().from(applicationEvents);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].event).toBe("mail.sync_failed");
+    expect(JSON.stringify(rows)).not.toContain("DO_NOT_PERSIST");
+    await expect(sync()).rejects.toThrow("DO_NOT_PERSIST");
+    expect(await db.select().from(applicationEvents)).toHaveLength(1);
+  });
+  it("Phase 3F retains existing authentication categories without persisting exception messages", async () => {
+    runProvider = async () => {
+      throw new MailProviderOperationError({
+        success: false,
+        category: "authentication_rejected",
+        message: "SECRET_SERVER_PAYLOAD",
+      });
+    };
+    await expect(sync()).rejects.toThrow("SECRET_SERVER_PAYLOAD");
+    const rows = await db.select().from(applicationEvents);
+    expect(rows[0].details?.category).toBe("authentication_rejected");
+    expect(rows[0].message).toBe("Mailbox synchronization failed");
+    expect(JSON.stringify(rows)).not.toContain("SECRET_SERVER_PAYLOAD");
+  });
+  it("Phase 3F keeps mail operations working when event persistence fails", async () => {
+    const broken = new ApplicationEventService(
+      {
+        insert: () => {
+          throw Error("database unavailable");
+        },
+        delete: () => {
+          throw Error();
+        },
+      } as unknown as Database,
+      operationalLogger,
+    );
+    const boxId = (await mailbox()).id;
+    runProvider = async (sink) => {
+      await sink.selected("11");
+    };
+    const failingDiagnostics = new DeltaSyncService(
+      db,
+      accounts,
+      {} as MailProvider,
+      messagesService,
+      2,
+      operationalLogger,
+      broken,
+    );
+    await expect(
+      failingDiagnostics.run(accountId, boxId, "poll"),
+    ).rejects.toThrow("Delta provider is unavailable");
+    // A UIDVALIDITY reset is a recoverable successful operation even if diagnostics fail.
+    const epochDelta = new DeltaSyncService(
+      db,
+      accounts,
+      {
+        synchronizeDeltaMailbox: async (_a, _p, _n, sink) => runProvider(sink),
+      } as MailProvider,
+      messagesService,
+      2,
+      operationalLogger,
+      broken,
+    );
+    await expect(
+      epochDelta.run(accountId, boxId, "poll"),
+    ).resolves.toBeUndefined();
+    expect(recentRequests).toContain(boxId);
+  });
+  it("Phase 3F records epoch reset and applies retention, filters, safe serialization and bounded cursors", async () => {
+    runProvider = async (sink) => {
+      await sink.selected("11");
+    };
+    await sync();
+    expect((await db.select().from(applicationEvents))[0].event).toBe(
+      "mail.epoch_reset",
+    );
+    await db.delete(applicationEvents);
+    await events.record("mail.sent", { accountId });
+    await events.record("mail.sync_failed", {
+      accountId,
+      details: {
+        category: "authentication_rejected",
+        password: "SECRET",
+        stack: "SECRET",
+      } as never,
+    });
+    await db.insert(applicationEvents).values({
+      id: randomUUID(),
+      createdAt: new Date(Date.now() - 31 * 86400_000),
+      level: "info",
+      area: "smtp",
+      event: "mail.sent",
+      message: "Outgoing message sent",
+    });
+    await events.cleanup();
+    expect(await db.select().from(applicationEvents)).toHaveLength(2);
+    const filtered = await events.list({
+      accountId,
+      area: "sync",
+      level: "error",
+      limit: 1,
+    });
+    expect(filtered.events).toHaveLength(1);
+    expect(filtered.events[0].accountName).toBe("Phase 1E");
+    expect(JSON.stringify(filtered)).not.toContain("SECRET");
+    const first = await events.list({ limit: 1 });
+    expect(first.nextCursor).toBeTruthy();
+    const second = await events.list({ limit: 1, cursor: first.nextCursor! });
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0].id).not.toBe(first.events[0].id);
+    expect(second.nextCursor).toBeNull();
+    expect(first.events[0].createdAt >= second.events[0].createdAt).toBe(true);
+  });
+
+  it("Phase 3F bounds retained history to the most recent ten thousand events", async () => {
+    await db.execute(sql`insert into application_events (id, created_at, level, area, event, message)
+      select gen_random_uuid(), now() - n * interval '1 millisecond', 'info', 'smtp', 'mail.sent', 'Outgoing message sent'
+      from generate_series(1, 10001) as n`);
+    const newest = await events.list({ limit: 1 });
+    await events.cleanup();
+    const [count] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(applicationEvents);
+    expect(count.count).toBe(10000);
+    expect((await events.list({ limit: 1 })).events[0].id).toBe(
+      newest.events[0].id,
+    );
+  });
+  it("Phase 3E publishes only actual delta inserts, never recent/backfill, duplicate observations, flags or removals", async () => {
+    await seed(1);
+    const box = await mailbox();
+    await db
+      .update(mailboxes)
+      .set({ backfillUidValidity: 10n, backfillFrontierUid: 1n })
+      .where(eq(mailboxes.id, box.id));
+    await messagesService.persistBatch(
+      accountId,
+      box.id,
+      10n,
+      [metadata(2)],
+      undefined,
+      { frontier: 1n, nextFrontier: 0n },
+    );
+    expect(await db.select().from(notificationEvents)).toEqual([]);
+    await arrive(3);
+    await arrive(3);
+    runProvider = async (sink) => {
+      await sink.selected("10");
+      await sink.flagsBatch([{ uid: "3", flags: ["\\Seen"] }]);
+      await sink.removed(["3"]);
+    };
+    await sync();
+    const events = await db.select().from(notificationEvents);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      accountId,
+      mailboxId: box.id,
+      uidValidity: 10n,
+      uid: 3n,
+      subject: "Message 3",
+    });
+    expect(events[0]).not.toHaveProperty("plainText");
+    expect(events[0]).not.toHaveProperty("snippet");
+  });
+  it("Phase 3E excludes empty recent-window bootstrap and only publishes arrivals beyond its frontier", async () => {
+    const box = await mailbox();
+    await db
+      .update(mailboxes)
+      .set({ recentSyncMessageCount: 0 })
+      .where(eq(mailboxes.id, box.id));
+    runProvider = async (sink) => {
+      await sink.selected("10");
+      await sink.newBatch([metadata(20)], "20");
+      await sink.advanceUid("30");
+      await sink.newBatch([metadata(31)], "31");
+    };
+    await sync();
+    expect(
+      (await db.select().from(notificationEvents)).map((e) => e.uid),
+    ).toEqual([31n]);
+  });
+  it("Phase 3E never publishes before recent sync success or across UIDVALIDITY reset", async () => {
+    const box = await mailbox();
+    await db
+      .update(mailboxes)
+      .set({ recentSyncStatus: "pending" })
+      .where(eq(mailboxes.id, box.id));
+    await arrive(1);
+    expect(await db.select().from(notificationEvents)).toEqual([]);
+    await db
+      .update(mailboxes)
+      .set({ recentSyncStatus: "success" })
+      .where(eq(mailboxes.id, box.id));
+    runProvider = async (sink) => {
+      await sink.selected("11");
+      await sink.newBatch([metadata(2)], "2");
+    };
+    await sync();
+    expect(await db.select().from(notificationEvents)).toEqual([]);
+  });
+  it("Phase 3E commits no event on metadata rollback and serializes duplicate persistence", async () => {
+    const box = await mailbox();
+    await db
+      .update(mailboxes)
+      .set({ deltaUidValidity: 10n })
+      .where(eq(mailboxes.id, box.id));
+    await expect(
+      messagesService.persistBatch(
+        accountId,
+        box.id,
+        10n,
+        [metadata(1), { ...metadata(2), size: "invalid" }],
+        2n,
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow();
+    expect(await db.select().from(notificationEvents)).toEqual([]);
+    await Promise.all(
+      [1, 2].map(() =>
+        messagesService.persistBatch(
+          accountId,
+          box.id,
+          10n,
+          [metadata(1)],
+          1n,
+          undefined,
+          true,
+        ),
+      ),
+    );
+    expect(await db.select().from(notificationEvents)).toHaveLength(1);
+    expect(await placements()).toHaveLength(1);
+  });
+  it("Phase 3E suppresses known and uncertain Maildock move reconciliation and outgoing/Sent copies", async () => {
+    await seed(1);
+    const source = (await placements())[0];
+    const boxId = await extraBox();
+    await db.insert(messageCommands).values({
+      id: randomUUID(),
+      accountId,
+      mailboxId: source.mailboxId,
+      messageId: source.messageId,
+      action: "archive",
+      sourcePath: "INBOX",
+      sourceUidValidity: 10n,
+      sourceUid: 1n,
+      destinationMailboxId: boxId,
+      destinationPath: "Archive",
+      destinationUidValidity: 10n,
+      destinationUid: 5n,
+      startedAt: new Date(),
+      status: "succeeded",
+    });
+    await arrive(5, boxId);
+    await db.insert(messageCommands).values({
+      id: randomUUID(),
+      accountId,
+      mailboxId: source.mailboxId,
+      messageId: source.messageId,
+      action: "archive",
+      sourcePath: "INBOX",
+      sourceUidValidity: 10n,
+      sourceUid: 1n,
+      destinationMailboxId: boxId,
+      destinationPath: "Archive",
+      startedAt: new Date(),
+      status: "failed",
+    });
+    await arrive(6, boxId, { ...metadata(1), uid: "6" });
+    const sentId = "<maildock-outgoing@example.test>";
+    await db.insert(outgoingMessages).values({
+      id: randomUUID(),
+      accountId,
+      from: { address: "owner@example.test" },
+      to: [{ address: "other@example.test" }],
+      cc: [],
+      bcc: [],
+      subject: "Sent",
+      plainText: "Private body",
+      messageId: sentId,
+      mimeBase64: "AA==",
+    });
+    await arrive(7, boxId, {
+      ...metadata(7),
+      envelope: { ...metadata(7).envelope, messageId: sentId },
+    });
+    expect(await db.select().from(notificationEvents)).toEqual([]);
+    await arrive(8, boxId);
+    expect(
+      (await db.select().from(notificationEvents)).map((e) => e.uid),
+    ).toEqual([8n]);
+  });
+  it("Phase 3E filters Inbox/all-folder and account preferences while durably consuming excluded and disabled events", async () => {
+    const service = new NotificationService(db);
+    expect(await service.preferences()).toEqual(defaultNotificationPreferences);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+    });
+    const inbox = await mailbox();
+    const archive = await extraBox();
+    await arrive(1, inbox.id);
+    await arrive(2, archive);
+    expect((await service.consume()).events.map((e) => e.mailboxId)).toEqual([
+      inbox.id,
+    ]);
+    expect((await new NotificationService(db).consume()).events).toEqual([]);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+      folders: "all",
+    });
+    await arrive(3, archive);
+    expect((await service.consume()).events).toHaveLength(1);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+      folders: "all",
+      accountIds: [],
+    });
+    await arrive(4, archive);
+    expect((await service.consume()).events).toEqual([]);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+      accountIds: [accountId],
+    });
+    await arrive(5, inbox.id);
+    expect((await service.consume()).events).toHaveLength(1);
+    await service.setPreferences(defaultNotificationPreferences);
+    await arrive(6, inbox.id);
+    expect((await service.consume()).events).toEqual([]);
+  });
+  it("Phase 3E skips closed-tab history on start, arbitrates tabs, ignores stale/removed placements and cleans retention", async () => {
+    const service = new NotificationService(db);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+    });
+    await arrive(1);
+    expect((await service.consume(true)).events).toEqual([]);
+    expect((await service.consume()).events).toEqual([]);
+    await arrive(2);
+    const claims = await Promise.all([
+      service.consume(),
+      new NotificationService(db).consume(),
+    ]);
+    expect(claims.flatMap((c) => c.events)).toHaveLength(1);
+    await arrive(3);
+    await db.delete(mailboxMessages).where(eq(mailboxMessages.uid, 3n));
+    expect((await service.consume()).events).toEqual([]);
+    await arrive(4);
+    await db
+      .update(notificationEvents)
+      .set({ createdAt: new Date(Date.now() - 180_000) });
+    expect((await service.consume()).events).toEqual([]);
+    await db
+      .update(notificationEvents)
+      .set({ createdAt: new Date(Date.now() - 8 * 86_400_000) });
+    await service.consume();
+    expect(await db.select().from(notificationEvents)).toEqual([]);
+  });
+  it("Phase 3E preserves account isolation for identical mailbox UIDs and excludes disabled accounts", async () => {
+    const secondAccount = randomUUID();
+    const [owner] = await db.select().from(mailAccounts);
+    await db.insert(mailAccounts).values({
+      ...owner,
+      id: secondAccount,
+      email: "second@example.test",
+      displayName: "Second",
+    });
+    const firstBox = await mailbox();
+    const secondBox = randomUUID();
+    await db.insert(mailboxes).values({
+      ...firstBox,
+      id: secondBox,
+      accountId: secondAccount,
+      deltaUidValidity: 10n,
+    });
+    const service = new NotificationService(db);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+      accountIds: [accountId],
+    });
+    await arrive(1, firstBox.id);
+    await messagesService.persistBatch(
+      secondAccount,
+      secondBox,
+      10n,
+      [metadata(1)],
+      1n,
+      undefined,
+      true,
+    );
+    expect(await db.select().from(notificationEvents)).toHaveLength(2);
+    expect((await service.consume()).events.map((e) => e.accountId)).toEqual([
+      accountId,
+    ]);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+    });
+    await messagesService.persistBatch(
+      secondAccount,
+      secondBox,
+      10n,
+      [metadata(2)],
+      2n,
+      undefined,
+      true,
+    );
+    await db
+      .update(mailAccounts)
+      .set({ enabled: false })
+      .where(eq(mailAccounts.id, secondAccount));
+    expect((await service.consume()).events).toEqual([]);
+    await expect(
+      messagesService.persistBatch(
+        accountId,
+        secondBox,
+        10n,
+        [metadata(3)],
+        3n,
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow("Mailbox not found");
+  });
+  it("Phase 3E drains bounded batches without losing the remaining checkpoint range", async () => {
+    const box = await mailbox();
+    const service = new NotificationService(db);
+    await service.setPreferences({
+      ...defaultNotificationPreferences,
+      enabled: true,
+    });
+    await db
+      .update(mailboxes)
+      .set({ deltaUidValidity: 10n })
+      .where(eq(mailboxes.id, box.id));
+    await messagesService.persistBatch(
+      accountId,
+      box.id,
+      10n,
+      Array.from({ length: 60 }, (_, i) => metadata(i + 1)),
+      60n,
+      undefined,
+      true,
+    );
+    const first = await service.consume();
+    const second = await new NotificationService(db).consume();
+    expect(first.events).toHaveLength(50);
+    expect(second.events).toHaveLength(10);
+    expect(
+      new Set([...first.events, ...second.events].map((e) => e.id)).size,
+    ).toBe(60);
+    expect((await service.consume()).events).toEqual([]);
+  });
 
   it("bootstraps maximum local UID only from the current epoch and checkpoints a committed batch", async () => {
     await seed(3);
@@ -499,6 +1044,14 @@ describe("Phase 1E persisted delta state", () => {
       .where(eq(mailboxes.id, old.id));
     const sent: string[] = [];
     const boss = {
+      getDb: () => ({
+        beginTransaction: async () => ({
+          db: { executeSql: async () => ({ rows: [] }) },
+          commit: async () => {},
+          rollback: async () => {},
+        }),
+      }),
+      findJobs: async () => [],
       send: async (_queue: string, data: { mailboxId: string }) => {
         sent.push(data.mailboxId);
         return "job";
