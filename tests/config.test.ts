@@ -23,6 +23,28 @@ describe("configuration", () => {
     const config = parseConfig(validEnvironment);
     expect(config.environment).toBe("test");
     expect(config.databasePoolSize).toBe(10);
+    expect(config.initialSyncDays).toBe(30);
+    expect(config.messageFetchBatchSize).toBe(150);
+    expect(config.backfillChunkSize).toBe(500);
+    expect(config.messageSyncConcurrency).toBe(2);
+  });
+
+  it("validates recent synchronization bounds", () => {
+    expect(() =>
+      parseConfig({ ...validEnvironment, MAILDOCK_INITIAL_SYNC_DAYS: "0" }),
+    ).toThrow(/MAILDOCK_INITIAL_SYNC_DAYS/);
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        MAILDOCK_MESSAGE_FETCH_BATCH_SIZE: "501",
+      }),
+    ).toThrow(/MAILDOCK_MESSAGE_FETCH_BATCH_SIZE/);
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        MAILDOCK_BACKFILL_CHUNK_SIZE: "5001",
+      }),
+    ).toThrow(/MAILDOCK_BACKFILL_CHUNK_SIZE/);
   });
 
   it("fails startup with useful field names when required configuration is invalid", () => {
@@ -50,5 +72,39 @@ describe("configuration", () => {
     expect(() =>
       parseConfig({ ...validEnvironment, MAILDOCK_ENV: "production" }),
     ).toThrow(/HTTPS/);
+  });
+
+  it("fails startup when the credential master key is absent or malformed", () => {
+    const withoutKey = {
+      ...validEnvironment,
+      CREDENTIALS_ENCRYPTION_KEY: undefined,
+    };
+    expect(() => parseConfig(withoutKey)).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(31).toString("base64"),
+      }),
+    ).toThrow(/exactly 32 bytes/);
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        CREDENTIALS_ENCRYPTION_KEY_ID: "current",
+      }),
+    ).toThrow(/CREDENTIALS_ENCRYPTION_KEY_ID/);
+  });
+
+  it("accepts identified previous keys for controlled rotation", () => {
+    const config = parseConfig({
+      ...validEnvironment,
+      CREDENTIALS_ENCRYPTION_KEY_ID: "v2",
+      CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: JSON.stringify({
+        v1: Buffer.alloc(32, 5).toString("base64"),
+      }),
+    });
+    expect(Object.keys(config.credentialsEncryption.keys)).toEqual([
+      "v1",
+      "v2",
+    ]);
   });
 });

@@ -1,0 +1,2 @@
+DROP INDEX "mailboxes_account_path_without_provider_id_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "mailboxes_active_account_path_without_provider_id_unique" ON "mailboxes" USING btree ("account_id","remote_path") WHERE "mailboxes"."provider_mailbox_id" is null and "mailboxes"."lifecycle_status" = 'active';

@@ -13,16 +13,38 @@ const secretSchema = z
     }
   }, "must be base64-encoded and decode to at least 32 bytes");
 
-const encryptionKeySchema = z
+const keyIdSchema = z
   .string()
-  .min(1)
-  .refine((value) => {
+  .regex(/^v[1-9][0-9]*$/, "must look like v1 or v2");
+
+const encryptionKeySchema = z.string().refine((value) => {
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      value,
+    )
+  )
+    return false;
+  const decoded = Buffer.from(value, "base64");
+  return decoded.byteLength === 32 && decoded.toString("base64") === value;
+}, "must be canonical base64 encoding of exactly 32 bytes");
+
+const previousKeysSchema = z
+  .string()
+  .default("{}")
+  .transform((value, context): Record<string, string> => {
     try {
-      return Buffer.from(value, "base64").byteLength === 32;
+      const parsed = z
+        .record(keyIdSchema, encryptionKeySchema)
+        .parse(JSON.parse(value));
+      return parsed;
     } catch {
-      return false;
+      context.addIssue({
+        code: "custom",
+        message: "must be a JSON object of key IDs to base64 32-byte keys",
+      });
+      return z.NEVER;
     }
-  }, "must be base64-encoded and decode to exactly 32 bytes");
+  });
 
 const schema = z
   .object({
@@ -33,6 +55,10 @@ const schema = z
     DATABASE_URL: z.string().min(1).startsWith("postgresql://"),
     AUTH_SECRET: secretSchema,
     CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
+    CREDENTIALS_ENCRYPTION_KEY_ID: keyIdSchema.default("v1"),
+    CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: previousKeysSchema,
+    MICROSOFT_CLIENT_ID: z.string().trim().default(""),
+    MICROSOFT_CLIENT_SECRET: z.string().default(""),
     ATTACHMENTS_PATH: z
       .string()
       .min(1)
@@ -42,6 +68,42 @@ const schema = z
       .default("info"),
     DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(50).default(10),
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+    MAILDOCK_INITIAL_SYNC_DAYS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(365)
+      .default(30),
+    MAILDOCK_MESSAGE_FETCH_BATCH_SIZE: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(500)
+      .default(150),
+    MAILDOCK_BACKFILL_CHUNK_SIZE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .default(500),
+    MAILDOCK_MESSAGE_SYNC_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .default(2),
+    MAILDOCK_MAIL_POLL_INTERVAL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(30)
+      .max(3600)
+      .default(300),
+    MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(20 * 1024 * 1024)
+      .default(5 * 1024 * 1024),
   })
   .superRefine((value, context) => {
     const origin = new URL(value.APP_ORIGIN);
@@ -73,11 +135,21 @@ export type AppConfig = Readonly<{
   appOrigin: string;
   databaseUrl: string;
   authSecret: string;
-  credentialsEncryptionKey: string;
+  credentialsEncryption: Readonly<{
+    activeKeyId: string;
+    keys: Readonly<Record<string, string>>;
+  }>;
+  microsoft: Readonly<{ clientId: string; clientSecret: string }>;
   attachmentsPath: string;
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   databasePoolSize: number;
   workerConcurrency: number;
+  initialSyncDays: number;
+  messageFetchBatchSize: number;
+  backfillChunkSize: number;
+  messageSyncConcurrency: number;
+  mailPollIntervalSeconds: number;
+  maxMessageTextPartBytes: number;
 }>;
 
 export class ConfigurationError extends Error {
@@ -106,11 +178,28 @@ export function parseConfig(
     appOrigin: new URL(result.data.APP_ORIGIN).origin,
     databaseUrl: result.data.DATABASE_URL,
     authSecret: result.data.AUTH_SECRET,
-    credentialsEncryptionKey: result.data.CREDENTIALS_ENCRYPTION_KEY,
+    credentialsEncryption: Object.freeze({
+      activeKeyId: result.data.CREDENTIALS_ENCRYPTION_KEY_ID,
+      keys: Object.freeze({
+        ...result.data.CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS,
+        [result.data.CREDENTIALS_ENCRYPTION_KEY_ID]:
+          result.data.CREDENTIALS_ENCRYPTION_KEY,
+      }),
+    }),
+    microsoft: Object.freeze({
+      clientId: result.data.MICROSOFT_CLIENT_ID,
+      clientSecret: result.data.MICROSOFT_CLIENT_SECRET,
+    }),
     attachmentsPath: result.data.ATTACHMENTS_PATH,
     logLevel: result.data.LOG_LEVEL,
     databasePoolSize: result.data.DATABASE_POOL_SIZE,
     workerConcurrency: result.data.WORKER_CONCURRENCY,
+    initialSyncDays: result.data.MAILDOCK_INITIAL_SYNC_DAYS,
+    messageFetchBatchSize: result.data.MAILDOCK_MESSAGE_FETCH_BATCH_SIZE,
+    backfillChunkSize: result.data.MAILDOCK_BACKFILL_CHUNK_SIZE,
+    messageSyncConcurrency: result.data.MAILDOCK_MESSAGE_SYNC_CONCURRENCY,
+    mailPollIntervalSeconds: result.data.MAILDOCK_MAIL_POLL_INTERVAL_SECONDS,
+    maxMessageTextPartBytes: result.data.MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES,
   });
 }
 

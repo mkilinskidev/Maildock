@@ -1,0 +1,1 @@
+ALTER TABLE "mailboxes" ADD COLUMN "recent_sync_uid_validity" bigint;

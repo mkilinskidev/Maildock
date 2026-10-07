@@ -1,0 +1,38 @@
+CREATE TABLE "mail_accounts" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"display_name" text NOT NULL,
+	"email" text NOT NULL,
+	"enabled" boolean DEFAULT true NOT NULL,
+	"provider_type" text DEFAULT 'imap_smtp' NOT NULL,
+	"imap_host" text NOT NULL,
+	"imap_port" integer NOT NULL,
+	"imap_security" text NOT NULL,
+	"imap_username" text NOT NULL,
+	"imap_password" jsonb NOT NULL,
+	"smtp_host" text NOT NULL,
+	"smtp_port" integer NOT NULL,
+	"smtp_security" text NOT NULL,
+	"smtp_uses_imap_credentials" boolean DEFAULT true NOT NULL,
+	"smtp_username" text,
+	"smtp_password" jsonb,
+	"connection_status" text DEFAULT 'unverified' NOT NULL,
+	"imap_status" text DEFAULT 'untested' NOT NULL,
+	"imap_error" text,
+	"smtp_status" text DEFAULT 'untested' NOT NULL,
+	"smtp_error" text,
+	"last_successful_connection_test_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "mail_accounts_provider_type" CHECK ("mail_accounts"."provider_type" = 'imap_smtp'),
+	CONSTRAINT "mail_accounts_imap_port" CHECK ("mail_accounts"."imap_port" between 1 and 65535),
+	CONSTRAINT "mail_accounts_smtp_port" CHECK ("mail_accounts"."smtp_port" between 1 and 65535),
+	CONSTRAINT "mail_accounts_imap_security" CHECK ("mail_accounts"."imap_security" in ('tls', 'starttls')),
+	CONSTRAINT "mail_accounts_smtp_security" CHECK ("mail_accounts"."smtp_security" in ('tls', 'starttls')),
+	CONSTRAINT "mail_accounts_connection_status" CHECK ("mail_accounts"."connection_status" in ('unverified', 'verified', 'error')),
+	CONSTRAINT "mail_accounts_imap_status" CHECK ("mail_accounts"."imap_status" in ('untested', 'success', 'error')),
+	CONSTRAINT "mail_accounts_smtp_status" CHECK ("mail_accounts"."smtp_status" in ('untested', 'success', 'error')),
+	CONSTRAINT "mail_accounts_smtp_credentials" CHECK (("mail_accounts"."smtp_uses_imap_credentials" and "mail_accounts"."smtp_username" is null and "mail_accounts"."smtp_password" is null) or (not "mail_accounts"."smtp_uses_imap_credentials" and "mail_accounts"."smtp_username" is not null and "mail_accounts"."smtp_password" is not null))
+);
+--> statement-breakpoint
+CREATE INDEX "mail_accounts_enabled_idx" ON "mail_accounts" USING btree ("enabled");--> statement-breakpoint
+CREATE INDEX "mail_accounts_email_idx" ON "mail_accounts" USING btree ("email");

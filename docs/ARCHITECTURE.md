@@ -399,6 +399,8 @@ Account passwords and future OAuth refresh/access tokens are secrets.
 
 The example environment file contains placeholders only. Production documentation must recommend a secret manager or protected orchestrator secret, restricted filesystem permissions, database encryption at rest where available, and regular key rotation/backup procedures.
 
+ADR 0009 fixes the Phase 1A implementation contract: Node.js AES-256-GCM with a fresh 96-bit IV and explicit 128-bit tag; a versioned envelope carrying algorithm and key ID; identified active and previous 32-byte keys supplied outside PostgreSQL; and protocol-specific AAD `maildock:account-credential:v1:<account-id>:imap|smtp`. SMTP credentials that logically reuse IMAP credentials are not duplicated. Saving an unverified account is allowed so a temporarily unavailable self-hosted provider does not prevent configuration.
+
 ## 14. Instance authentication
 
 Maildock V1 has one instance owner. Authentication gates the entire instance; it does not make the owner part of mail-domain ownership and must not introduce `user_id` columns on mail records.
@@ -495,6 +497,10 @@ This does not require implementing unused adapters now. It requires stable ports
 
 ## 22. Implementation phases
 
+Phase 1E implements mailbox delta synchronization with a durable mailbox checkpoint, periodic pg-boss polling, and an INBOX-only IMAP IDLE wake-up watcher. The algorithm and restart semantics are documented in [PHASE_1E.md](PHASE_1E.md). IDLE events never write mail data directly.
+
+Phase 1F adds delegated Microsoft OAuth2 as an account authentication method. `AccountsService` resolves a password or runtime access-token credential before invoking the existing IMAP/SMTP provider; discovery, recent and delta sync, IDLE, and content services remain provider-neutral. MSAL Node owns token renewal and its per-account serialized cache is encrypted in PostgreSQL. See [PHASE_1F.md](PHASE_1F.md).
+
 No phase should add Gmail API, Graph, POP3, AI, contacts, or calendars unless this architecture document is explicitly revised.
 
 ### Phase 0 — repository and decisions
@@ -533,7 +539,7 @@ Status: bootstrap implemented. ADRs 0002 through 0008 resolve the Phase 0 techno
 ### Phase 4 — search and hardening
 
 - PostgreSQL full-text search and filters.
-- HTML rendering isolation, remote-image controls, security headers, and non-login rate/size limits.
+- Optional remote-image controls, broader security headers, and non-login rate/size limits. Phase 1D already isolates sanitized HTML and blocks remote resources by default.
 - Backup/restore documentation, metrics, operational screens, and failure recovery.
 
 ## 23. Definition of done for each feature
@@ -556,7 +562,7 @@ A feature is not complete unless:
 
 Phase 0 decisions are recorded in ADRs 0002 through 0008. The following implementation details remain deliberately deferred until their owning phase:
 
-- the exact `email-html-v1` sanitizer allowlist and CSS transformation rules, within ADR 0007's fixed isolation boundary
+- any future sender-CSS support beyond the Phase 1D `email-html-v1` policy, which removes sender CSS entirely
 - raw-MIME pruning controls and production capacity guidance; retention by default is fixed by ADR 0008
 - detailed sync-progress UI when a provider cannot report a stable total
 - optional attachment auto-cache policies beyond the V1 on-demand default

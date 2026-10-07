@@ -14,6 +14,7 @@ Name records sequentially: `0001-short-decision-title.md`, `0002-next-decision.m
 - [ADR 0006: Better Auth single-owner implementation](0006-better-auth-single-owner-implementation.md)
 - [ADR 0007: Untrusted email HTML isolation](0007-untrusted-email-html-isolation.md)
 - [ADR 0008: Initial synchronization and mail storage policy](0008-initial-sync-and-mail-storage-policy.md)
+- [ADR 0009: Application-level mail credential encryption](0009-application-level-mail-credential-encryption.md)
 
 ## Template
 

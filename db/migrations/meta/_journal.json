@@ -8,6 +8,69 @@
       "when": 1790187448211,
       "tag": "0000_dazzling_johnny_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790224856727,
+      "tag": "0001_shallow_thunderbolts",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790226999420,
+      "tag": "0002_rich_diamondback",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790229946658,
+      "tag": "0003_living_iron_patriot",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790230828599,
+      "tag": "0004_robust_captain_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790231042793,
+      "tag": "0005_nosy_lightspeed",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790596388060,
+      "tag": "0006_glorious_exiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790599663891,
+      "tag": "0007_little_retro_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790793077068,
+      "tag": "0008_magenta_spencer_smythe",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790796823288,
+      "tag": "0009_opposite_silver_centurion",
+      "breakpoints": true
     }
   ]
 }

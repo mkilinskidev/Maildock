@@ -10,7 +10,7 @@
   "packageManager": "pnpm@12.6.0",
   "scripts": {
     "dev": "next dev",
-    "build": "next build && tsc -p tsconfig.worker.json",
+    "build": "next build && tsc -p tsconfig.worker.json && node scripts/fix-worker-imports.mjs",
     "start": "next start",
     "start:worker": "node dist-worker/composition/worker-process.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
@@ -22,6 +22,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@azure/msal-node": "^7.0.0",
     "@node-rs/argon2": "2.2.1",
     "better-auth": "1.7.5",
     "dompurify": "3.4.16",
