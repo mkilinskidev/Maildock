@@ -41,7 +41,6 @@ for(const name of ['better-auth','better-auth/plugins','@better-auth/utils/otp',
 const {hash,verify}=await import('@node-rs/argon2');
 assert.equal(await verify(await hash('Synthetic F1246 password'),'Synthetic F1246 password'),true);
 const files={
- '@better-auth/drizzle-adapter':['dist/index.mjs','and(inArray(idColumn, targetIds), ...clause)'],
  'imapflow':['dist/esm/commands/store.js','ConditionalStoreFailed'],
  'pg-boss':['dist/plans.js','active_job.singleton_key'],
  'next':['dist/server/body-streams.js','NEXT_PROXY_BODY_TOO_LARGE'],

@@ -8,4 +8,5 @@ coverage
 .env.*
 !.env.example
 README.md
+**/*.md
 docs
