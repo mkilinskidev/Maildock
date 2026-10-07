@@ -47,7 +47,7 @@ describe("F11 real disposable PostgreSQL, Better Auth and pg-boss canaries", () 
     const resultFile = path.join(directory, "results.json");
     const child = spawn(
       process.execPath,
-      ["--import", "tsx", "tests/security/f11-process.ts"],
+      ["--import", "tsx", "tests/security/safe-logging-process.ts"],
       {
         cwd: process.cwd(),
         env: {

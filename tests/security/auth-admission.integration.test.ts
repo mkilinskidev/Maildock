@@ -282,7 +282,7 @@ import {
   AuthThrottledError,
 } from "@/modules/auth/infrastructure/auth-admission";
 import * as passwords from "@/modules/auth/infrastructure/password";
-import { forwardingHeaders } from "./f9-headers";
+import { forwardingHeaders } from "./ingress-forwarding-headers";
 import { POST as cancelPost } from "@/app/api/auth/mfa/cancel/route";
 async function bucket(key: string) {
   return (

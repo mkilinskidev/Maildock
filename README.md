@@ -1,108 +1,128 @@
 # Maildock
 
-Maildock is a single-user, self-hosted web application intended to bring multiple email accounts into one browser interface.
+Maildock is a single-owner, self-hosted web mail client for managing multiple email accounts from one browser interface.
 
-Maildock is in **early development**. Phases 0–2E provide one-owner authentication, encrypted IMAP/SMTP and Microsoft OAuth accounts, mailbox/message synchronization, isolated message reading, reply/forward, durable sending and Sent-copy, and on-demand incoming/staged outgoing attachments. See [`docs/PHASE_2E.md`](docs/PHASE_2E.md) for attachment storage, limits and acceptance scenarios.
+It keeps a local PostgreSQL read model for fast browsing and search while IMAP/SMTP providers remain authoritative for mail. Maildock supports standard IMAP/SMTP accounts plus OAuth for Microsoft and Google accounts, durable background synchronization and sending, attachments, local drafts, conversations, rich HTML mail, signatures, search, notifications, and account diagnostics.
 
-The authoritative design is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), governed by the accepted records in [`docs/adr/`](docs/adr/).
+> **Release status:** the V1 feature set is frozen and the first security-remediation pass is complete. Final release validation is still in progress; do not treat the current branch as a published stable release yet.
 
-## Requirements
+## Quick start for local evaluation
 
-- Node.js 24.15 or newer in the Node 24 LTS line (the container pins 24.21.0)
-- pnpm 12.7.0 through Corepack
-- PostgreSQL 18 for direct local development
-- Docker for the integration tests and Docker workflow
+You need Docker with Docker Compose.
 
-## Configuration and secrets
+1. Clone the repository and create your local environment file:
 
-Copy `.env.example` to `.env` and replace every empty secret. Generate `AUTH_SECRET`, `CREDENTIALS_ENCRYPTION_KEY`, and `MAILDOCK_BOOTSTRAP_SECRET` independently:
+   ```sh
+   cp .env.example .env
+   ```
+
+2. In `.env`, set:
+
+   ```dotenv
+   APP_ORIGIN=http://localhost:3000
+   POSTGRES_PASSWORD=<strong-random-password>
+   AUTH_SECRET=<base64-random-secret>
+   MAILDOCK_BOOTSTRAP_SECRET=<base64-32-byte-secret>
+   CREDENTIALS_ENCRYPTION_KEY=<base64-32-byte-key>
+   ```
+
+   Generate each of the three base64 secrets independently:
+
+   ```sh
+   openssl rand -base64 32
+   ```
+
+3. Build and start the local stack:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+   ```
+
+4. Open `http://localhost:3000/setup`. Enter the bootstrap secret from `.env`, create the owner, and complete the mandatory TOTP setup. Store the recovery codes somewhere safe.
+
+5. After owner setup succeeds, remove the value of `MAILDOCK_BOOTSTRAP_SECRET` from `.env` and recreate the app container:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate app
+   ```
+
+6. Sign in at `http://localhost:3000/login` and add an account from **Settings → Accounts**.
+
+Stop the local stack with:
 
 ```sh
-openssl rand -base64 32
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
-Production deployments **MUST configure `MAILDOCK_BOOTSTRAP_SECRET` before exposing an uninitialized instance**. Use canonical base64 encoding of exactly 32 cryptographically random bytes (256 bits); do not use a human password. Enter it in the setup form alongside the new owner credentials. Never put it in a URL, browser storage, logs, or source control. The server retains only a SHA-256 digest in application configuration and does not store the bootstrap secret in PostgreSQL or send it to the browser. Missing configuration leaves provisioning disabled. After setup succeeds, remove the secret from deployment configuration and restart; the persisted initialized state keeps setup closed after restarts. This secret cannot reset an existing owner.
+The named PostgreSQL and attachment volumes are retained. **Do not add `-v` unless you intentionally want to destroy all Maildock data.**
 
-Setup accepts at most 4 KiB per request and allows 10 seconds to read the body. Before Argon2 it checks persisted initialization, bootstrap authorization, and credential bounds. Separate global PostgreSQL fixed-window counters allow five authorized attempts and thirty invalid-secret attempts per minute; invalid-secret traffic cannot consume the authorized budget. A nonblocking transaction advisory lock admits only one setup password hash across web processes. Busy attempts return HTTP 429 with a 60-second retry hint. These controls reuse authentication rate-limit storage and do not depend on client IP or proxy headers. Keep normal reverse-proxy connection/request limits in place for public deployments.
+For a real server, do not use the development override. Read [Installation & deployment](docs/INSTALLATION.md) first.
 
-`AUTH_SECRET` must decode to at least 32 bytes. `CREDENTIALS_ENCRYPTION_KEY` must be canonical base64 for exactly 32 random bytes. `CREDENTIALS_ENCRYPTION_KEY_ID` identifies that key (start with `v1`). Do not commit `.env`, place secrets in images, reuse keys, or print them in logs. Production should inject them using a secret manager, mounted secret, or protected orchestrator secret.
+## Documentation
 
-Mail account passwords are encrypted with AES-256-GCM using a fresh 96-bit IV, a 128-bit authentication tag, and account/protocol-bound AAD. The JSON envelope records format version, algorithm, key ID, IV, ciphertext, and tag. IMAP and SMTP use these exact AAD formats:
+- [Installation & deployment](docs/INSTALLATION.md) — fresh Docker deployment, first-run setup, HTTPS/ingress, updates, health checks.
+- [Configuration](docs/CONFIGURATION.md) — environment variables, secrets, limits, tuning.
+- [OAuth providers](docs/OAUTH.md) — Microsoft and Google application setup.
+- [Backup & recovery](docs/BACKUP_AND_RECOVERY.md) — the supported matched backup set, restore procedure, post-restore security maintenance.
+- [Security model](docs/SECURITY.md) — owner authentication, mandatory MFA, credential protection, network and content boundaries.
+- [Architecture](docs/ARCHITECTURE.md) — current V1 system design and data/identity rules.
+- [Development](docs/DEVELOPMENT.md) — local toolchain, commands, tests and repository structure.
+- [Dependency patches](docs/DEPENDENCY_PATCHES.md) — why Maildock carries pinned package patches.
+- [Architecture Decision Records](docs/adr/README.md) — durable design decisions.
+
+Security-development reports and phase-by-phase implementation notes were intentionally removed from the current documentation surface. Their history remains available in Git; the files above describe the product as it exists now.
+
+## Production shape
+
+The supported base deployment has exactly two required services:
 
 ```text
-maildock:account-credential:v1:<account-id>:imap
-maildock:account-credential:v1:<account-id>:smtp
+Internet
+   |
+ HTTPS
+   v
+operator-managed reverse proxy / ingress
+   |
+   v
+Maildock app  ---> IMAP / SMTP providers
+   |
+   +---- PostgreSQL
+   |
+   +---- attachment volume
 ```
 
-**Backup/recovery:** Stop all application writers and capture the complete PostgreSQL database, attachment root, matching `AUTH_SECRET`, every required credential key/key ID, effective configuration and release/helper identity as one confidential set. PostgreSQL stays online for `pg_dump -Fc --no-acl`. Follow the [supported backup, offline recovery and update contract](docs/DEPLOYMENT.md#v1-matched-backup-and-recovery-set), including the historical archive bridge and explicit post-restore security maintenance before workers/ingress start. A DB-only online backup is not a complete recovery set.
+The base `docker-compose.yml` publishes neither the app nor PostgreSQL on the host. Production requires HTTPS at the canonical `APP_ORIGIN` and a private path from ingress to the app. PostgreSQL must not be Internet-accessible.
 
-For controlled future rotation, `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` accepts a JSON object such as `{"v1":"<old-base64-key>"}`. Keep the old key available, configure a new active key/ID, restart, re-encrypt every stored credential with fresh IVs through a reviewed operator procedure, verify it, and only then remove the old key. Phase 1A provides the multi-key decryption seam but no rotation UI or job.
+The application image starts migrations, the web process, and the background worker. The same image can run only `web` or `worker` with `MAILDOCK_ROLE` in custom deployments, but the base V1 stack runs both together.
 
-`APP_ORIGIN` is the exact canonical browser origin. Production requires HTTPS. `ATTACHMENTS_PATH` must be absolute and readable/writable by Maildock.
+## Core characteristics
 
-To connect Microsoft mail accounts, register a Microsoft Entra application with a **Web** redirect URI of `${APP_ORIGIN}/api/oauth/microsoft/callback`. Enable both organizational and personal Microsoft accounts if you need Outlook.com. Add delegated Exchange Online `IMAP.AccessAsUser.All` and `SMTP.Send` permissions. Put its application (client) ID in `MICROSOFT_CLIENT_ID` and a client secret **value** in `MICROSOFT_CLIENT_SECRET`. Restart the app and worker, then sign in to Maildock and choose **Connect Microsoft account** on `/accounts`. See [`docs/PHASE_1F.md`](docs/PHASE_1F.md) for consent and verification details.
+- One immutable Maildock owner per installation; no registration, tenants, roles or RBAC.
+- Mandatory TOTP MFA with recovery codes.
+- Multiple IMAP/SMTP accounts with encrypted passwords/tokens.
+- Microsoft 365 / Outlook.com and Gmail / Google Workspace OAuth through the same IMAP/SMTP mail pipeline.
+- Progressive synchronization: recent mail first, historical metadata backfill afterwards, incremental synchronization prioritized over backfill.
+- PostgreSQL-backed durable jobs through pg-boss.
+- Local full-text search across synchronized mail.
+- Durable message actions and outgoing mail with explicit uncertainty handling.
+- Persistent attachment/blob storage separate from PostgreSQL.
+- Rich received HTML isolated in a sandboxed iframe; remote images are blocked by default.
+- Rich compose, signatures, local drafts, conversation view, desktop notifications and diagnostics.
+- Structured operational logs with secret-safe diagnostic boundaries.
 
-There is no forgotten-owner-password reset flow. Offline restore maintenance preserves the immutable owner's password and mandatory MFA, issues fresh protected recovery codes, and requires password plus pending TOTP to complete an interrupted authenticator replacement. It does not provide a second-owner or bootstrap recovery bypass.
+## Health endpoints
 
-## Local development
+- `GET /api/health/live` — HTTP process liveness.
+- `GET /api/health/ready` — database, migration foundation and writable attachment storage readiness.
 
-Start PostgreSQL (or provide another PostgreSQL 18 instance), fill `.env`, then run:
+Readiness intentionally does not contact remote mail providers.
 
-```sh
-corepack enable
-corepack prepare pnpm@12.7.0 --activate
-pnpm install
-pnpm db:migrate
-pnpm dev
-```
+## Technology
 
-Open `http://localhost:3000/setup` for first-run owner creation. After setup, sign in at `/login`; `/` is the protected mail-account list. The owner username is immutable.
+Maildock currently pins Node.js 24.21.0 in the container and pnpm 12.7.0. The application uses TypeScript, Next.js, React, PostgreSQL 18, Drizzle ORM, pg-boss, Better Auth, ImapFlow, Nodemailer and MailParser.
 
-Useful commands:
+For direct development use Node.js 24 LTS (`>=24.15 <25`), pnpm 12.7.0, PostgreSQL 18 and Docker for integration/security tests.
 
-```sh
-pnpm dev
-pnpm build
-pnpm start
-pnpm start:worker
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm db:generate
-pnpm db:migrate
-```
+## License
 
-Integration tests start a disposable PostgreSQL 18 container and require a working Docker daemon.
-
-## Docker
-
-For a local two-service deployment, put development values in `.env` (including `APP_ORIGIN=http://localhost:3000`) and run:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-```
-
-The development override binds the app and PostgreSQL only to localhost and selects development security mode. It is not a production template. The production-oriented base file contains exactly `app` and `postgres`, publishes neither service on the host, and advertises internal app port 3000 for operator-owned ingress.
-
-Follow the [proxy-independent production ingress contract and operator checklist](docs/DEPLOYMENT.md). Coolify / Traefik, Caddy, Nginx Proxy Manager, nginx and equivalent ingress systems are examples, not dependencies. Production requires canonical HTTPS `APP_ORIGIN`, `MAILDOCK_ENV=production`, private PostgreSQL, and no alternate untrusted raw HTTP path bypassing ingress. Maildock does not trust forwarded client-address headers; F8 authentication admission is IP-independent. Network attachment, routing and actual reachability are operator responsibilities, not guarantees inferred from Docker networking.
-
-The app entrypoint waits for Compose's PostgreSQL health check, runs migrations, then starts the web and worker composition roots. The same image can later run only one role by setting `MAILDOCK_ROLE=web` or `MAILDOCK_ROLE=worker`.
-
-Health endpoints:
-
-- `GET /api/health/live` checks only that the HTTP process is alive.
-- `GET /api/health/ready` checks the database, migration foundation, and writable attachment storage without contacting mail providers or exposing internal errors.
-
-Stop the stack with `docker compose -f docker-compose.yml -f docker-compose.dev.yml down`. Named PostgreSQL and attachment volumes are retained unless explicitly removed.
-
-## Current data model
-
-The `mail_accounts` table stores instance-owned account identity, non-secret provider settings, connection/discovery state, relevant IMAP capabilities, and JSONB encrypted password envelopes. The `mailboxes` table stores account-scoped remote observations under an independent local UUID. Neither table has `user_id`, and there are no message tables. Better Auth retains its separate infrastructure `account` table, and pg-boss manages its own schema. See [`docs/PHASE_1B.md`](docs/PHASE_1B.md) for identity, lifecycle, and manual verification details.
-
-## Mail accounts and connection testing
-
-The owner can add, edit, enable/disable, retest, and delete accounts from `/`. Saving does not require a successful connection test: this deliberately permits configuration while a self-hosted provider is temporarily unavailable, and the account remains clearly unverified. Connection tests authenticate to IMAP and call SMTP verification without sending mail. TLS certificates and hostnames remain validated; STARTTLS mode requires a successful upgrade and never downgrades to plaintext.
-
-Stored passwords are never returned to the browser. An empty password field on edit preserves its encrypted envelope; entering a replacement creates new ciphertext with a fresh random IV.
-
-Enabled accounts schedule mailbox discovery after the account transaction commits. The UI shows pending/running/failure state, retains the previous hierarchy after temporary failures, and allows rediscovery. Start the worker (`pnpm start:worker`) alongside a production web process; `pnpm dev` by itself does not execute durable discovery jobs.
+No open-source license is currently declared. Until a license is added, normal copyright rules apply.

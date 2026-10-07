@@ -19,7 +19,7 @@ const network = `${prefix}-net`,
 const temp = await mkdtemp(path.join(tmpdir(), "maildock-f12-1-"));
 const output = path.resolve(".security-results/f12/image");
 const productionProbe = fileURLToPath(
-  new URL("./f12-production.mjs", import.meta.url),
+  new URL("./production-image-probe.mjs", import.meta.url),
 );
 const resources = { containers: [], network: false, volume: false };
 await mkdir(output, { recursive: true });
@@ -97,9 +97,9 @@ async function capture(container, label) {
   console.log(`${label}: independent stdout/stderr canary assertions PASS`);
 }
 function probe(container, args = []) {
-  docker(["cp", productionProbe, `${container}:/app/f12-production.mjs`]);
+  docker(["cp", productionProbe, `${container}:/app/production-image-probe.mjs`]);
   const result = docker(
-    ["exec", container, "node", "/app/f12-production.mjs", ...args],
+    ["exec", container, "node", "/app/production-image-probe.mjs", ...args],
     false,
   );
   const label = args.includes("--high") ? "high" : "default";

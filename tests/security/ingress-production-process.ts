@@ -10,7 +10,7 @@ import {
   rateLimit,
   session,
 } from "../../src/shared/infrastructure/database/schema";
-import { forwardingHeaders } from "./f9-headers";
+import { forwardingHeaders } from "./ingress-forwarding-headers";
 
 // Separate process: Better Auth's test fallback must not mask production behavior.
 assert.equal(process.env.NODE_ENV, "production");
