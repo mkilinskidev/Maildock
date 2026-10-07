@@ -1,10 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, writeFile, cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import { symmetricEncrypt, symmetricDecrypt } from "better-auth/crypto";
 import { createOTP } from "@better-auth/utils/otp";
 import {
@@ -274,6 +275,47 @@ describe("F12-05 offline recovery", () => {
           "CREATE OR REPLACE FUNCTION",
         ),
       );
+      const originalHistory = await source.database.client<
+        { id: number; hash: string; created_at: string }[]
+      >`select id, hash, created_at from drizzle.__drizzle_migrations order by created_at`;
+      const deployed = (
+        await readFile(
+          "scripts/postgres/recovery/legacy-migrations.txt",
+          "utf8",
+        )
+      )
+        .trimEnd()
+        .split("\n");
+      // A mixture of individually known hashes is not a reviewed release.
+      const changed = originalHistory.findIndex(
+        (row, i) => row.hash !== deployed[i].split("\t")[0],
+      );
+      expect(changed).toBeGreaterThanOrEqual(0);
+      await source.database
+        .client`update drizzle.__drizzle_migrations set hash=${deployed[changed].split("\t")[0]} where id=${originalHistory[changed].id}`;
+      await dump();
+      await refuse("archive_migrations");
+      await source.database
+        .client`update drizzle.__drizzle_migrations set hash=${originalHistory[changed].hash} where id=${originalHistory[changed].id}`;
+      await source.database
+        .client`update drizzle.__drizzle_migrations set created_at=created_at+1 where id=1`;
+      await dump();
+      await refuse("archive_migrations");
+      await source.database
+        .client`update drizzle.__drizzle_migrations set created_at=${originalHistory[0].created_at} where id=1`;
+      const last = originalHistory.at(-1)!;
+      await source.database
+        .client`delete from drizzle.__drizzle_migrations where id=${last.id}`;
+      await dump();
+      await refuse("archive_migrations");
+      await source.database
+        .client`insert into drizzle.__drizzle_migrations (id, hash, created_at) values (${last.id}, ${last.hash}, ${last.created_at})`;
+      await source.database
+        .client`insert into drizzle.__drizzle_migrations (id, hash, created_at) values (${last.id + 1}, ${last.hash}, ${Number(last.created_at) + 1})`;
+      await dump();
+      await refuse("archive_migrations");
+      await source.database
+        .client`delete from drizzle.__drizzle_migrations where id=${last.id + 1}`;
       await source.database
         .client`update drizzle.__drizzle_migrations set hash='unknown-release' where id=1`;
       await dump();
@@ -795,77 +837,150 @@ describe("F12-05 offline recovery", () => {
     }
   });
 
-  it("bridges the exact baseline archive and preserves vector semantics/OIDs without rebuilding", async () => {
-    const source = await start(),
-      destination = await start();
-    const baseline = path.join(root, "baseline-migrations");
-    await cp("db/migrations", baseline, { recursive: true });
-    const journal = JSON.parse(
-      await readFile(path.join(baseline, "meta/_journal.json"), "utf8"),
-    );
-    journal.entries.pop();
-    await writeFile(
-      path.join(baseline, "meta/_journal.json"),
-      JSON.stringify(journal),
-    );
-    try {
-      await migrate(source.database.db, { migrationsFolder: baseline });
-      const vector = (database: typeof db) =>
-        database.client`select public.maildock_search_vector('Subject Łódź', '[{"name":"Owner","address":"first.last@example.invalid"}]'::jsonb, '[]'::jsonb, '[{"address":"to@sample.invalid"}]'::jsonb, '[]'::jsonb, 'body token')::text as vector`;
-      const before = await vector(source.database);
-      const ids = await source.database
-        .client`select 'public.messages'::regclass::oid as table_oid, 'public.messages_search_gin_idx'::regclass::oid as index_oid, 'public.maildock_search_vector(text,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure::oid as function_oid`;
-      expect(
-        (
-          await source.container.exec([
-            "sh",
-            "-c",
-            'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -h postgres -U maildock -d maildock -Fc --no-acl -f /tmp/legacy.dump',
-          ])
-        ).exitCode,
-      ).toBe(0);
-      await destination.container.copyArchiveToContainer(
-        (await source.container.copyArchiveFromContainer(
-          "/tmp/legacy.dump",
-        )) as Readable,
-        "/tmp",
+  it.each(["lf", "deployed"] as const)(
+    "bridges the exact %s baseline archive and preserves hashes/vector semantics/OIDs without rebuilding",
+    async (variant) => {
+      const source = await start(),
+        destination = await start();
+      const baseline = path.join(root, "baseline-migrations");
+      await cp("db/migrations", baseline, { recursive: true });
+      const journal = JSON.parse(
+        await readFile(path.join(baseline, "meta/_journal.json"), "utf8"),
       );
-      const bridge = await destination.container.exec([
-        "sh",
-        "/helper.sh",
-        "--fresh-destination-writers-stopped",
-        "/tmp/legacy.dump",
-      ]);
-      expect(bridge.output).toContain("recovery_archive_restored");
-      expect(bridge.exitCode).toBe(0);
-      await migrate(destination.database.db, {
-        migrationsFolder: "db/migrations",
-      });
-      await validateDatabaseAuthority(destination.database.client);
-      await verifyRecoverySchema(destination.database.db);
-      expect(await vector(destination.database)).toEqual(before);
-      await migrate(source.database.db, { migrationsFolder: "db/migrations" });
-      expect(await vector(source.database)).toEqual(before);
-      expect(
-        await source.database
-          .client`select 'public.messages'::regclass::oid as table_oid, 'public.messages_search_gin_idx'::regclass::oid as index_oid, 'public.maildock_search_vector(text,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure::oid as function_oid`,
-      ).toEqual(ids);
-      await source.database.client`set search_path=''`;
-      expect(await vector(source.database)).toEqual(before);
-      // Already populated/uncertain target is always refused.
-      expect(
-        (
-          await destination.container.exec([
-            "sh",
-            "/helper.sh",
-            "--fresh-destination-writers-stopped",
+      journal.entries.pop();
+      const manifest = (
+        await readFile(
+          `scripts/postgres/recovery/legacy-migrations${variant === "lf" ? "-lf" : ""}.txt`,
+          "utf8",
+        )
+      )
+        .trimEnd()
+        .split("\n");
+      expect(journal.entries).toHaveLength(manifest.length);
+      for (const [i, entry] of journal.entries.entries()) {
+        const file = path.join(baseline, `${entry.tag}.sql`);
+        const bytes = await readFile(file, "utf8");
+        const [hash, timestamp] = manifest[i].split("\t");
+        expect(String(entry.when)).toBe(timestamp);
+        const digest = (text: string) =>
+          createHash("sha256").update(text).digest("hex");
+        // Reconstruct only the pinned historical newline bytes in a disposable fixture.
+        // Fail rather than synthesizing or accepting any other migration content.
+        if (digest(bytes) !== hash) {
+          expect(variant).toBe("deployed");
+          const historicalBytes = bytes.replace(/\r?\n/g, "\r\n");
+          expect(digest(historicalBytes)).toBe(hash);
+          await writeFile(file, historicalBytes);
+        }
+        expect(digest(await readFile(file, "utf8"))).toBe(hash);
+      }
+      await writeFile(
+        path.join(baseline, "meta/_journal.json"),
+        JSON.stringify(journal),
+      );
+      try {
+        await migrate(source.database.db, { migrationsFolder: baseline });
+        const originalHistory = await source.database.client<
+          { hash: string; created_at: string }[]
+        >`select hash, created_at from drizzle.__drizzle_migrations order by created_at`;
+        const vector = (database: typeof db) =>
+          database.client`select public.maildock_search_vector('Subject Łódź', '[{"name":"Owner","address":"first.last@example.invalid"}]'::jsonb, '[]'::jsonb, '[{"address":"to@sample.invalid"}]'::jsonb, '[]'::jsonb, 'body token')::text as vector`;
+        const before = await vector(source.database);
+        const ids = await source.database
+          .client`select 'public.messages'::regclass::oid as table_oid, 'public.messages_search_gin_idx'::regclass::oid as index_oid, 'public.maildock_search_vector(text,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure::oid as function_oid`;
+        expect(
+          (
+            await source.container.exec([
+              "sh",
+              "-c",
+              'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -h postgres -U maildock -d maildock -Fc --no-acl -f /tmp/legacy.dump',
+            ])
+          ).exitCode,
+        ).toBe(0);
+        await destination.container.copyArchiveToContainer(
+          (await source.container.copyArchiveFromContainer(
             "/tmp/legacy.dump",
-          ])
-        ).exitCode,
-      ).toBe(1);
-    } finally {
-      await source.database.client.end();
-      await destination.database.client.end();
-    }
-  });
+          )) as Readable,
+          "/tmp",
+        );
+        const bridge = await destination.container.exec([
+          "sh",
+          "/helper.sh",
+          "--fresh-destination-writers-stopped",
+          "/tmp/legacy.dump",
+        ]);
+        expect(bridge.output).toContain("recovery_archive_restored");
+        expect(bridge.exitCode).toBe(0);
+        await migrate(destination.database.db, {
+          migrationsFolder: "db/migrations",
+        });
+        await validateDatabaseAuthority(destination.database.client);
+        await verifyRecoverySchema(destination.database.db);
+        const restoredHistory = await destination.database.client<
+          { hash: string; created_at: string }[]
+        >`select hash, created_at from drizzle.__drizzle_migrations order by created_at`;
+        expect(restoredHistory.slice(0, originalHistory.length)).toEqual(
+          originalHistory,
+        );
+        // Complete known histories remain mandatory for schema verification too.
+        const current = readMigrationFiles({
+          migrationsFolder: "db/migrations",
+        });
+        const changed = current.findIndex(
+          (row, i) => row.hash !== restoredHistory[i].hash,
+        );
+        if (variant === "deployed") {
+          expect(changed).toBeGreaterThanOrEqual(0);
+          await destination.database
+            .client`update drizzle.__drizzle_migrations set hash=${current[changed].hash} where created_at=${restoredHistory[changed].created_at}`;
+          await expect(
+            verifyRecoverySchema(destination.database.db),
+          ).rejects.toMatchObject({ category: "recovery_schema" });
+          await destination.database
+            .client`update drizzle.__drizzle_migrations set hash=${restoredHistory[changed].hash} where created_at=${restoredHistory[changed].created_at}`;
+        }
+        await destination.database
+          .client`update drizzle.__drizzle_migrations set hash='unknown-release' where created_at=${restoredHistory[0].created_at}`;
+        await expect(
+          verifyRecoverySchema(destination.database.db),
+        ).rejects.toMatchObject({ category: "recovery_schema" });
+        await destination.database
+          .client`update drizzle.__drizzle_migrations set hash=${restoredHistory[0].hash} where created_at=${restoredHistory[0].created_at}`;
+        const tail = restoredHistory.at(-1)!;
+        await destination.database
+          .client`update drizzle.__drizzle_migrations set created_at=created_at+1 where created_at=${tail.created_at}`;
+        await expect(
+          verifyRecoverySchema(destination.database.db),
+        ).rejects.toMatchObject({ category: "recovery_schema" });
+        await destination.database
+          .client`update drizzle.__drizzle_migrations set created_at=${tail.created_at} where created_at=${Number(tail.created_at) + 1}`;
+        await verifyRecoverySchema(destination.database.db);
+        expect(await vector(destination.database)).toEqual(before);
+        await migrate(source.database.db, {
+          migrationsFolder: "db/migrations",
+        });
+        expect(await vector(source.database)).toEqual(before);
+        expect(
+          await source.database
+            .client`select 'public.messages'::regclass::oid as table_oid, 'public.messages_search_gin_idx'::regclass::oid as index_oid, 'public.maildock_search_vector(text,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure::oid as function_oid`,
+        ).toEqual(ids);
+        await source.database.client`set search_path=''`;
+        expect(await vector(source.database)).toEqual(before);
+        // Already populated/uncertain target is always refused.
+        expect(
+          (
+            await destination.container.exec([
+              "sh",
+              "/helper.sh",
+              "--fresh-destination-writers-stopped",
+              "/tmp/legacy.dump",
+            ])
+          ).exitCode,
+        ).toBe(1);
+      } finally {
+        await source.database.client.end();
+        await destination.database.client.end();
+      }
+    },
+  );
 });

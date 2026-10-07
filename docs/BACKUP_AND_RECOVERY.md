@@ -37,6 +37,8 @@ For current custom-format archives use `pg_restore --no-owner --no-acl --exit-on
 
 Historical pre-0032 archives can contain search-function definitions that normal restore cannot safely reproduce. Use the packaged `scripts/postgres/maildock-restore-compatibility.sh` only for the exact historical archive shape it accepts. It refuses unknown layouts rather than guessing. Do not edit dumps or weaken database authority.
 
+The compatibility helper pins two complete 32-migration histories: the recorded deployed baseline (`legacy-migrations.txt`) and its reviewed LF checkout (`legacy-migrations-lf.txt`). They differ only in five newline-sensitive hashes. Post-restore schema verification accepts either complete baseline followed by the exact current migration suffix. Mixed histories, unknown hashes, changed timestamps and missing or extra migrations are refused. Stored migration hashes and historical SQL files are never rewritten.
+
 ## Mandatory post-restore maintenance
 
 A restored database can revive old sessions, recovery codes and queued remote work. Do not reopen Maildock just because import/readiness succeeds.
