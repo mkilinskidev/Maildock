@@ -1,3 +1,5 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import {
@@ -14,32 +16,36 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request, true);
-  if (denied) return denied;
-  try {
-    const id = z.uuid().parse((await context.params).id);
-    const account = await new AccountSettingsService(
-      db,
-      accountsService,
-      attachmentService,
-    ).saveGeneral(id, await request.json());
-    return Response.json({ account });
-  } catch (error) {
-    if (error instanceof MailAccountNotFoundError)
-      return Response.json({ error: error.message }, { status: 404 });
-    if (
-      error instanceof z.ZodError ||
-      error instanceof MailboxRoleUnavailableError ||
-      error instanceof OutgoingValidationError ||
-      error instanceof SyntaxError
-    )
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    const unsupported = requireJsonMediaType(request);
+    if (unsupported) return unsupported;
+    try {
+      const id = z.uuid().parse((await context.params).id);
+      const account = await new AccountSettingsService(
+        db,
+        accountsService,
+        attachmentService,
+      ).saveGeneral(id, await request.json());
+      return Response.json({ account });
+    } catch (error) {
+      if (error instanceof MailAccountNotFoundError)
+        return Response.json({ error: error.message }, { status: 404 });
+      if (
+        error instanceof z.ZodError ||
+        error instanceof MailboxRoleUnavailableError ||
+        error instanceof OutgoingValidationError ||
+        error instanceof SyntaxError
+      )
+        return Response.json(
+          { error: "Check the account identity, folders and signatures." },
+          { status: 400 },
+        );
       return Response.json(
-        { error: "Check the account identity, folders and signatures." },
-        { status: 400 },
+        { error: "Account settings could not be saved." },
+        { status: 500 },
       );
-    return Response.json(
-      { error: "Account settings could not be saved." },
-      { status: 500 },
-    );
-  }
+    }
+  });
 }

@@ -1,5 +1,6 @@
 import { PgBoss } from "pg-boss";
 import type { Logger } from "pino";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 
 import type { AppConfig } from "../../../shared/infrastructure/config/config.js";
 
@@ -15,10 +16,7 @@ export class JobRuntime {
       application_name: "maildock-worker",
     });
     this.boss.on("error", (error) => {
-      this.logger.error(
-        { err: error, event: "jobs.runtime_error" },
-        "Job runtime error",
-      );
+      logFailure(this.logger, error, "jobs", "runtime");
     });
   }
 

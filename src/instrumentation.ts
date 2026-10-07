@@ -1,0 +1,32 @@
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { validateDatabaseAuthority } =
+      await import("./shared/infrastructure/database/database-authority");
+    const { createDatabase } =
+      await import("./shared/infrastructure/database/database");
+    const { getConfig } = await import("./shared/infrastructure/config/config");
+    const { logFailure } =
+      await import("./shared/infrastructure/logging/diagnostics");
+    const { createLogger } =
+      await import("./shared/infrastructure/logging/logger");
+    try {
+      const database = createDatabase(getConfig());
+      try {
+        await validateDatabaseAuthority(database.client);
+      } finally {
+        await database.client.end();
+      }
+    } catch (error) {
+      logFailure(
+        createLogger({ logLevel: "info" }),
+        error,
+        "web",
+        "startup",
+        "fatal",
+      );
+      // Next reports a rejected hook but can leave its HTTP process alive.
+      // Refuse the independently launched web root before it can serve work.
+      process.exit(1);
+    }
+  }
+}

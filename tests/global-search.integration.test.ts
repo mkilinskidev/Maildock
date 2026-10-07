@@ -90,8 +90,10 @@ describe("Phase 2I PostgreSQL global search", () => {
       migrationsFolder: "db/migrations",
     });
     for (const migration of migrations.slice(0, -1))
-      for (const statement of migration.sql)
-        await database.db.execute(sql.raw(statement));
+      await database.db.transaction(async (tx) => {
+        for (const statement of migration.sql)
+          await tx.execute(sql.raw(statement));
+      });
     for (let i = 0; i < 2; i++) {
       // Use legacy columns while the final forward migration is pending.
       await database.client`INSERT INTO mail_accounts (id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) VALUES (${accounts[i]},${i ? "DPoczta" : "Hotmail"},${`owner${i}@example.com`},'imap.test',993,'tls','owner','{}','smtp.test',465,'tls')`;
@@ -130,8 +132,10 @@ describe("Phase 2I PostgreSQL global search", () => {
       sql`INSERT INTO message_contents(message_id, status, plain_text) VALUES(${historicalPlain}, 'ready', 'historicalplainneedle')`,
     );
     await placement(historicalPlain, boxes[1]);
-    for (const statement of migrations.at(-1)!.sql)
-      await database.db.execute(sql.raw(statement));
+    await database.db.transaction(async (tx) => {
+      for (const statement of migrations.at(-1)!.sql)
+        await tx.execute(sql.raw(statement));
+    });
     await initializeLocalSearchBodies(database.db);
     service = new SearchService(database.db);
   });

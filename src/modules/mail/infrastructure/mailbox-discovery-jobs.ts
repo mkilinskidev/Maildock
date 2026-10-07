@@ -1,3 +1,6 @@
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 
@@ -32,6 +35,9 @@ export class PgBossMailboxDiscoveryScheduler implements MailboxDiscoverySchedule
       connectionString: config.databaseUrl,
       application_name: "maildock-web-enqueue",
     });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
   }
 
   private start(): Promise<void> {
@@ -69,11 +75,11 @@ export async function registerMailboxDiscoveryWorker(
   await boss.work(
     MAILBOX_DISCOVERY_QUEUE,
     { localConcurrency: concurrency },
-    async (batch) => {
+    safeJobHandler("mailbox-discovery", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Mailbox discovery received an empty batch.");
       const payload = payloadSchema.parse(job.data);
       await service.run(payload.accountId);
-    },
+    }),
   );
 }

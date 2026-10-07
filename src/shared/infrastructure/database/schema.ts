@@ -246,6 +246,10 @@ export const instanceState = pgTable(
   {
     id: integer("id").primaryKey(),
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
+    ownerUserId: text("owner_user_id").references(() => user.id, {
+      onDelete: "restrict",
+      onUpdate: "restrict",
+    }),
     passwordAlgorithm: text("password_algorithm"),
     conversationView: boolean("conversation_view").default(false).notNull(),
     notificationPreferences: jsonb("notification_preferences")
@@ -281,7 +285,13 @@ export const instanceState = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [check("instance_state_singleton", sql`${table.id} = 1`)],
+  (table) => [
+    check("instance_state_singleton", sql`${table.id} = 1`),
+    check(
+      "instance_state_owner_binding",
+      sql`(${table.initializedAt} is null and ${table.ownerUserId} is null) or (${table.initializedAt} is not null and ${table.ownerUserId} is not null and length(trim(${table.ownerUserId})) > 0 and ${table.ownerUserId} = trim(${table.ownerUserId}))`,
+    ),
+  ],
 );
 
 export const user = pgTable(
@@ -294,6 +304,7 @@ export const user = pgTable(
     image: text("image"),
     username: text("username"),
     displayUsername: text("display_username"),
+    twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -304,6 +315,68 @@ export const user = pgTable(
   (table) => [
     uniqueIndex("user_email_unique").on(table.email),
     uniqueIndex("user_username_unique").on(table.username),
+  ],
+);
+
+export const twoFactor = pgTable(
+  "two_factor",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade", onUpdate: "restrict" }),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+    // Explicit verification is required by Maildock, including direct inserts.
+    verified: boolean("verified").default(false).notNull(),
+    failedVerificationCount: integer("failed_verification_count")
+      .default(0)
+      .notNull(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("two_factor_user_id_unique").on(table.userId),
+    index("two_factor_secret_idx").on(table.secret),
+  ],
+);
+
+// A pending replacement remains here after expiry to block bootstrap fallback.
+// It authorizes only enrollment of this exact factor, never login or business.
+export const mfaReplacement = pgTable("mfa_replacement", {
+  ownerUserId: text("owner_user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  factorId: text("factor_id").notNull(),
+  tokenDigest: text("token_digest").notNull(),
+  failedAttempts: integer("failed_attempts").default(0).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+// Explicit offline restore receipt; ordinary startup never runs maintenance.
+export const recoveryMaintenance = pgTable(
+  "recovery_maintenance",
+  {
+    id: integer("id").primaryKey(),
+    receiptId: uuid("receipt_id").notNull(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id, {
+        onDelete: "restrict",
+        onUpdate: "restrict",
+      }),
+    factorId: text("factor_id").notNull(),
+    recoveryCodesDigest: text("recovery_codes_digest").notNull(),
+    status: text("status").notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check("recovery_maintenance_id_check", sql`${table.id} = 1`),
+    check(
+      "recovery_maintenance_status_check",
+      sql`${table.status} in ('verified', 'pending_mfa')`,
+    ),
   ],
 );
 
@@ -393,6 +466,22 @@ export const rateLimit = pgTable("rate_limit", {
   count: integer("count").notNull(),
   lastRequest: bigint("last_request", { mode: "number" }).notNull(),
 });
+
+export const authAdmission = pgTable(
+  "auth_admission",
+  {
+    key: text("key").primaryKey(),
+    count: integer("count").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check(
+      "auth_admission_key",
+      sql`${table.key} in ('work:password', 'work:mfa', 'work:management', 'manage:password', 'manage:factor')`,
+    ),
+    check("auth_admission_count", sql`${table.count} between 1 and 31`),
+  ],
+);
 
 export const loginThrottle = pgTable("login_throttle", {
   key: text("key").primaryKey(),
@@ -728,7 +817,7 @@ export const messages = pgTable(
     searchVector: customType<{ data: string }>({ dataType: () => "tsvector" })(
       "search_vector",
     ).generatedAlwaysAs(
-      sql`maildock_search_vector(subject, "from", sender, "to", cc, search_body)`,
+      sql`public.maildock_search_vector(subject, "from", sender, "to", cc, search_body)`,
     ),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     internalDate: timestamp("internal_date", { withTimezone: true }).notNull(),
@@ -1054,10 +1143,12 @@ export const schema = {
   outgoingMessages,
   instanceState,
   user,
+  twoFactor,
   session,
   account,
   verification,
   rateLimit,
+  authAdmission,
   loginThrottle,
   mailAccounts,
   oauthAuthorizationStates,

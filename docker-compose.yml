@@ -1,5 +1,6 @@
 services:
   app:
+    stop_grace_period: 60s
     build:
       context: .
     environment:
@@ -8,6 +9,7 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
       DATABASE_URL: postgresql://maildock:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/maildock
       AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET}
+      MAILDOCK_BOOTSTRAP_SECRET: ${MAILDOCK_BOOTSTRAP_SECRET:-}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:?Set CREDENTIALS_ENCRYPTION_KEY}
       CREDENTIALS_ENCRYPTION_KEY_ID: ${CREDENTIALS_ENCRYPTION_KEY_ID:-v1}
       CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: ${CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS:-{}}
@@ -18,6 +20,15 @@ services:
       MAILDOCK_MAX_OUTGOING_ATTACHMENT_BYTES: ${MAILDOCK_MAX_OUTGOING_ATTACHMENT_BYTES:-18874368}
       MAILDOCK_MAX_OUTGOING_MIME_BYTES: ${MAILDOCK_MAX_OUTGOING_MIME_BYTES:-26214400}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Null entries forward supplied values and omit unset variables, preserving
+      # parser defaults without turning absence into an invalid empty string.
+      DATABASE_POOL_SIZE:
+      WORKER_CONCURRENCY:
+      MAILDOCK_INITIAL_SYNC_DAYS:
+      MAILDOCK_MESSAGE_FETCH_BATCH_SIZE:
+      MAILDOCK_MESSAGE_SYNC_CONCURRENCY:
+      MAILDOCK_MAIL_POLL_INTERVAL_SECONDS:
+      MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES:
       MAILDOCK_BACKFILL_CHUNK_SIZE: ${MAILDOCK_BACKFILL_CHUNK_SIZE:-500}
       MAILDOCK_CONTENT_POLL_INTERVAL_MS: ${MAILDOCK_CONTENT_POLL_INTERVAL_MS:-400}
     depends_on:
@@ -49,6 +60,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql
+      - ./scripts/postgres/99-maildock-authority.sql:/docker-entrypoint-initdb.d/99-maildock-authority.sql:ro
+      - ./scripts/postgres/maildock-authority-maintenance.sh:/usr/local/bin/maildock-authority-maintenance:ro
+      - ./scripts/postgres/maildock-restore-compatibility.sh:/usr/local/bin/maildock-restore-compatibility:ro
+      - ./scripts/postgres/recovery:/usr/local/share/maildock-recovery:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maildock -d maildock"]
       interval: 5s

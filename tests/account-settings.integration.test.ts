@@ -49,8 +49,9 @@ beforeAll(async () => {
       await database.client.unsafe(statement);
   await database.client`INSERT INTO mail_accounts (id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) VALUES (${legacyId},'Legacy Sender','legacy@example.com','imap.example.com',993,'tls','legacy','{}','smtp.example.com',465,'tls')`;
   for (const migration of migrations.slice(22))
-    for (const statement of migration.sql)
-      await database.client.unsafe(statement);
+    await database.client.begin(async (tx) => {
+      for (const statement of migration.sql) await tx.unsafe(statement);
+    });
   const encryption = new AesGcmSecretEncryption("v1", {
     v1: Buffer.alloc(32, 9).toString("base64"),
   });

@@ -31,8 +31,10 @@ import { ConversationViewSettings } from "./conversation-view-settings";
 import { SignatureSettings } from "./signature-settings";
 import { RemoteContentSettings } from "./remote-content-settings";
 import { AccountSettings } from "./account-settings";
+import { MfaManagement } from "./mfa-management";
 
 type Section =
+  | "security"
   | "oauth-providers"
   | "application-logs"
   | "add-account"
@@ -246,6 +248,7 @@ export function SettingsShell({
           <div className="settings-nav-group">
             <h2>General</h2>
             {item("appearance", "Appearance")}
+            {item("security", "Security")}
             {item("mail", "Mail")}
             {item("notifications", "Notifications")}
           </div>
@@ -458,6 +461,7 @@ export function SettingsShell({
               initialAccountId={initialAccountId}
             />
           ) : null}
+          {section === "security" ? <MfaManagement /> : null}
           {section === "appearance" ? (
             <>
               <header className="settings-pane-header">

@@ -1,3 +1,4 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { z, ZodError } from "zod";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 import { messageContentService } from "@/modules/accounts/infrastructure/accounts";
@@ -9,28 +10,30 @@ export async function GET(
     params,
   }: { params: Promise<{ id: string; mailboxId: string; messageId: string }> },
 ) {
-  const denied = await requireOwnerApiAccess(request);
-  if (denied) return denied;
-  try {
-    const values = await params;
-    return Response.json(
-      await messageContentService.detail(
-        z.uuid().parse(values.id),
-        z.uuid().parse(values.mailboxId),
-        z.uuid().parse(values.messageId),
-      ),
-    );
-  } catch (error) {
-    if (error instanceof MessagePlacementNotFoundError)
-      return Response.json({ error: error.message }, { status: 404 });
-    if (error instanceof ZodError)
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    try {
+      const values = await params;
       return Response.json(
-        { error: "Invalid message request." },
-        { status: 400 },
+        await messageContentService.detail(
+          z.uuid().parse(values.id),
+          z.uuid().parse(values.mailboxId),
+          z.uuid().parse(values.messageId),
+        ),
       );
-    return Response.json(
-      { error: "Message could not be loaded." },
-      { status: 500 },
-    );
-  }
+    } catch (error) {
+      if (error instanceof MessagePlacementNotFoundError)
+        return Response.json({ error: error.message }, { status: 404 });
+      if (error instanceof ZodError)
+        return Response.json(
+          { error: "Invalid message request." },
+          { status: 400 },
+        );
+      return Response.json(
+        { error: "Message could not be loaded." },
+        { status: 500 },
+      );
+    }
+  });
 }

@@ -42,7 +42,7 @@ describe("owner outgoing API", () => {
     const response = await POST(req);
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ id, status: "queued" });
-    expect(access).toHaveBeenCalledExactlyOnceWith(req, true);
+    expect(access).toHaveBeenCalledExactlyOnceWith(req);
     expect(create).toHaveBeenCalledExactlyOnceWith(input);
   });
   it.each([401, 403])(

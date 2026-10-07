@@ -1,3 +1,6 @@
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
@@ -23,6 +26,9 @@ export class PgBossMessageCommandScheduler {
       connectionString: config.databaseUrl,
       application_name: "maildock-web-command-enqueue",
     });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
   }
   async enqueue(id: string) {
     this.started ??= (async () => {
@@ -42,13 +48,13 @@ export async function registerMessageCommandWorker(
   await boss.work(
     MESSAGE_COMMAND_QUEUE,
     { localConcurrency: 4 },
-    async (batch) => {
+    safeJobHandler("message-command", async (batch) => {
       const id = z
         .object({ commandId: z.uuid() })
         .parse(batch[0]?.data).commandId;
       const mailboxId = await service.mailboxId(id);
       if (mailboxId) await withLock(mailboxId, () => service.run(id));
-    },
+    }),
   );
 }
 export class MessageCommandPoller {

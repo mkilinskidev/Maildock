@@ -1,12 +1,21 @@
 import { createContentSecurityPolicy } from "@/shared/infrastructure/security/content-security-policy";
 import { randomBytes } from "node:crypto";
+import { createLogger } from "@/shared/infrastructure/logging/logger";
+import { logFailure } from "@/shared/infrastructure/logging/diagnostics";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getValidSession } from "@/modules/auth/application/session-validation";
+import { getValidBusinessSession } from "@/modules/auth/application/session-validation";
 import { auth } from "@/modules/auth/infrastructure/auth";
 
-const publicPaths = ["/setup", "/login", "/api/setup", "/api/auth"];
+const publicPaths = [
+  "/setup",
+  "/login",
+  "/initial-mfa",
+  "/replace-authenticator",
+  "/api/setup",
+  "/api/auth",
+];
 
 function isPublicPath(pathname: string): boolean {
   if (pathname === "/api/health/live" || pathname === "/api/health/ready")
@@ -45,7 +54,19 @@ export async function proxy(request: NextRequest) {
     return continueWithCsp(request, nonce, contentSecurityPolicy);
   }
 
-  const session = await getValidSession(auth, request.headers);
+  let session;
+  try {
+    session = await getValidBusinessSession(auth, request.headers);
+  } catch (error) {
+    logFailure(createLogger({ logLevel: "info" }), error, "web", "request");
+    return addCsp(
+      NextResponse.json(
+        { error: "Request could not be completed." },
+        { status: 503 },
+      ),
+      contentSecurityPolicy,
+    );
+  }
   if (session) return continueWithCsp(request, nonce, contentSecurityPolicy);
 
   if (request.nextUrl.pathname.startsWith("/api/")) {
@@ -62,5 +83,10 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // This raw-body endpoint owns business-session + Origin validation before
+  // reading. Avoid Next's eager in-memory clone in front of its disk stream;
+  // its configured storage limit can legitimately exceed the proxy ceiling.
+  matcher: [
+    "/((?!api/attachments/staged/?$|_next/static|_next/image|favicon.ico).*)",
+  ],
 };

@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   access: vi.fn(),
   create: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/navigation", async (original) => ({
+  ...(await original<typeof import("next/navigation")>()),
+  redirect: mocks.redirect,
+}));
 vi.mock("@/modules/auth/application/session", () => ({
   getCurrentSession: mocks.session,
 }));
@@ -43,7 +46,9 @@ beforeEach(() => {
   mocks.session.mockResolvedValue({ session: { id: "owner-session" } });
   mocks.configured.mockResolvedValue(true);
   mocks.redirect.mockImplementation((url) => {
-    throw Error(`redirect:${url}`);
+    throw Object.assign(Error(`redirect:${url}`), {
+      digest: `NEXT_REDIRECT;replace;${url};307;`,
+    });
   });
   mocks.begin.mockResolvedValue("https://login.microsoftonline.com/authorize");
   mocks.complete.mockResolvedValue("new-account");
@@ -92,7 +97,7 @@ it.each([401, 403])(
       body: "{}",
     });
     expect((await create(request)).status).toBe(status);
-    expect(mocks.access).toHaveBeenCalledWith(request, true);
+    expect(mocks.access).toHaveBeenCalledWith(request);
     expect(mocks.create).not.toHaveBeenCalled();
   },
 );
@@ -102,6 +107,7 @@ it("does not disclose credential errors during creation", async () => {
   const response = await create(
     new Request("https://mail.example.com/api/accounts", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: "{}",
     }),
   );

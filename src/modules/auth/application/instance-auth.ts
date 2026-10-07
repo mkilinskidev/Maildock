@@ -1,31 +1,82 @@
-import { randomUUID } from "node:crypto";
+import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
+import { ownerPasswordSchema } from "../domain/password-policy";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+
+import {
+  normalizeOwnerUsername,
+  ownerUsernameSchema,
+} from "@/modules/auth/domain/owner-username";
 
 import {
   argon2idParameters,
   hashPassword,
 } from "@/modules/auth/infrastructure/password";
 import type { Database } from "@/shared/infrastructure/database/database";
+import type { AppConfig } from "@/shared/infrastructure/config/config";
 import {
   account,
   instanceState,
   user,
 } from "@/shared/infrastructure/database/schema";
 
-export const setupInputSchema = z.object({
-  username: z
-    .string()
-    .trim()
-    .min(3)
-    .max(64)
-    .regex(
-      /^[a-zA-Z0-9_.-]+$/,
-      "Use letters, numbers, dots, underscores, or hyphens.",
-    ),
-  password: z.string().min(12).max(128),
+const ownerCredentialsSchema = z.object({
+  username: z.string().trim().pipe(ownerUsernameSchema),
+  password: ownerPasswordSchema,
 });
+
+export class BootstrapAuthorizationError extends Error {}
+export class SetupThrottledError extends Error {}
+
+// Reuse Better Auth's storage with separate global keys. Reserve attempts atomically
+// before work starts; a fixed window survives web-process restarts.
+export async function reserveSetupAttempt(
+  database: Database,
+  authorized: boolean,
+  purpose: "setup" | "initial-mfa" = "setup",
+) {
+  const key = authorized
+    ? `maildock:${purpose}:authorized`
+    : `maildock:${purpose}:invalid`;
+  const max = authorized ? 5 : 30;
+  const now = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
+  const rows = await database.execute<{ count: number }>(sql`
+    insert into rate_limit (id, key, count, last_request)
+    values (${key}, ${key}, 1, ${now})
+    on conflict (key) do update set
+      count = case when rate_limit.last_request <= excluded.last_request - 60000 then 1
+        else least(rate_limit.count + 1, ${max + 1}) end,
+      last_request = case when rate_limit.last_request <= excluded.last_request - 60000
+        then excluded.last_request else rate_limit.last_request end
+    returning count
+  `);
+  if (rows[0].count > max) {
+    securityEvent("admission_rejected");
+    throw new SetupThrottledError();
+  }
+}
+
+export async function authorizeBootstrap(
+  database: Database,
+  supplied: unknown,
+  config: Pick<AppConfig, "bootstrapSecretDigest">,
+) {
+  const digest = createHash("sha256")
+    .update(
+      typeof supplied === "string" && supplied.length <= 44 ? supplied : "",
+    )
+    .digest();
+  if (
+    !config.bootstrapSecretDigest ||
+    !timingSafeEqual(digest, Buffer.from(config.bootstrapSecretDigest, "hex"))
+  ) {
+    await reserveSetupAttempt(database, false);
+    securityEvent("proof_rejected");
+    throw new BootstrapAuthorizationError();
+  }
+}
 
 export class InstanceAlreadyInitializedError extends Error {
   constructor() {
@@ -35,49 +86,80 @@ export class InstanceAlreadyInitializedError extends Error {
 }
 
 export async function isInstanceInitialized(
-  database: Database,
+  database: Pick<Database, "select">,
 ): Promise<boolean> {
   const [state] = await database
-    .select({ initializedAt: instanceState.initializedAt })
+    .select({
+      initializedAt: instanceState.initializedAt,
+      ownerUserId: instanceState.ownerUserId,
+    })
     .from(instanceState)
     .where(eq(instanceState.id, 1))
     .limit(1);
-  return state?.initializedAt !== null && state?.initializedAt !== undefined;
+  // Corrupt or partially provisioned instances must never become claimable.
+  if (!state || state.initializedAt !== null || state.ownerUserId !== null)
+    return true;
+  const users = await database.select({ id: user.id }).from(user).limit(1);
+  return users.length > 0;
 }
 
 export async function initializeOwner(
   database: Database,
-  input: z.infer<typeof setupInputSchema>,
+  input: unknown,
+  config: Pick<AppConfig, "bootstrapSecretDigest">,
 ): Promise<void> {
-  const parsed = setupInputSchema.parse(input);
-  const normalizedUsername = parsed.username.toLowerCase();
-  const passwordHash = await hashPassword(parsed.password);
+  if (await isInstanceInitialized(database))
+    throw new InstanceAlreadyInitializedError();
+  await authorizeBootstrap(
+    database,
+    input && typeof input === "object" && "bootstrapSecret" in input
+      ? input.bootstrapSecret
+      : undefined,
+    config,
+  );
+  // Zod strips the bootstrap field. Only credentials cross into owner creation.
+  const parsed = ownerCredentialsSchema.parse(input);
+  return createOwner(database, parsed);
+}
+
+// Private: every caller must pass through initializeOwner's provisioning boundary.
+async function createOwner(
+  database: Database,
+  parsed: z.infer<typeof ownerCredentialsSchema>,
+): Promise<void> {
+  const normalizedUsername = normalizeOwnerUsername(parsed.username);
+  await reserveSetupAttempt(database, true);
 
   await database.transaction(async (transaction) => {
-    await transaction.execute(sql`select pg_advisory_xact_lock(1296125003)`);
+    // Nonblocking, PostgreSQL-wide admission: at most one setup Argon2 job,
+    // including across processes. Transaction exit/crash releases the lock.
+    const locks = await transaction.execute<{ acquired: boolean }>(
+      sql`select pg_try_advisory_xact_lock(1296125003) as acquired`,
+    );
+    if (!locks[0].acquired) throw new SetupThrottledError();
+    if (await isInstanceInitialized(transaction))
+      throw new InstanceAlreadyInitializedError();
+    const passwordHash = await hashPassword(parsed.password);
 
     const [state] = await transaction
-      .select({ initializedAt: instanceState.initializedAt })
+      .select({
+        initializedAt: instanceState.initializedAt,
+        ownerUserId: instanceState.ownerUserId,
+      })
       .from(instanceState)
       .where(eq(instanceState.id, 1))
       .for("update")
       .limit(1);
 
-    if (!state || state.initializedAt) {
+    if (!state || state.initializedAt !== null || state.ownerUserId !== null) {
       throw new InstanceAlreadyInitializedError();
     }
 
-    const existingOwners = await transaction
+    const existingUsers = await transaction
       .select({ id: user.id })
       .from(user)
-      .where(
-        and(
-          eq(user.email, "owner@localhost.invalid"),
-          eq(user.username, normalizedUsername),
-        ),
-      )
       .limit(1);
-    if (existingOwners.length > 0) {
+    if (existingUsers.length > 0) {
       throw new InstanceAlreadyInitializedError();
     }
 
@@ -102,10 +184,11 @@ export async function initializeOwner(
       createdAt: now,
       updatedAt: now,
     });
-    await transaction
+    const initialized = await transaction
       .update(instanceState)
       .set({
         initializedAt: now,
+        ownerUserId: userId,
         updatedAt: now,
         passwordAlgorithm: "argon2id",
         passwordParameters: {
@@ -115,6 +198,15 @@ export async function initializeOwner(
           outputLen: argon2idParameters.outputLen,
         },
       })
-      .where(eq(instanceState.id, 1));
+      .where(
+        and(
+          eq(instanceState.id, 1),
+          isNull(instanceState.initializedAt),
+          isNull(instanceState.ownerUserId),
+        ),
+      )
+      .returning({ id: instanceState.id });
+    if (initialized.length !== 1) throw new InstanceAlreadyInitializedError();
   });
+  securityEvent("setup_completed");
 }

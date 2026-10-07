@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./mfa-fixture";
 import { PATCH as moveAccount } from "../../src/app/api/accounts/[id]/order/route";
 import { AccountsService } from "../../src/modules/accounts/application/accounts-service";
 import type { MailProvider } from "../../src/modules/accounts/domain/mail-provider";
@@ -98,11 +99,8 @@ vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
   },
 }));
 vi.mock("@/modules/auth/application/api-access", () => ({
-  requireOwnerApiAccess: (r: Request, mutation = false) =>
-    (runtime.guard as (r: Request, m: boolean) => Promise<Response | null>)(
-      r,
-      mutation,
-    ),
+  requireOwnerApiAccess: (r: Request) =>
+    (runtime.guard as (r: Request) => Promise<Response | null>)(r),
 }));
 import { POST } from "../../src/app/api/accounts/[id]/mailboxes/[mailboxId]/messages/[messageId]/render/route";
 import {
@@ -153,16 +151,22 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       APP_ORIGIN: origin,
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/security`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
+      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
       ATTACHMENTS_PATH: root,
       LOG_LEVEL: "fatal",
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
-    await initializeOwner(database.db, {
-      username: "owner",
-      password: "correct horse battery staple",
-    });
+    await initializeOwner(
+      database.db,
+      {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "owner",
+        password: "correct horse battery staple",
+      },
+      config,
+    );
     const auth = createAuth(config, database.db);
     const login = await auth.handler(
       new Request(`${origin}/api/auth/sign-in/username`, {
@@ -177,6 +181,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     );
     expect(login.status).toBe(200);
     cookie = login.headers.get("set-cookie")!.split(";")[0];
+    await setReadyFixture(database.db);
     storage = new LocalBlobStorage(root);
     content = new MessageContentService(database.db);
     attachments = new AttachmentService(
@@ -205,8 +210,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     runtime.content = content;
     runtime.attachments = attachments;
     runtime.signatures = new SignatureService(database.db, attachments);
-    runtime.guard = (r: Request, mutation: boolean) =>
-      checkOwnerApiAccess(auth, config, r, mutation);
+    runtime.guard = (r: Request) => checkOwnerApiAccess(auth, config, r);
   });
   afterAll(async () => {
     await database?.client.end();

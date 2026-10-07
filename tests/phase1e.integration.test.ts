@@ -283,33 +283,32 @@ describe("Phase 1E persisted delta state", () => {
     });
     return id;
   }
-  it("Phase 3F enriches operational polling logs without persisting successful polls", async () => {
+  it("F11 polling logs use opaque IDs without persisting successful polls", async () => {
     await sync();
     expect(operationalLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "mail.delta_sync_completed",
         accountId,
         mailboxId: (await mailbox()).id,
-        accountName: "Phase 1E",
-        accountEmail: "phase1e@example.test",
-        mailboxPath: "INBOX",
         reason: "poll",
         newCount: 0,
       }),
       expect.any(String),
     );
     expect(await db.select().from(applicationEvents)).toHaveLength(0);
+    expect(
+      JSON.stringify(vi.mocked(operationalLogger.info).mock.calls),
+    ).not.toMatch(
+      /accountName|accountEmail|mailboxPath|phase1e@example.test|Phase 1E|INBOX/,
+    );
   });
-  it("Phase 3F persists safe failures and retains human context in Pino", async () => {
+  it("F11 persists owner-facing failures while Pino omits mail labels", async () => {
     runProvider = async () => {
       throw Error("password=DO_NOT_PERSIST");
     };
     await expect(sync()).rejects.toThrow("DO_NOT_PERSIST");
     expect(operationalLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountName: "Phase 1E",
-        accountEmail: "phase1e@example.test",
-        mailboxPath: "INBOX",
         accountId,
         mailboxId: (await mailbox()).id,
         category: "internal_error",

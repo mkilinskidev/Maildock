@@ -46,8 +46,6 @@ export class DeltaSyncService {
     const [accountRow] = await this.database
       .select({
         enabled: mailAccounts.enabled,
-        accountName: mailAccounts.displayName,
-        accountEmail: mailAccounts.email,
       })
       .from(mailAccounts)
       .where(eq(mailAccounts.id, accountId))
@@ -63,9 +61,6 @@ export class DeltaSyncService {
     const context = {
       accountId,
       mailboxId,
-      accountName: accountRow.accountName,
-      accountEmail: accountRow.accountEmail,
-      mailboxPath: mailbox.remotePath,
     };
     const startedAt = new Date();
     await this.database

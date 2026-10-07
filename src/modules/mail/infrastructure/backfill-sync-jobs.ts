@@ -1,3 +1,4 @@
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
@@ -51,7 +52,7 @@ export async function registerBackfillWorker(
   await boss.work(
     MAILBOX_BACKFILL_SYNC_QUEUE,
     { localConcurrency: 1 },
-    async (batch) => {
+    safeJobHandler("backfill-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Backfill received an empty batch.");
       const payload = payloadSchema.parse(job.data);
@@ -89,7 +90,7 @@ export async function registerBackfillWorker(
           priority: -10,
           startAfter: 5,
         });
-    },
+    }),
   );
 }
 

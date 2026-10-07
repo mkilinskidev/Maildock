@@ -1,10 +1,24 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import type { AppConfig } from "../config/config.js";
+import { ConfigurationError, type AppConfig } from "../config/config";
 import * as schema from "./schema";
 
 export function createDatabase(
+  config: Pick<AppConfig, "databaseUrl" | "databasePoolSize">,
+) {
+  // This constructor runs during web module evaluation, before route catches.
+  // Connection/query failures still follow their existing async boundaries.
+  try {
+    return createConfiguredDatabase(config);
+  } catch {
+    throw new ConfigurationError([
+      "DATABASE_URL: database initialization failed",
+    ]);
+  }
+}
+
+function createConfiguredDatabase(
   config: Pick<AppConfig, "databaseUrl" | "databasePoolSize">,
 ) {
   const client = postgres(config.databaseUrl, {

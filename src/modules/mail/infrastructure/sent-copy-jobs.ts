@@ -1,3 +1,4 @@
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { SentCopyService } from "../application/sent-copy-service";
@@ -21,13 +22,17 @@ export async function registerSentCopyWorker(
   service: SentCopyService,
 ) {
   await ensureSentCopyQueue(boss);
-  await boss.work(SENT_COPY_QUEUE, { localConcurrency: 4 }, async (batch) => {
-    const { outgoingMessageId } = z
-      .object({ outgoingMessageId: z.uuid() })
-      .strict()
-      .parse(batch[0]?.data);
-    await service.run(outgoingMessageId);
-  });
+  await boss.work(
+    SENT_COPY_QUEUE,
+    { localConcurrency: 4 },
+    safeJobHandler("sent-copy", async (batch) => {
+      const { outgoingMessageId } = z
+        .object({ outgoingMessageId: z.uuid() })
+        .strict()
+        .parse(batch[0]?.data);
+      await service.run(outgoingMessageId);
+    }),
+  );
 }
 export class SentCopyPoller {
   private timer?: ReturnType<typeof setInterval>;

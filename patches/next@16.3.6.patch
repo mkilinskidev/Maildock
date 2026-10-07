@@ -1,0 +1,98 @@
+diff --git a/dist/esm/server/body-streams.js b/dist/esm/server/body-streams.js
+index 89344fc1f023913c339c906c98bba51942d27cf2..5875aa71733fd755ea633ddd071c38364046348f 100644
+--- a/dist/esm/server/body-streams.js
++++ b/dist/esm/server/body-streams.js
+@@ -24,6 +24,7 @@ function replaceRequestBody(base, stream) {
+ }
+ export function getCloneableBody(readable, sizeLimit) {
+     let buffered = null;
++    let overflowError = null;
+     const endPromise = new Promise((resolve, reject)=>{
+         readable.on('end', resolve);
+         readable.on('error', reject);
+@@ -40,6 +41,7 @@ export function getCloneableBody(readable, sizeLimit) {
+      */ async finalize () {
+             if (buffered) {
+                 const res = await endPromise;
++                if (overflowError) throw overflowError;
+                 if (res && typeof res === 'object' && res.error) {
+                     throw res.error;
+                 }
+@@ -70,9 +72,8 @@ export function getCloneableBody(readable, sizeLimit) {
+                 bytesRead += chunk.length;
+                 if (bytesRead > bodySizeLimit) {
+                     limitExceeded = true;
+-                    const urlInfo = readable.url ? ` for ${readable.url}` : '';
+-                    console.warn(// TODO(jiwon): Update this document link
+-                    `Request body exceeded ${bytes.format(bodySizeLimit)}${urlInfo}. Only the first ${bytes.format(bodySizeLimit)} will be available unless configured. See https://nextjs.org/docs/app/api-reference/config/next-config-js/middlewareClientMaxBodySize for more details.`);
++                    overflowError = Object.assign(new Error('Request body exceeded the configured proxy limit.'), { code: 'NEXT_PROXY_BODY_TOO_LARGE' });
++                    console.warn('Request body exceeded the configured proxy limit; rejecting request.');
+                     p1.push(null);
+                     p2.push(null);
+                     return;
+diff --git a/dist/esm/server/next-server.js b/dist/esm/server/next-server.js
+index 85a2d7c7b7ccf7d3ad5a36e9cd72440995d60769..f9162e44592de6cb783ba8507ff424ab2dd8cab2 100644
+--- a/dist/esm/server/next-server.js
++++ b/dist/esm/server/next-server.js
+@@ -350,6 +350,12 @@ export default class NextNodeServer extends BaseServer {
+                     return true;
+                 }
+             } catch (err) {
++                if (err && err.code === 'NEXT_PROXY_BODY_TOO_LARGE') {
++                    res.statusCode = 413;
++                    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
++                    res.body('Request body is too large.').send();
++                    return true;
++                }
+                 if (bubblingResult) {
+                     throw err;
+                 }
+diff --git a/dist/server/body-streams.js b/dist/server/body-streams.js
+index 0f2d2e93a08d9be66a3a0a651b4a36878339fe44..86e346623c9c1aa28ac0cd0edb9fb8a86b6b32b0 100644
+--- a/dist/server/body-streams.js
++++ b/dist/server/body-streams.js
+@@ -51,6 +51,7 @@ function replaceRequestBody(base, stream) {
+ }
+ function getCloneableBody(readable, sizeLimit) {
+     let buffered = null;
++    let overflowError = null;
+     const endPromise = new Promise((resolve, reject)=>{
+         readable.on('end', resolve);
+         readable.on('error', reject);
+@@ -67,6 +68,7 @@ function getCloneableBody(readable, sizeLimit) {
+      */ async finalize () {
+             if (buffered) {
+                 const res = await endPromise;
++                if (overflowError) throw overflowError;
+                 if (res && typeof res === 'object' && res.error) {
+                     throw res.error;
+                 }
+@@ -97,9 +99,8 @@ function getCloneableBody(readable, sizeLimit) {
+                 bytesRead += chunk.length;
+                 if (bytesRead > bodySizeLimit) {
+                     limitExceeded = true;
+-                    const urlInfo = readable.url ? ` for ${readable.url}` : '';
+-                    console.warn(// TODO(jiwon): Update this document link
+-                    `Request body exceeded ${_bytes.default.format(bodySizeLimit)}${urlInfo}. Only the first ${_bytes.default.format(bodySizeLimit)} will be available unless configured. See https://nextjs.org/docs/app/api-reference/config/next-config-js/middlewareClientMaxBodySize for more details.`);
++                    overflowError = Object.assign(new Error('Request body exceeded the configured proxy limit.'), { code: 'NEXT_PROXY_BODY_TOO_LARGE' });
++                    console.warn('Request body exceeded the configured proxy limit; rejecting request.');
+                     p1.push(null);
+                     p2.push(null);
+                     return;
+diff --git a/dist/server/next-server.js b/dist/server/next-server.js
+index f7e7ff0c8b2929d29561f474ad196487a2b5377e..b809658bc80d7d719470cbd4316296057e5633af 100644
+--- a/dist/server/next-server.js
++++ b/dist/server/next-server.js
+@@ -419,6 +419,12 @@ class NextNodeServer extends _baseserver.default {
+                     return true;
+                 }
+             } catch (err) {
++                if (err && err.code === 'NEXT_PROXY_BODY_TOO_LARGE') {
++                    res.statusCode = 413;
++                    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
++                    res.body('Request body is too large.').send();
++                    return true;
++                }
+                 if (bubblingResult) {
+                     throw err;
+                 }

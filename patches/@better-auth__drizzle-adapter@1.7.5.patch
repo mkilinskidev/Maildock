@@ -1,0 +1,15 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 9d8158941490e22bfdb27d0bd7eac368b47b827d..0d9f2f6cfda02b25ffabeccfb5f81a401aa53160 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -532,7 +532,9 @@ const drizzleAdapter = (db, config) => {
+ 				}
+ 				if (!idColumn) return null;
+ 				const targetIds = db.select({ id: idColumn }).from(schemaModel).where(...clause).limit(1);
+-				return (await db.update(schemaModel).set(assignments).where(inArray(idColumn, targetIds)).returning())[0] ?? null;
++				// Keep LIMIT 1, but recheck the guard on the current row after PostgreSQL waits for a writer.
++				const predicate = config.provider === "pg" ? and(inArray(idColumn, targetIds), ...clause) : inArray(idColumn, targetIds);
++				return (await db.update(schemaModel).set(assignments).where(predicate).returning())[0] ?? null;
+ 			},
+ 			options: config
+ 		};

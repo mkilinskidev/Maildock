@@ -2408,6 +2408,148 @@ label.checkbox input {
   font-size: 12px;
   line-height: 1.5;
 }
+.mfa-qr {
+  justify-self: center;
+  max-width: 100%;
+  height: auto;
+}
+.mfa-secret {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.mfa-recovery-codes {
+  margin: 0;
+  text-align: center;
+  user-select: all;
+  line-height: 1.7;
+}
+/* Security settings share the existing surfaces, controls and status pills. */
+.mfa-recovery-actions {
+  display: contents;
+}
+.mfa-settings {
+  width: 100%;
+  max-width: 760px;
+}
+.mfa-settings-card {
+  padding: 22px 24px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.mfa-card-header,
+.mfa-card-actions,
+.mfa-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mfa-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.mfa-settings-card p {
+  margin: 12px 0 20px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.mfa-card-actions,
+.mfa-dialog-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.mfa-management-dialog {
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 24px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.mfa-management-dialog::backdrop {
+  background: color-mix(
+    in srgb,
+    light-dark(var(--text), var(--bg)) 35%,
+    transparent
+  );
+}
+.mfa-management-form,
+.mfa-code-presentation,
+.mfa-dialog-fields {
+  display: grid;
+  gap: 18px;
+}
+.mfa-management-dialog h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.mfa-management-dialog p {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.mfa-management-dialog .mfa-dialog-help {
+  font-size: 12px;
+}
+.mfa-dialog-fields {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
+.mfa-dialog-fields label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.mfa-dialog-fields input,
+.mfa-dialog-fields select {
+  width: 100%;
+  min-width: 0;
+}
+.mfa-management-dialog .error {
+  color: var(--error);
+}
+.mfa-code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  text-align: center;
+  user-select: text;
+}
+.mfa-code-grid code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.mfa-code-presentation .mfa-copy-status:empty {
+  display: none;
+}
+@media (max-width: 420px) {
+  .mfa-settings-card {
+    padding: 18px;
+  }
+  .mfa-management-dialog {
+    padding: 20px;
+  }
+  .mfa-code-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .mail-composer,
 .signature-editor-frame {
   container-type: inline-size;

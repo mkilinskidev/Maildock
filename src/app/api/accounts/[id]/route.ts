@@ -1,3 +1,5 @@
+import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
+import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 
 import { MailAccountNotFoundError } from "@/modules/accounts/application/accounts-service";
@@ -24,40 +26,48 @@ function accountError(error: unknown): Response {
 }
 
 export async function GET(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request);
-  if (denied) return denied;
-  try {
-    return Response.json({
-      account: await accountsService.get(
-        accountId.parse((await context.params).id),
-      ),
-    });
-  } catch (error) {
-    return accountError(error);
-  }
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    try {
+      return Response.json({
+        account: await accountsService.get(
+          accountId.parse((await context.params).id),
+        ),
+      });
+    } catch (error) {
+      return accountError(error);
+    }
+  });
 }
 
 export async function PUT(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
-  if (denied) return denied;
-  try {
-    const account = await accountsService.update(
-      accountId.parse((await context.params).id),
-      await request.json(),
-    );
-    return Response.json({ account });
-  } catch (error) {
-    return accountError(error);
-  }
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    const unsupported = requireJsonMediaType(request);
+    if (unsupported) return unsupported;
+    try {
+      const account = await accountsService.update(
+        accountId.parse((await context.params).id),
+        await request.json(),
+      );
+      return Response.json({ account });
+    } catch (error) {
+      return accountError(error);
+    }
+  });
 }
 
 export async function DELETE(request: Request, context: Context) {
-  const denied = await requireOwnerApiAccess(request, true);
-  if (denied) return denied;
-  try {
-    await accountsService.delete(accountId.parse((await context.params).id));
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    return accountError(error);
-  }
+  return routeBoundary(async () => {
+    const denied = await requireOwnerApiAccess(request);
+    if (denied) return denied;
+    try {
+      await accountsService.delete(accountId.parse((await context.params).id));
+      return new Response(null, { status: 204 });
+    } catch (error) {
+      return accountError(error);
+    }
+  });
 }

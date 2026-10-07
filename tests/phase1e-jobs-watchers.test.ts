@@ -112,7 +112,7 @@ afterEach(() => {
 });
 
 describe("Phase 1E delta scheduling and IDLE", () => {
-  it("Phase 3F IDLE logs carry account and mailbox context without persistent writes", async () => {
+  it("F11 IDLE logs retain opaque IDs and omit mail labels", async () => {
     vi.useFakeTimers();
     const client = new FakeIdleClient();
     const rows = [
@@ -133,9 +133,6 @@ describe("Phase 1E delta scheduling and IDLE", () => {
         event: "mail.idle_connected",
         accountId,
         mailboxId,
-        accountName: "Hotmail",
-        accountEmail: "owner@example.test",
-        mailboxPath: "INBOX",
       }),
       expect.any(String),
     );
@@ -149,15 +146,20 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "mail.idle_disconnected",
-        accountName: "Hotmail",
-        accountEmail: "owner@example.test",
-        mailboxPath: "INBOX",
         accountId,
         mailboxId,
       }),
       expect.any(String),
     );
     expect(next.writes.insert).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify([
+        vi.mocked(logger.info).mock.calls,
+        vi.mocked(logger.warn).mock.calls,
+      ]),
+    ).not.toMatch(
+      /accountName|accountEmail|mailboxPath|owner@example.test|Hotmail|INBOX|secret/,
+    );
     await next.manager.stop();
   });
   it("uses a mailbox singleton key to reject duplicate pending delta jobs", async () => {

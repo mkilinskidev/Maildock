@@ -1,3 +1,4 @@
+import { setReadyFixture } from "./security/mfa-fixture";
 import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
 import { applicationEvents } from "@/shared/infrastructure/database/schema";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -60,6 +61,7 @@ import {
   mailboxMessages,
   messageContents,
   rateLimit,
+  authAdmission,
   session,
   user,
   verification,
@@ -102,6 +104,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
       APP_ORIGIN: "http://localhost:3000",
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
+      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
       ATTACHMENTS_PATH: attachmentsPath,
       LOG_LEVEL: "fatal",
@@ -112,12 +115,16 @@ describe("Phase 0 PostgreSQL foundations", () => {
   });
 
   beforeEach(async () => {
+    await db
+      .update(instanceState)
+      .set({ initializedAt: null, ownerUserId: null });
     await db.delete(mailAccounts);
     await db.delete(session);
     await db.delete(account);
     await db.delete(user);
     await db.delete(verification);
     await db.delete(rateLimit);
+    await db.delete(authAdmission);
     await db.delete(loginThrottle);
     await db.update(instanceState).set({
       initializedAt: null,
@@ -136,39 +143,64 @@ describe("Phase 0 PostgreSQL foundations", () => {
 
   it("allows setup while uninitialized and creates exactly one owner", async () => {
     expect(await isInstanceInitialized(db)).toBe(false);
-    await initializeOwner(db, {
-      username: "owner",
-      password: "correct horse battery staple",
-    });
+    await initializeOwner(
+      db,
+      {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "owner",
+        password: "correct horse battery staple",
+      },
+      config,
+    );
     expect(await isInstanceInitialized(db)).toBe(true);
     expect(await db.select().from(user)).toHaveLength(1);
     expect(await db.select().from(account)).toHaveLength(1);
   });
 
   it("rejects setup after initialization", async () => {
-    await initializeOwner(db, {
-      username: "owner",
-      password: "correct horse battery staple",
-    });
+    await initializeOwner(
+      db,
+      {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "owner",
+        password: "correct horse battery staple",
+      },
+      config,
+    );
     await expect(
-      initializeOwner(db, {
-        username: "another",
-        password: "another sufficiently long password",
-      }),
+      initializeOwner(
+        db,
+        {
+          bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+          username: "another",
+          password: "another sufficiently long password",
+        },
+        config,
+      ),
     ).rejects.toBeInstanceOf(InstanceAlreadyInitializedError);
     expect(await db.select().from(user)).toHaveLength(1);
   });
 
   it("serializes concurrent setup so only one owner can be created", async () => {
     const results = await Promise.allSettled([
-      initializeOwner(db, {
-        username: "first",
-        password: "first sufficiently long password",
-      }),
-      initializeOwner(db, {
-        username: "second",
-        password: "second sufficiently long password",
-      }),
+      initializeOwner(
+        db,
+        {
+          bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+          username: "first",
+          password: "first sufficiently long password",
+        },
+        config,
+      ),
+      initializeOwner(
+        db,
+        {
+          bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+          username: "second",
+          password: "second sufficiently long password",
+        },
+        config,
+      ),
     ]);
     expect(
       results.filter((result) => result.status === "fulfilled"),
@@ -181,10 +213,15 @@ describe("Phase 0 PostgreSQL foundations", () => {
   });
 
   it("rejects an unauthenticated request and accepts an authenticated session", async () => {
-    await initializeOwner(db, {
-      username: "owner",
-      password: "correct horse battery staple",
-    });
+    await initializeOwner(
+      db,
+      {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "owner",
+        password: "correct horse battery staple",
+      },
+      config,
+    );
     const testAuth = createAuth(config, db);
     expect(await getValidSession(testAuth, new Headers())).toBeNull();
 
@@ -826,10 +863,15 @@ describe("Phase 0 PostgreSQL foundations", () => {
   });
 
   it("requires an authenticated owner and valid origin for deletion mutations", async () => {
-    await initializeOwner(db, {
-      username: "owner",
-      password: "correct horse battery staple",
-    });
+    await initializeOwner(
+      db,
+      {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "owner",
+        password: "correct horse battery staple",
+      },
+      config,
+    );
     const testAuth = createAuth(config, db);
     const unauthenticated = await checkOwnerApiAccess(
       testAuth,
@@ -838,7 +880,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
         method: "DELETE",
         headers: { Origin: config.appOrigin },
       }),
-      true,
     );
     expect(unauthenticated?.status).toBe(401);
 
@@ -857,6 +898,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
       }),
     );
     const cookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+    await setReadyFixture(db);
     const wrongOrigin = await checkOwnerApiAccess(
       testAuth,
       config,
@@ -864,7 +906,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
         method: "DELETE",
         headers: { cookie, Origin: "http://evil.test" },
       }),
-      true,
     );
     expect(wrongOrigin?.status).toBe(403);
     const authorized = await checkOwnerApiAccess(
@@ -874,7 +915,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
         method: "DELETE",
         headers: { cookie, Origin: config.appOrigin },
       }),
-      true,
     );
     expect(authorized).toBeNull();
   });

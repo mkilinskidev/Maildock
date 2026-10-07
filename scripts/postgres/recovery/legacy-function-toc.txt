@@ -1,0 +1,8 @@
+maildock_blob_snapshot_immutable()
+maildock_conversation_trigger()
+maildock_outgoing_snapshot_immutable()
+maildock_reconcile_conversation(uuid, boolean)
+maildock_search_addresses(jsonb)
+maildock_search_vector(text, jsonb, jsonb, jsonb, jsonb, text)
+maildock_thread_ids(text)
+maildock_update_search_body()

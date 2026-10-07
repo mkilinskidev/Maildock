@@ -26,7 +26,7 @@ it.each([401, 403])(
     const incoming = request("invalid json");
     mocks.access.mockResolvedValue(Response.json({}, { status }));
     expect((await PATCH(incoming, context)).status).toBe(status);
-    expect(mocks.access).toHaveBeenCalledWith(incoming, true);
+    expect(mocks.access).toHaveBeenCalledWith(incoming);
     expect(mocks.move).not.toHaveBeenCalled();
   },
 );

@@ -1,3 +1,6 @@
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
+import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
@@ -58,6 +61,9 @@ export class PgBossDeltaSyncScheduler {
       connectionString: config.databaseUrl,
       application_name: "maildock-web-delta-enqueue",
     });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
   }
 
   private start(): Promise<void> {
@@ -88,14 +94,14 @@ export async function registerDeltaWorker(
   await boss.work(
     MAILBOX_DELTA_SYNC_QUEUE,
     { localConcurrency: concurrency },
-    async (batch) => {
+    safeJobHandler("delta-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Delta sync received an empty batch.");
       const payload = payloadSchema.parse(job.data);
       await withLock(payload.mailboxId, () =>
         service.run(payload.accountId, payload.mailboxId, payload.reason),
       );
-    },
+    }),
   );
 }
 
