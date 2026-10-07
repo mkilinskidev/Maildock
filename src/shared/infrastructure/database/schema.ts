@@ -352,6 +352,34 @@ export const mfaReplacement = pgTable("mfa_replacement", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 
+// Explicit offline restore receipt; ordinary startup never runs maintenance.
+export const recoveryMaintenance = pgTable(
+  "recovery_maintenance",
+  {
+    id: integer("id").primaryKey(),
+    receiptId: uuid("receipt_id").notNull(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id, {
+        onDelete: "restrict",
+        onUpdate: "restrict",
+      }),
+    factorId: text("factor_id").notNull(),
+    recoveryCodesDigest: text("recovery_codes_digest").notNull(),
+    status: text("status").notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check("recovery_maintenance_id_check", sql`${table.id} = 1`),
+    check(
+      "recovery_maintenance_status_check",
+      sql`${table.status} in ('verified', 'pending_mfa')`,
+    ),
+  ],
+);
+
 export const session = pgTable(
   "session",
   {
@@ -789,7 +817,7 @@ export const messages = pgTable(
     searchVector: customType<{ data: string }>({ dataType: () => "tsvector" })(
       "search_vector",
     ).generatedAlwaysAs(
-      sql`maildock_search_vector(subject, "from", sender, "to", cc, search_body)`,
+      sql`public.maildock_search_vector(subject, "from", sender, "to", cc, search_body)`,
     ),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     internalDate: timestamp("internal_date", { withTimezone: true }).notNull(),

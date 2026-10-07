@@ -1,5 +1,6 @@
 services:
   app:
+    stop_grace_period: 60s
     build:
       context: .
     environment:
@@ -52,6 +53,8 @@ services:
       - postgres_data:/var/lib/postgresql
       - ./scripts/postgres/99-maildock-authority.sql:/docker-entrypoint-initdb.d/99-maildock-authority.sql:ro
       - ./scripts/postgres/maildock-authority-maintenance.sh:/usr/local/bin/maildock-authority-maintenance:ro
+      - ./scripts/postgres/maildock-restore-compatibility.sh:/usr/local/bin/maildock-restore-compatibility:ro
+      - ./scripts/postgres/recovery:/usr/local/share/maildock-recovery:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maildock -d maildock"]
       interval: 5s

@@ -34,7 +34,7 @@ maildock:account-credential:v1:<account-id>:imap
 maildock:account-credential:v1:<account-id>:smtp
 ```
 
-**Backup warning:** `attachments_data` is now authoritative persistent application data. A complete backup requires PostgreSQL, the existing attachment volume, and the corresponding credential encryption keys/deployment secrets. A PostgreSQL backup alone is no longer complete. Preserve matched database/blob backups; keep encryption keys secure and separate. Losing the encryption keys prevents credential recovery.
+**Backup/recovery:** Stop all application writers and capture the complete PostgreSQL database, attachment root, matching `AUTH_SECRET`, every required credential key/key ID, effective configuration and release/helper identity as one confidential set. PostgreSQL stays online for `pg_dump -Fc --no-acl`. Follow the [supported backup, offline recovery and update contract](docs/DEPLOYMENT.md#v1-matched-backup-and-recovery-set), including the historical archive bridge and explicit post-restore security maintenance before workers/ingress start. A DB-only online backup is not a complete recovery set.
 
 For controlled future rotation, `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` accepts a JSON object such as `{"v1":"<old-base64-key>"}`. Keep the old key available, configure a new active key/ID, restart, re-encrypt every stored credential with fresh IVs through a reviewed operator procedure, verify it, and only then remove the old key. Phase 1A provides the multi-key decryption seam but no rotation UI or job.
 
@@ -42,7 +42,7 @@ For controlled future rotation, `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` accepts a
 
 To connect Microsoft mail accounts, register a Microsoft Entra application with a **Web** redirect URI of `${APP_ORIGIN}/api/oauth/microsoft/callback`. Enable both organizational and personal Microsoft accounts if you need Outlook.com. Add delegated Exchange Online `IMAP.AccessAsUser.All` and `SMTP.Send` permissions. Put its application (client) ID in `MICROSOFT_CLIENT_ID` and a client secret **value** in `MICROSOFT_CLIENT_SECRET`. Restart the app and worker, then sign in to Maildock and choose **Connect Microsoft account** on `/accounts`. See [`docs/PHASE_1F.md`](docs/PHASE_1F.md) for consent and verification details.
 
-Phase 0 intentionally has no password reset flow. Until a reviewed administrative recovery procedure is added, losing the owner password can require manual operator intervention. Back up PostgreSQL and the attachment volume as one logical recovery set.
+There is no forgotten-owner-password reset flow. Offline restore maintenance preserves the immutable owner's password and mandatory MFA, issues fresh protected recovery codes, and requires password plus pending TOTP to complete an interrupted authenticator replacement. It does not provide a second-owner or bootstrap recovery bypass.
 
 ## Local development
 

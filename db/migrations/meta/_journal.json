@@ -225,6 +225,13 @@
       "when": 1791288534168,
       "tag": "0031_auth_admission",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791350253217,
+      "tag": "0032_restore_safe_search",
+      "breakpoints": true
     }
   ]
 }
