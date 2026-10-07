@@ -1,9 +1,9 @@
 # ADR 0008: Initial synchronization and mail storage policy
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-09-23
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR 0011
 
 ## Context
 
