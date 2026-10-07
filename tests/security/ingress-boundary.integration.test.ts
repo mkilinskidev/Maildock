@@ -18,7 +18,7 @@ it("F9 production address headers share HTTP buckets and empty session metadata"
     const result = await new Promise<unknown>((resolve, reject) => {
       const child = spawn(
         process.execPath,
-        ["--import", "tsx", "tests/security/f9-process.ts"],
+        ["--import", "tsx", "tests/security/ingress-production-process.ts"],
         {
           env: {
             ...process.env,

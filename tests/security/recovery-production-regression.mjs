@@ -77,7 +77,7 @@ async function wait(project, service) {
   throw Error("Disposable service did not become healthy");
 }
 const fixture = path.resolve(
-  "tests/security/f12-recovery-production-fixture.mjs",
+  "tests/security/recovery-production-fixture.mjs",
 );
 async function offline(project, operation) {
   await compose(project, [
@@ -315,7 +315,7 @@ try {
     "/operator/recovery.json",
   ]);
   await offline(target, "verify-offline");
-  const channelTest = path.resolve("tests/security/f12-recovery-channel.mjs");
+  const channelTest = path.resolve("tests/security/recovery-channel-regression.mjs");
   await compose(target, [
     "run",
     "--rm",
