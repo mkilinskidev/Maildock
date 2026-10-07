@@ -1,5 +1,28 @@
 # Production ingress contract
 
+## Production image and application tuning
+
+The Docker build uses Node 24.21.0 and pinned pnpm 12.7.0 with frozen installs
+and the repository's dependency patches. Runtime dependencies are installed in
+a fresh production stage; Next standalone server/application files use that
+artifact rather than copying the build dependency tree. Web, worker, migrations
+and the packaged offline recovery commands run compiled JavaScript with Node.
+
+Base Compose forwards these optional numeric settings from the operator's `.env`
+(or shell environment): `DATABASE_POOL_SIZE`, `WORKER_CONCURRENCY`,
+`MAILDOCK_INITIAL_SYNC_DAYS`, `MAILDOCK_MESSAGE_FETCH_BATCH_SIZE`,
+`MAILDOCK_MESSAGE_SYNC_CONCURRENCY`, `MAILDOCK_MAIL_POLL_INTERVAL_SECONDS` and
+`MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES`. Omit a setting to retain the application's
+default; an explicitly empty numeric value is invalid and fails configuration
+validation. Defaults and accepted bounds remain in the application parser, with
+example values in `.env.example`. Pool size is per postgres-js process; pg-boss
+has its own pools. Worker concurrency controls discovery, not all queues combined.
+
+The bundled app runs both web and worker (`MAILDOCK_ROLE=all`), listens internally
+on port 3000 and uses the mounted attachment path. Changing role, listener or
+storage layout requires an explicit deployment override, including compatible
+health checks; these are not `.env` tuning switches of the base two-service stack.
+
 ## PostgreSQL authority (F12-03)
 
 Fresh bundled `docker compose up` runs the read-only

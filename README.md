@@ -9,7 +9,7 @@ The authoritative design is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), gove
 ## Requirements
 
 - Node.js 24.15 or newer in the Node 24 LTS line (the container pins 24.21.0)
-- pnpm 12.6.0 through Corepack
+- pnpm 12.7.0 through Corepack
 - PostgreSQL 18 for direct local development
 - Docker for the integration tests and Docker workflow
 
@@ -50,7 +50,7 @@ Start PostgreSQL (or provide another PostgreSQL 18 instance), fill `.env`, then 
 
 ```sh
 corepack enable
-corepack prepare pnpm@12.6.0 --activate
+corepack prepare pnpm@12.7.0 --activate
 pnpm install
 pnpm db:migrate
 pnpm dev

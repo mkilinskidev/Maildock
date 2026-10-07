@@ -147,6 +147,8 @@ try {
     "POSTGRES_DB=maildock",
     "-e",
     "POSTGRES_PASSWORD=f12-disposable-only",
+    "-v",
+    `${path.resolve("scripts/postgres/99-maildock-authority.sql")}:/docker-entrypoint-initdb.d/99-maildock-authority.sql:ro`,
     "postgres:18.6-bookworm",
   ]);
   resources.containers.push(db);

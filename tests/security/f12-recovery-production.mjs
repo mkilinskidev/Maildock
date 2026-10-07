@@ -16,13 +16,16 @@ const source = `maildock-f125-source-${id}`,
 const env = path.join(root, "synthetic.env"),
   override = path.join(root, "compose.yml");
 const legacyDrill = process.argv.includes("--legacy");
+const productionImage =
+  process.env.MAILDOCK_RECOVERY_TEST_IMAGE ??
+  "maildock-f125-implementation:d98c1d3";
 await writeFile(
   env,
   `APP_ORIGIN=https://recovery.invalid\nPOSTGRES_PASSWORD=synthetic-${id}\nAUTH_SECRET=${randomBytes(32).toString("base64")}\nCREDENTIALS_ENCRYPTION_KEY=${randomBytes(32).toString("base64")}\nLOG_LEVEL=info\n`,
 );
 await writeFile(
   override,
-  `services:\n  app:\n    image: maildock-f125-implementation:d98c1d3\n    volumes:\n      - operator_data:/operator\nvolumes:\n  operator_data:\n    external: true\n    name: ${operator}\n`,
+  `services:\n  app:\n    image: ${productionImage}\n    volumes:\n      - operator_data:/operator\nvolumes:\n  operator_data:\n    external: true\n    name: ${operator}\n`,
 );
 async function docker(args, expectedFailure = false) {
   try {
@@ -345,7 +348,7 @@ try {
     await writeFile(
       override,
       (await readFile(override, "utf8")).replace(
-        "maildock-f125-implementation:d98c1d3",
+        productionImage,
         "maildock-f125:d98c1d3",
       ),
     );
@@ -397,13 +400,7 @@ try {
     archiveSha256: createHash("sha256")
       .update(await readFile(path.join(root, "database.dump")))
       .digest("hex"),
-    image: await docker([
-      "image",
-      "inspect",
-      "-f",
-      "{{.Id}}",
-      "maildock-f125-implementation:d98c1d3",
-    ]),
+    image: await docker(["image", "inspect", "-f", "{{.Id}}", productionImage]),
     matchingOldImage: legacyDrill
       ? await docker([
           "image",
