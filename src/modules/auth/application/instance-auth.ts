@@ -15,7 +15,6 @@ import {
   hashPassword,
 } from "@/modules/auth/infrastructure/password";
 import type { Database } from "@/shared/infrastructure/database/database";
-import type { AppConfig } from "@/shared/infrastructure/config/config";
 import {
   account,
   instanceState,
@@ -61,16 +60,33 @@ export async function reserveSetupAttempt(
 export async function authorizeBootstrap(
   database: Database,
   supplied: unknown,
-  config: Pick<AppConfig, "bootstrapSecretDigest">,
+  purpose: "setup" | "initial-mfa" = "setup",
 ) {
+  const [state] = await database
+    .select({
+      digest: instanceState.bootstrapSecretDigest,
+      active: sql<boolean>`${instanceState.bootstrapExpiresAt} > clock_timestamp()`,
+      initializedAt: instanceState.initializedAt,
+      ownerUserId: instanceState.ownerUserId,
+    })
+    .from(instanceState)
+    .where(eq(instanceState.id, 1))
+    .limit(1);
   const digest = createHash("sha256")
     .update(
       typeof supplied === "string" && supplied.length <= 44 ? supplied : "",
     )
     .digest();
   if (
-    !config.bootstrapSecretDigest ||
-    !timingSafeEqual(digest, Buffer.from(config.bootstrapSecretDigest, "hex"))
+    !state ||
+    (purpose === "setup"
+      ? state.initializedAt !== null ||
+        state.ownerUserId !== null ||
+        !state.active
+      : state.initializedAt === null || state.ownerUserId === null) ||
+    !state.digest ||
+    !/^[0-9a-f]{64}$/.test(state.digest) ||
+    !timingSafeEqual(digest, Buffer.from(state.digest, "hex"))
   ) {
     await reserveSetupAttempt(database, false);
     securityEvent("proof_rejected");
@@ -106,26 +122,24 @@ export async function isInstanceInitialized(
 export async function initializeOwner(
   database: Database,
   input: unknown,
-  config: Pick<AppConfig, "bootstrapSecretDigest">,
 ): Promise<void> {
   if (await isInstanceInitialized(database))
     throw new InstanceAlreadyInitializedError();
-  await authorizeBootstrap(
-    database,
+  const supplied =
     input && typeof input === "object" && "bootstrapSecret" in input
       ? input.bootstrapSecret
-      : undefined,
-    config,
-  );
+      : undefined;
+  await authorizeBootstrap(database, supplied);
   // Zod strips the bootstrap field. Only credentials cross into owner creation.
   const parsed = ownerCredentialsSchema.parse(input);
-  return createOwner(database, parsed);
+  return createOwner(database, parsed, supplied);
 }
 
 // Private: every caller must pass through initializeOwner's provisioning boundary.
 async function createOwner(
   database: Database,
   parsed: z.infer<typeof ownerCredentialsSchema>,
+  supplied: unknown,
 ): Promise<void> {
   const normalizedUsername = normalizeOwnerUsername(parsed.username);
   await reserveSetupAttempt(database, true);
@@ -162,6 +176,9 @@ async function createOwner(
     if (existingUsers.length > 0) {
       throw new InstanceAlreadyInitializedError();
     }
+    // Startup rotation uses the same row lock. A proof checked before hashing
+    // cannot provision an owner after another process has replaced it.
+    await authorizeBootstrap(transaction as unknown as Database, supplied);
 
     const now = new Date();
     const userId = randomUUID();
@@ -189,6 +206,7 @@ async function createOwner(
       .set({
         initializedAt: now,
         ownerUserId: userId,
+        bootstrapExpiresAt: null,
         updatedAt: now,
         passwordAlgorithm: "argon2id",
         passwordParameters: {

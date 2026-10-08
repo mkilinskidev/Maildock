@@ -1,3 +1,4 @@
+import { seedBootstrapFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -113,7 +114,6 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/username`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
       ATTACHMENTS_PATH: tmpdir(),
     });
     database = createDatabase(config);
@@ -126,13 +126,17 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
   });
   beforeEach(async () => {
     vi.restoreAllMocks();
-    await database.db
-      .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
+    await seedBootstrapFixture(database.db);
   });
   afterAll(async () => {
     vi.restoreAllMocks();
@@ -247,7 +251,11 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
       });
       await database.db
         .update(instanceState)
-        .set({ initializedAt: new Date(), ownerUserId: id });
+        .set({
+          initializedAt: new Date(),
+          ownerUserId: id,
+          bootstrapExpiresAt: null,
+        });
       const before = await database.db.select().from(user);
       expect(
         (

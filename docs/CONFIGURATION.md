@@ -15,10 +15,9 @@ These are the only operator-supplied variables expected for a standard productio
 | `APP_ORIGIN` | yes | — | Exact canonical browser origin. Production requires HTTPS and no path, query, fragment, or embedded credentials. |
 | `POSTGRES_PASSWORD` | yes | — | Password for Maildock's bundled PostgreSQL service. The application connects to the fixed internal `postgres:5432/maildock` endpoint as `maildock`; arbitrary passwords, including URL-special characters, are supported. |
 | `AUTH_SECRET` | yes | — | Better Auth / MFA secret material. Base64 value decoding to at least 32 bytes. Preserve it for backup/recovery. |
-| `MAILDOCK_BOOTSTRAP_SECRET` | first run only | — | First-run owner authorization. Canonical base64 of exactly 32 bytes. Remove it from the deployment after successful owner initialization. |
 | `CREDENTIALS_ENCRYPTION_KEY` | yes | — | Active AES-256-GCM master key. Canonical base64 of exactly 32 bytes. Preserve it for backup/recovery. |
 
-Generate `AUTH_SECRET`, `MAILDOCK_BOOTSTRAP_SECRET`, and `CREDENTIALS_ENCRYPTION_KEY` independently:
+Generate `AUTH_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` independently:
 
 ```sh
 openssl rand -base64 32
@@ -26,7 +25,9 @@ openssl rand -base64 32
 
 Never reuse one secret for another purpose.
 
-For Coolify and similar platforms, this five-variable set is the normal deployment interface. Variables generated internally by the platform, such as service URL/FQDN metadata, are not Maildock configuration.
+Maildock automatically generates a temporary setup secret for a fresh instance and prints it in the active web container logs. It is not a deployment variable. See [First-run owner setup](INSTALLATION.md#first-run-owner-setup) for log retrieval and restart behavior.
+
+For Coolify and similar platforms, this four-variable set is the normal deployment interface. Variables generated internally by the platform, such as service URL/FQDN metadata, are not Maildock configuration.
 
 ## Base Compose internal settings
 

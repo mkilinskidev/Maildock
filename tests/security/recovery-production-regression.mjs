@@ -76,9 +76,7 @@ async function wait(project, service) {
   }
   throw Error("Disposable service did not become healthy");
 }
-const fixture = path.resolve(
-  "tests/security/recovery-production-fixture.mjs",
-);
+const fixture = path.resolve("tests/security/recovery-production-fixture.mjs");
 async function offline(project, operation) {
   await compose(project, [
     "run",
@@ -141,7 +139,7 @@ try {
   await offline(source, "prepare-backup");
   if (legacyDrill) {
     // Produce the real baseline archive shape in a DISPOSABLE source only.
-    // The two historical functions and 32 journal rows match baseline HEAD.
+    // The two historical functions and 32 journal rows match the pinned legacy manifests.
     const legacyPrelude = path.resolve(
       "scripts/postgres/recovery/legacy-functions.sql",
     );
@@ -164,7 +162,7 @@ try {
       "postgres",
       "sh",
       "-c",
-      'PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U maildock -d maildock -v ON_ERROR_STOP=1 -c "DROP TABLE public.recovery_maintenance; DELETE FROM drizzle.__drizzle_migrations WHERE id = 33"',
+      'PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U maildock -d maildock -v ON_ERROR_STOP=1 -c "DROP TABLE public.recovery_maintenance; ALTER TABLE public.instance_state DROP CONSTRAINT instance_state_bootstrap; ALTER TABLE public.instance_state DROP COLUMN bootstrap_secret_digest, DROP COLUMN bootstrap_expires_at; DELETE FROM drizzle.__drizzle_migrations WHERE id > 32"',
     ]);
   }
   await compose(source, [
@@ -315,7 +313,9 @@ try {
     "/operator/recovery.json",
   ]);
   await offline(target, "verify-offline");
-  const channelTest = path.resolve("tests/security/recovery-channel-regression.mjs");
+  const channelTest = path.resolve(
+    "tests/security/recovery-channel-regression.mjs",
+  );
   await compose(target, [
     "run",
     "--rm",

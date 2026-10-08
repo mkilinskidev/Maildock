@@ -46,7 +46,6 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
       "CREDENTIALS_ENCRYPTION_KEY_ID",
       "CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS",
       "POSTGRES_PASSWORD",
-      "MAILDOCK_BOOTSTRAP_SECRET",
       "MAILDOCK_ENV",
       "NODE_ENV",
     ].sort(),

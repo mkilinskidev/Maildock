@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ import {
 } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
 import { hashPassword } from "@/modules/auth/infrastructure/password";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import {
   getValidOwnerSession,
   getValidBusinessSession,
@@ -116,7 +117,6 @@ describe("F2.1 MFA foundation with real Better Auth and PostgreSQL", () => {
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/f10`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
       ATTACHMENTS_PATH: tmpdir(),
       LOG_LEVEL: "fatal",
     });
@@ -130,14 +130,17 @@ describe("F2.1 MFA foundation with real Better Auth and PostgreSQL", () => {
     passwordHash = await hashPassword(password);
   });
   beforeEach(async () => {
-    await database.db
-      .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
-    await initializeOwner(database.db, credentials, config);
+    await initializeOwnerFixture(database.db, credentials);
     runtime.oauth.mockReset();
     runtime.headers = new Headers();
   });
@@ -363,6 +366,10 @@ describe("F2.1 MFA foundation with real Better Auth and PostgreSQL", () => {
   it("rejects missing, uninitialized, malformed and dangling owner state without repairing it", async () => {
     await setReadyFixture(database.db);
     const id = await ownerId();
+    const [bootstrapConstraint] = await database.client<
+      { definition: string }[]
+    >`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='instance_state'::regclass and conname='instance_state_bootstrap'`;
+    await database.client`ALTER TABLE instance_state DROP CONSTRAINT instance_state_bootstrap`;
     await database.client`ALTER TABLE instance_state DROP CONSTRAINT instance_state_owner_binding`;
     await database.client`ALTER TABLE instance_state DROP CONSTRAINT instance_state_owner_user_id_user_id_fk`;
     try {
@@ -384,6 +391,9 @@ describe("F2.1 MFA foundation with real Better Auth and PostgreSQL", () => {
       await database.db
         .update(instanceState)
         .set({ ownerUserId: id, initializedAt: new Date() });
+      await database.client.unsafe(
+        `ALTER TABLE instance_state ADD CONSTRAINT instance_state_bootstrap ${bootstrapConstraint.definition}`,
+      );
       await database.client`ALTER TABLE instance_state ADD CONSTRAINT instance_state_owner_user_id_user_id_fk FOREIGN KEY(owner_user_id) REFERENCES "user"(id) ON DELETE RESTRICT ON UPDATE RESTRICT`;
       await database.client`ALTER TABLE instance_state ADD CONSTRAINT instance_state_owner_binding CHECK ((initialized_at IS NULL AND owner_user_id IS NULL) OR (initialized_at IS NOT NULL AND owner_user_id IS NOT NULL AND length(trim(owner_user_id)) > 0 AND owner_user_id = trim(owner_user_id)))`;
     }

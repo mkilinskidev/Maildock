@@ -19,27 +19,10 @@ const validEnvironment = {
 } satisfies Record<string, string | undefined>;
 
 describe("configuration", () => {
-  it("requires canonical 32-byte base64 when bootstrap authorization is configured", () => {
-    for (const secret of [
-      "human password",
-      Buffer.alloc(31).toString("base64"),
-      Buffer.alloc(33).toString("base64"),
-      Buffer.alloc(32).toString("base64").replace(/=$/, ""),
-    ]) {
-      expect(() =>
-        parseConfig({ ...validEnvironment, MAILDOCK_BOOTSTRAP_SECRET: secret }),
-      ).toThrow(/MAILDOCK_BOOTSTRAP_SECRET/);
-      try {
-        parseConfig({ ...validEnvironment, MAILDOCK_BOOTSTRAP_SECRET: secret });
-      } catch (error) {
-        expect(String(error)).not.toContain(secret);
-      }
-    }
-    expect(parseConfig(validEnvironment).bootstrapSecretDigest).toBeUndefined();
-    expect(
-      parseConfig({ ...validEnvironment, MAILDOCK_BOOTSTRAP_SECRET: "" })
-        .bootstrapSecretDigest,
-    ).toBeUndefined();
+  it("has no bootstrap credential in configuration", () => {
+    expect(parseConfig(validEnvironment)).not.toHaveProperty(
+      "bootstrapSecretDigest",
+    );
   });
   it("accepts valid configuration without exposing secrets", () => {
     const config = parseConfig(validEnvironment);

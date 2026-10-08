@@ -42,7 +42,6 @@ export function createLogger(
           "authSecret",
           "bootstrapSecret",
           "bootstrapSecretDigest",
-          "MAILDOCK_BOOTSTRAP_SECRET",
           "credentialsEncryptionKey",
           "credentialsEncryption",
         ].flatMap((field) => [field, `*.${field}`]),

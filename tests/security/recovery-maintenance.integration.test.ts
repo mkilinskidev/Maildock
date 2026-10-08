@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, writeFile, cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,7 +41,7 @@ import {
   restoreSecurityState,
   restoreReviewReason,
 } from "@/modules/auth/application/restore-security-state";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
 import { getValidBusinessSession } from "@/modules/auth/application/session-validation";
 import { verifyMfaLogin } from "@/modules/auth/application/mfa-login";
@@ -132,7 +133,6 @@ async function start(hardened = true) {
     DATABASE_URL: `postgresql://maildock:synthetic@${container.getHost()}:${container.getMappedPort(5432)}/maildock`,
     AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
     CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-    MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
     ATTACHMENTS_PATH: root,
     LOG_LEVEL: "fatal",
   });
@@ -149,11 +149,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.client`truncate public.recovery_maintenance, public.instance_state, public."user", public.mail_accounts, public.blobs, public.verification, public.auth_admission, public.login_throttle, public.rate_limit, public.oauth_authorization_states cascade`;
   await db.db.insert(s.instanceState).values({ id: 1 });
-  await initializeOwner(
-    db.db,
-    { bootstrapSecret, username: "owner-01", password },
-    config,
-  );
+  await initializeOwnerFixture(db.db, {
+    bootstrapSecret,
+    username: "owner-01",
+    password,
+  });
   owner = (await db.db.select().from(s.user))[0].id;
   await db.db.insert(s.twoFactor).values({
     id: randomUUID(),
@@ -170,6 +170,9 @@ beforeEach(async () => {
     .update(s.user)
     .set({ twoFactorEnabled: true })
     .where(eq(s.user.id, owner));
+  await db.db
+    .update(s.instanceState)
+    .set({ bootstrapSecretDigest: null, bootstrapExpiresAt: null });
   auth = createAuth(config, db.db);
 });
 afterAll(async () => {
@@ -212,7 +215,16 @@ describe("F12-05 offline recovery", () => {
     const journal = JSON.parse(
       await readFile(path.join(baseline, "meta/_journal.json"), "utf8"),
     );
-    journal.entries.pop();
+    // This archive targets the pinned historical release, not "current minus one".
+    const legacyHistory = (
+      await readFile(
+        "scripts/postgres/recovery/legacy-migrations-lf.txt",
+        "utf8",
+      )
+    )
+      .trimEnd()
+      .split("\n");
+    journal.entries = journal.entries.slice(0, legacyHistory.length);
     await writeFile(
       path.join(baseline, "meta/_journal.json"),
       JSON.stringify(journal),
@@ -494,11 +506,11 @@ describe("F12-05 offline recovery", () => {
     );
     expect(await db.db.select().from(s.user)).toHaveLength(1);
     await expect(
-      initializeOwner(
-        db.db,
-        { bootstrapSecret, username: "other-owner", password },
-        config,
-      ),
+      initializeOwnerFixture(db.db, {
+        bootstrapSecret,
+        username: "other-owner",
+        password,
+      }),
     ).rejects.toThrow();
     expect((await login("recovery", completed.recoveryCodes[0])).status).toBe(
       200,
@@ -847,7 +859,7 @@ describe("F12-05 offline recovery", () => {
       const journal = JSON.parse(
         await readFile(path.join(baseline, "meta/_journal.json"), "utf8"),
       );
-      journal.entries.pop();
+
       const manifest = (
         await readFile(
           `scripts/postgres/recovery/legacy-migrations${variant === "lf" ? "-lf" : ""}.txt`,
@@ -856,6 +868,7 @@ describe("F12-05 offline recovery", () => {
       )
         .trimEnd()
         .split("\n");
+      journal.entries = journal.entries.slice(0, manifest.length);
       expect(journal.entries).toHaveLength(manifest.length);
       for (const [i, entry] of journal.entries.entries()) {
         const file = path.join(baseline, `${entry.tag}.sql`);

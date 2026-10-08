@@ -106,7 +106,7 @@ export async function POST(request: Request) {
       } catch {
         throw new InvalidSetupRequest();
       }
-      await initializeOwner(db, rawInput, config);
+      await initializeOwner(db, rawInput);
       if (submittedAsForm)
         return Response.redirect(new URL("/login", config.appOrigin), 303);
       return Response.json({ initialized: true }, { status: 201 });

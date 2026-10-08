@@ -104,9 +104,7 @@ it("enrollment locally renders QR/manual key; reload requires renewed bootstrap/
   });
   try {
     const start = async () => {
-      await page
-        .getByLabel("Bootstrap secret", { exact: true })
-        .fill(bootstrap);
+      await page.getByLabel("Setup secret", { exact: true }).fill(bootstrap);
       await page.getByLabel("Owner password").fill(password);
       await page.getByRole("button", { name: "Start or resume setup" }).click();
       await page.getByLabel("Authenticator setup QR code").waitFor();
@@ -129,7 +127,7 @@ it("enrollment locally renders QR/manual key; reload requires renewed bootstrap/
     ).toBe(true);
     await page.reload();
     expect(
-      await page.getByLabel("Bootstrap secret", { exact: true }).inputValue(),
+      await page.getByLabel("Setup secret", { exact: true }).inputValue(),
     ).toBe("");
     expect(await page.locator("svg").count()).toBe(0);
     await start();

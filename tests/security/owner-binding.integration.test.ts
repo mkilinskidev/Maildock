@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { setReadyFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -20,10 +21,7 @@ import {
 } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
 import { hashPassword } from "@/modules/auth/infrastructure/password";
-import {
-  initializeOwner,
-  isInstanceInitialized,
-} from "@/modules/auth/application/instance-auth";
+import { isInstanceInitialized } from "@/modules/auth/application/instance-auth";
 import { getValidSession } from "@/modules/auth/application/session-validation";
 import { isSessionWithinLifetime } from "@/modules/auth/domain/session-policy";
 import { createDatabase } from "@/shared/infrastructure/database/database";
@@ -114,7 +112,6 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/f10`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
       ATTACHMENTS_PATH: tmpdir(),
       LOG_LEVEL: "fatal",
     });
@@ -128,14 +125,17 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
     passwordHash = await hashPassword(password);
   });
   beforeEach(async () => {
-    await database.db
-      .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);
     await database.db.delete(loginThrottle);
-    await initializeOwner(database.db, credentials, config);
+    await initializeOwnerFixture(database.db, credentials);
     runtime.oauth.mockReset();
     runtime.headers = new Headers();
   });
@@ -258,9 +258,12 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
   });
 
   it("rolls back user, credential and binding together when initialization fails", async () => {
-    await database.db
-      .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);
@@ -268,7 +271,7 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
     await database.client`ALTER TABLE instance_state ADD CONSTRAINT f10_test_failure CHECK (initialized_at IS NULL)`;
     try {
       await expect(
-        initializeOwner(database.db, credentials, config),
+        initializeOwnerFixture(database.db, credentials),
       ).rejects.toThrow();
       expect(await database.db.select().from(user)).toHaveLength(0);
       expect(await database.db.select().from(account)).toHaveLength(0);
@@ -342,11 +345,10 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
       ).status,
     ).toBe(409);
     await expect(
-      initializeOwner(
-        database.db,
-        { ...credentials, username: "replacement" },
-        config,
-      ),
+      initializeOwnerFixture(database.db, {
+        ...credentials,
+        username: "replacement",
+      }),
     ).rejects.toThrow();
     expect(await state()).toEqual(before);
     expect(await (await setupRead()).json()).toEqual({ initialized: true });
@@ -438,7 +440,11 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
       const cookie = await login();
       const ownerId = (await state()).ownerUserId!;
       // Deliberately bypass DB integrity only in this disposable test database.
+      const [bootstrapConstraint] = await database.client<
+        { definition: string }[]
+      >`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='instance_state'::regclass and conname='instance_state_bootstrap'`;
       await database.client.begin(async (tx) => {
+        await tx`ALTER TABLE instance_state DROP CONSTRAINT instance_state_bootstrap`;
         await tx`ALTER TABLE instance_state DROP CONSTRAINT instance_state_owner_binding`;
         await tx`ALTER TABLE instance_state DROP CONSTRAINT instance_state_owner_user_id_user_id_fk`;
         if (corruption === "missing")
@@ -462,6 +468,9 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
       } finally {
         await database.db.delete(instanceState);
         await database.db.insert(instanceState).values({ id: 1 });
+        await database.client.unsafe(
+          `ALTER TABLE instance_state ADD CONSTRAINT instance_state_bootstrap ${bootstrapConstraint.definition}`,
+        );
         await database.client`ALTER TABLE instance_state ADD CONSTRAINT instance_state_owner_user_id_user_id_fk FOREIGN KEY (owner_user_id) REFERENCES "user"(id) ON DELETE RESTRICT ON UPDATE RESTRICT`;
         await database.client`ALTER TABLE instance_state ADD CONSTRAINT instance_state_owner_binding CHECK ((initialized_at IS NULL AND owner_user_id IS NULL) OR (initialized_at IS NOT NULL AND owner_user_id IS NOT NULL AND length(trim(owner_user_id)) > 0 AND owner_user_id = trim(owner_user_id)))`;
       }
@@ -469,9 +478,12 @@ describe("F10 immutable instance owner with real Better Auth and PostgreSQL", ()
   );
 
   it("closes setup for an uninitialized instance containing unknown auth users", async () => {
-    await database.db
-      .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     const cookie = await login();
     await expectBusinessDenied(cookie);
     expect((await setup(request("/api/setup", "", credentials))).status).toBe(

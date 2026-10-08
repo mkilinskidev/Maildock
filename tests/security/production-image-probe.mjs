@@ -1,3 +1,6 @@
+// Test-only credential transport from captured startup logs; no deployment setting or plaintext file.
+let setupSecret = "";
+for await (const chunk of process.stdin) setupSecret += chunk.toString();
 // Run only inside the disposable production image, copied to /app/f12-production.mjs.
 // Uses synthetic setup/MFA and inspects the actual published blobs and database.
 import assert from "node:assert/strict";
@@ -76,7 +79,7 @@ async function enroll() {
     await call("/api/setup", {
       username: "f12owner",
       password,
-      bootstrapSecret: process.env.MAILDOCK_BOOTSTRAP_SECRET,
+      bootstrapSecret: setupSecret,
     });
     await call("/api/auth/sign-in/username", {
       username: "f12owner",
@@ -90,13 +93,13 @@ async function enroll() {
     assert.equal(denied.status, 401);
     const enrollment = await call("/api/auth/initial-mfa/start", {
       password,
-      bootstrapSecret: process.env.MAILDOCK_BOOTSTRAP_SECRET,
+      bootstrapSecret: setupSecret,
     });
     secret = new URL(enrollment.totpURI).searchParams.get("secret");
     await writeFile("/tmp/f12-totp", secret, { mode: 0o600 });
     await call("/api/auth/initial-mfa/complete", {
       code: totp(),
-      bootstrapSecret: process.env.MAILDOCK_BOOTSTRAP_SECRET,
+      bootstrapSecret: setupSecret,
     });
   } else {
     secret = await readFile("/tmp/f12-totp", "utf8");

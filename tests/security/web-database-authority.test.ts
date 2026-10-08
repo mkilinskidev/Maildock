@@ -6,6 +6,8 @@ const state = vi.hoisted(() => ({
   query: vi.fn(),
   end: vi.fn(),
   fatal: vi.fn(),
+  bootstrap: vi.fn(),
+  database: {},
 }));
 vi.mock("@/shared/infrastructure/config/config", async (original) => ({
   ...(await original<typeof import("@/shared/infrastructure/config/config")>()),
@@ -14,7 +16,11 @@ vi.mock("@/shared/infrastructure/config/config", async (original) => ({
 vi.mock("@/shared/infrastructure/database/database", () => ({
   createDatabase: () => ({
     client: Object.assign(state.query, { end: state.end }),
+    db: state.database,
   }),
+}));
+vi.mock("@/modules/auth/infrastructure/bootstrap-startup", () => ({
+  startBootstrapLifecycle: state.bootstrap,
 }));
 vi.mock("@/shared/infrastructure/logging/logger", () => ({
   createLogger: () => ({ fatal: state.fatal }),
@@ -26,6 +32,9 @@ beforeEach(() => {
   state.safe = true;
   state.unavailable = false;
   state.end.mockResolvedValue(undefined);
+  state.bootstrap.mockImplementation(async (_db, _onFailure, onComplete) => {
+    await onComplete();
+  });
   state.query.mockImplementation(async () => {
     if (state.unavailable) throw new Error("F12_SQL_CREDENTIAL_CANARY");
     return [
@@ -50,6 +59,14 @@ it("checks ordinary web authority once and closes its startup connection", async
   await register();
   expect(state.query).toHaveBeenCalledTimes(1);
   expect(state.end).toHaveBeenCalledTimes(1);
+  expect(state.bootstrap).toHaveBeenCalledWith(
+    state.database,
+    expect.any(Function),
+    expect.any(Function),
+  );
+  expect(state.query.mock.invocationCallOrder[0]).toBeLessThan(
+    state.bootstrap.mock.invocationCallOrder[0],
+  );
   expect(state.fatal).not.toHaveBeenCalled();
 });
 
@@ -65,6 +82,7 @@ it.each(["authority", "connection"])(
     await expect(register()).rejects.toBeInstanceOf(RefusedExit);
     expect(exit).toHaveBeenCalledWith(1);
     expect(state.end).toHaveBeenCalledTimes(1);
+    expect(state.bootstrap).not.toHaveBeenCalled();
     expect(state.fatal.mock.calls[0][0]).toMatchObject({
       category:
         failure === "authority" ? "database_authority" : "database_unavailable",

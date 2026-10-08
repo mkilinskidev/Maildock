@@ -22,11 +22,10 @@ You need Docker with Docker Compose.
    APP_ORIGIN=http://localhost:3000
    POSTGRES_PASSWORD=<strong-random-password>
    AUTH_SECRET=<base64-random-secret>
-   MAILDOCK_BOOTSTRAP_SECRET=<base64-32-byte-secret>
    CREDENTIALS_ENCRYPTION_KEY=<base64-32-byte-key>
    ```
 
-   Generate each of the three base64 secrets independently:
+   Generate each of the two base64 secrets independently:
 
    ```sh
    openssl rand -base64 32
@@ -38,13 +37,13 @@ You need Docker with Docker Compose.
    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
    ```
 
-4. Open `http://localhost:3000/setup`. Enter the bootstrap secret from `.env`, create the owner, and complete the mandatory TOTP setup. Store the recovery codes somewhere safe.
-
-5. After owner setup succeeds, remove the value of `MAILDOCK_BOOTSTRAP_SECRET` from `.env` and recreate the app container:
+4. Open the app container logs and copy the generated **Setup secret**:
 
    ```sh
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate app
+   docker compose logs app
    ```
+
+5. Open `http://localhost:3000/setup`, enter that secret, and create the owner. Sign in, complete mandatory TOTP enrollment using the same setup secret, and save the recovery codes outside Maildock. Keep the temporary setup secret until MFA enrollment is complete; it is permanently disabled then.
 
 6. Sign in at `http://localhost:3000/login` and add an account from **Settings → Accounts**.
 

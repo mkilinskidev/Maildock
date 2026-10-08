@@ -62,13 +62,14 @@ export async function startInitialMfa(
   headers: Headers,
   input: z.infer<typeof initialMfaStartSchema>,
 ) {
-  await authorizeBootstrap(database, input.bootstrapSecret, config);
+  await authorizeBootstrap(database, input.bootstrapSecret, "initial-mfa");
   // Persist admission independently: failed passwords/codes cannot roll it back.
   await reserveSetupAttempt(database, true, "initial-mfa");
   return withInitialMfaBoundary(config, database, async (auth, tx) => {
     const owner = await getValidOwnerSession(auth, headers);
     if (!owner) throw new InitialMfaRejected();
     const pending = await pendingState(tx, owner.user.id);
+    await authorizeBootstrap(tx, input.bootstrapSecret, "initial-mfa");
     try {
       if (pending) {
         // Better Auth validates the password and decrypts its own pending secret.
@@ -101,7 +102,7 @@ export async function completeInitialMfa(
   headers: Headers,
   input: z.infer<typeof initialMfaCompleteSchema>,
 ) {
-  await authorizeBootstrap(database, input.bootstrapSecret, config);
+  await authorizeBootstrap(database, input.bootstrapSecret, "initial-mfa");
   await reserveSetupAttempt(database, true, "initial-mfa");
   return withInitialMfaBoundary(config, database, async (auth, tx) => {
     // Re-read authority AFTER the lock. A competing completion revokes it.
@@ -109,6 +110,7 @@ export async function completeInitialMfa(
     if (!owner) throw new InitialMfaRejected();
     const pending = await pendingState(tx, owner.user.id);
     if (!pending) throw new InitialMfaRejected();
+    await authorizeBootstrap(tx, input.bootstrapSecret, "initial-mfa");
     try {
       // The installed plugin owns decryption/TOTP verification, user flag,
       // factor verification and temporary session rotation, all on this tx.
@@ -118,6 +120,12 @@ export async function completeInitialMfa(
       throw error;
     }
     await tx.delete(session).where(eq(session.userId, owner.user.id));
+    // The setup proof survives owner creation only for initial enrollment.
+    // Revoke it in the same transaction as verified MFA and session revocation.
+    await tx
+      .update(instanceState)
+      .set({ bootstrapSecretDigest: null, bootstrapExpiresAt: null })
+      .where(eq(instanceState.id, 1));
     if (
       (
         await tx

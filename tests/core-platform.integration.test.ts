@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./security/mfa-fixture";
 import { setReadyFixture } from "./security/mfa-fixture";
 import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
 import { applicationEvents } from "@/shared/infrastructure/database/schema";
@@ -15,7 +16,6 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  initializeOwner,
   InstanceAlreadyInitializedError,
   isInstanceInitialized,
 } from "@/modules/auth/application/instance-auth";
@@ -104,7 +104,6 @@ describe("Phase 0 PostgreSQL foundations", () => {
       APP_ORIGIN: "http://localhost:3000",
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
       ATTACHMENTS_PATH: attachmentsPath,
       LOG_LEVEL: "fatal",
@@ -117,7 +116,12 @@ describe("Phase 0 PostgreSQL foundations", () => {
   beforeEach(async () => {
     await db
       .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+      .set({
+        bootstrapSecretDigest: null,
+        bootstrapExpiresAt: null,
+        initializedAt: null,
+        ownerUserId: null,
+      });
     await db.delete(mailAccounts);
     await db.delete(session);
     await db.delete(account);
@@ -143,64 +147,44 @@ describe("Phase 0 PostgreSQL foundations", () => {
 
   it("allows setup while uninitialized and creates exactly one owner", async () => {
     expect(await isInstanceInitialized(db)).toBe(false);
-    await initializeOwner(
-      db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "owner",
-        password: "correct horse battery staple",
-      },
-      config,
-    );
+    await initializeOwnerFixture(db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "owner",
+      password: "correct horse battery staple",
+    });
     expect(await isInstanceInitialized(db)).toBe(true);
     expect(await db.select().from(user)).toHaveLength(1);
     expect(await db.select().from(account)).toHaveLength(1);
   });
 
   it("rejects setup after initialization", async () => {
-    await initializeOwner(
-      db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "owner",
-        password: "correct horse battery staple",
-      },
-      config,
-    );
+    await initializeOwnerFixture(db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "owner",
+      password: "correct horse battery staple",
+    });
     await expect(
-      initializeOwner(
-        db,
-        {
-          bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-          username: "another",
-          password: "another sufficiently long password",
-        },
-        config,
-      ),
+      initializeOwnerFixture(db, {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "another",
+        password: "another sufficiently long password",
+      }),
     ).rejects.toBeInstanceOf(InstanceAlreadyInitializedError);
     expect(await db.select().from(user)).toHaveLength(1);
   });
 
   it("serializes concurrent setup so only one owner can be created", async () => {
     const results = await Promise.allSettled([
-      initializeOwner(
-        db,
-        {
-          bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-          username: "first",
-          password: "first sufficiently long password",
-        },
-        config,
-      ),
-      initializeOwner(
-        db,
-        {
-          bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-          username: "second",
-          password: "second sufficiently long password",
-        },
-        config,
-      ),
+      initializeOwnerFixture(db, {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "first",
+        password: "first sufficiently long password",
+      }),
+      initializeOwnerFixture(db, {
+        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+        username: "second",
+        password: "second sufficiently long password",
+      }),
     ]);
     expect(
       results.filter((result) => result.status === "fulfilled"),
@@ -213,15 +197,11 @@ describe("Phase 0 PostgreSQL foundations", () => {
   });
 
   it("rejects an unauthenticated request and accepts an authenticated session", async () => {
-    await initializeOwner(
-      db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "owner",
-        password: "correct horse battery staple",
-      },
-      config,
-    );
+    await initializeOwnerFixture(db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "owner",
+      password: "correct horse battery staple",
+    });
     const testAuth = createAuth(config, db);
     expect(await getValidSession(testAuth, new Headers())).toBeNull();
 
@@ -863,15 +843,11 @@ describe("Phase 0 PostgreSQL foundations", () => {
   });
 
   it("requires an authenticated owner and valid origin for deletion mutations", async () => {
-    await initializeOwner(
-      db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "owner",
-        password: "correct horse battery staple",
-      },
-      config,
-    );
+    await initializeOwnerFixture(db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "owner",
+      password: "correct horse battery staple",
+    });
     const testAuth = createAuth(config, db);
     const unauthenticated = await checkOwnerApiAccess(
       testAuth,

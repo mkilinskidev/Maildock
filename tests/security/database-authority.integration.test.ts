@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -18,7 +19,7 @@ import { validateDatabaseAuthority } from "@/shared/infrastructure/database/data
 import { failureDiagnostic } from "@/shared/infrastructure/logging/diagnostics";
 import { parseConfig } from "@/shared/infrastructure/config/config";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import { setReadyFixture } from "./mfa-fixture";
 import {
   mailAccounts,
@@ -199,19 +200,11 @@ describe("F12.2 authority on real disposable PostgreSQL 18.6", () => {
     });
     const auth = createAuth(config, database!.db);
     const bootstrapSecret = Buffer.alloc(32, 7).toString("base64");
-    await initializeOwner(
-      database!.db,
-      {
-        bootstrapSecret,
-        username: "Owner-01",
-        password: "correct horse battery staple",
-      },
-      {
-        bootstrapSecretDigest: createHash("sha256")
-          .update(bootstrapSecret)
-          .digest("hex"),
-      },
-    );
+    await initializeOwnerFixture(database!.db, {
+      bootstrapSecret,
+      username: "Owner-01",
+      password: "correct horse battery staple",
+    });
     const login = await auth.api.signInUsername({
       body: { username: "Owner-01", password: "correct horse battery staple" },
       asResponse: true,

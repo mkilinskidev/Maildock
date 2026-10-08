@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,7 +11,7 @@ import {
 } from "testcontainers";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import { getValidBusinessSession } from "@/modules/auth/application/session-validation";
 import { isInstanceReady } from "@/modules/auth/application/instance-readiness";
 import { createDatabase } from "@/shared/infrastructure/database/database";
@@ -51,18 +52,17 @@ beforeAll(async () => {
     DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/race`,
     AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
     CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-    MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
     ATTACHMENTS_PATH: tmpdir(),
     LOG_LEVEL: "fatal",
   });
   database = createDatabase(config);
   control = createDatabase(config);
   await migrate(database.db, { migrationsFolder: "db/migrations" });
-  await initializeOwner(
-    database.db,
-    { bootstrapSecret, username: "Owner-01", password },
-    config,
-  );
+  await initializeOwnerFixture(database.db, {
+    bootstrapSecret,
+    username: "Owner-01",
+    password,
+  });
   await control.client`CREATE FUNCTION pause_password_session() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN PERFORM pg_advisory_xact_lock(1296125022); RETURN NEW; END $$`;
   await control.client`CREATE TRIGGER pause_password_session BEFORE INSERT ON session

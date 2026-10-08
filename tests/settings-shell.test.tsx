@@ -349,7 +349,11 @@ it("opens deep-linked onboarding and displays unconfigured Microsoft without sta
   expect(host.querySelector('[href="/api/oauth/microsoft/start"]')).toBeNull();
   expect((rows[1] as HTMLButtonElement).disabled).toBe(true);
   expect(host.querySelector('[href="/api/oauth/google/start"]')).toBeNull();
-  expect(host.textContent).toContain("Google OAuth is not configured.");
+  const hints = host.querySelectorAll(".account-provider-hint");
+  expect(hints).toHaveLength(1);
+  expect(hints[0].textContent).toContain(
+    "OAuth providers can be configured in Settings.",
+  );
 });
 
 async function openCreate() {
@@ -504,7 +508,11 @@ it("shows OAuth configuration under Integrations and saves a write-only blank se
       ? Response.json(provider)
       : Response.json({ providers: [provider] }),
   );
-  await click("Configure OAuth providers");
+  await act(async () =>
+    host
+      .querySelector<HTMLButtonElement>(".account-provider-hint button")!
+      .click(),
+  );
   expect(host.textContent).toContain("Configured");
   expect(host.querySelector(".oauth-provider-list")).toBeTruthy();
   expect(host.querySelector("form")).toBeNull();

@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { setReadyFixture } from "./mfa-fixture";
 import { tmpdir } from "node:os";
 import { eq } from "drizzle-orm";
@@ -17,7 +18,7 @@ import {
   vi,
 } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import { checkOwnerApiAccess } from "@/modules/auth/application/api-access-check";
 import { logoutCurrentSession } from "@/modules/auth/application/logout";
 import { createDatabase } from "@/shared/infrastructure/database/database";
@@ -80,20 +81,15 @@ describe("F6 current-session logout with Better Auth 1.7.5 and PostgreSQL", () =
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/logout`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       ATTACHMENTS_PATH: tmpdir(),
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
-    await initializeOwner(
-      database.db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "Owner-01",
-        password,
-      },
-      config,
-    );
+    await initializeOwnerFixture(database.db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "Owner-01",
+      password,
+    });
     auth = createAuth(config, database.db);
     runtime.db = database.db;
     runtime.config = config;

@@ -9,12 +9,27 @@ export async function register() {
       await import("./shared/infrastructure/logging/diagnostics");
     const { createLogger } =
       await import("./shared/infrastructure/logging/logger");
+    const { startBootstrapLifecycle } =
+      await import("./modules/auth/infrastructure/bootstrap-startup");
     try {
       const database = createDatabase(getConfig());
       try {
         await validateDatabaseAuthority(database.client);
-      } finally {
+        await startBootstrapLifecycle(
+          database.db,
+          (error) =>
+            logFailure(
+              createLogger({ logLevel: "info" }),
+              error,
+              "web",
+              "startup",
+              "fatal",
+            ),
+          () => database.client.end(),
+        );
+      } catch (error) {
         await database.client.end();
+        throw error;
       }
     } catch (error) {
       logFailure(

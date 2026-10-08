@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { tmpdir } from "node:os";
 import { setReadyFixture } from "./mfa-fixture";
 import { betterAuth } from "better-auth";
@@ -19,7 +20,7 @@ import {
   vi,
 } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import { getValidSession } from "@/modules/auth/application/session-validation";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import { parseConfig } from "@/shared/infrastructure/config/config";
@@ -99,20 +100,15 @@ describe("F5 lifetime with real Better Auth 1.7.5 and PostgreSQL", () => {
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/sessions`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       ATTACHMENTS_PATH: tmpdir(),
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
-    await initializeOwner(
-      database.db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "Owner-01",
-        password,
-      },
-      config,
-    );
+    await initializeOwnerFixture(database.db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "Owner-01",
+      password,
+    });
     auth = createAuth(config, database.db);
     runtime.db = database.db;
     runtime.config = config;

@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { setReadyFixture } from "./mfa-fixture";
 import { PATCH as moveAccount } from "../../src/app/api/accounts/[id]/order/route";
 import { AccountsService } from "../../src/modules/accounts/application/accounts-service";
@@ -36,7 +37,7 @@ import { JSDOM } from "jsdom";
 import { createDatabase } from "../../src/shared/infrastructure/database/database";
 import { parseConfig } from "../../src/shared/infrastructure/config/config";
 import { LocalBlobStorage } from "../../src/shared/infrastructure/storage/local-blob-storage";
-import { initializeOwner } from "../../src/modules/auth/application/instance-auth";
+
 import { createAuth } from "../../src/modules/auth/infrastructure/auth-factory";
 import { checkOwnerApiAccess } from "../../src/modules/auth/application/api-access-check";
 import { MessageContentService } from "../../src/modules/mail/application/message-content-service";
@@ -151,22 +152,17 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       APP_ORIGIN: origin,
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/security`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
       ATTACHMENTS_PATH: root,
       LOG_LEVEL: "fatal",
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
-    await initializeOwner(
-      database.db,
-      {
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-        username: "owner",
-        password: "correct horse battery staple",
-      },
-      config,
-    );
+    await initializeOwnerFixture(database.db, {
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+      username: "owner",
+      password: "correct horse battery staple",
+    });
     const auth = createAuth(config, database.db);
     const login = await auth.handler(
       new Request(`${origin}/api/auth/sign-in/username`, {

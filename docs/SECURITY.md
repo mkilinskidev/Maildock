@@ -4,7 +4,7 @@ Maildock is a single-owner application with access to sensitive mail and sending
 
 ## Authentication
 
-One installation has one immutable owner. There is no public registration. First-run creation requires an independent bootstrap secret and closes after initialization. Passwords use Argon2id. TOTP MFA is mandatory before normal business access; recovery codes are supported. Sessions have persistent lifetime/revocation checks, and logout requires confirmed server-side revocation.
+One installation has one immutable owner. There is no public registration. First-run creation requires an automatically generated temporary setup secret from the app container logs and closes after initialization. Passwords use Argon2id. TOTP MFA is mandatory before normal business access; recovery codes are supported. Sessions have persistent lifetime/revocation checks, and logout requires confirmed server-side revocation.
 
 There is no email-based forgotten-owner-password reset and the bootstrap secret cannot replace an existing owner.
 
@@ -39,3 +39,5 @@ Operational logs are structured. Sensitive boundaries use fixed/allowlisted diag
 The initial white-box review produced twelve finding groups and all remediation items from that pass are closed in the current codebase. Dedicated security regression tests remain in `tests/security`.
 
 This is not yet final V1 security sign-off. A second review of the remediated system, dependency/container/deployment checks and staging black-box validation remain release-gate work. Historical finding reports are available through Git history rather than the current operator documentation.
+
+Bootstrap coordination uses the singleton `instance_state` row: only a SHA-256 digest and lease expiry are persisted. Web processes serialize issuance/renewal using a row lock and PostgreSQL time. Setup rechecks the credential under the same lock before creating the owner and stops credential rotation in the owner transaction; verified initial MFA clears the remaining digest in its completion transaction. Plaintext appears only in the deliberate bootstrap log message.

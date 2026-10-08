@@ -1,5 +1,4 @@
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { DEFAULT_ATTACHMENT_LIMITS } from "../../application/attachment-limits";
 import { DEFAULT_CONTENT_POLL_INTERVAL_MS } from "../../application/content-polling";
 
@@ -59,9 +58,6 @@ const schema = z
     // Test harness compatibility only. Production/development deployments use the bundled postgres service.
     DATABASE_URL: z.string().min(1).startsWith("postgresql://").optional(),
     AUTH_SECRET: secretSchema,
-    MAILDOCK_BOOTSTRAP_SECRET: z
-      .union([z.literal(""), encryptionKeySchema])
-      .optional(),
     CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
     CREDENTIALS_ENCRYPTION_KEY_ID: keyIdSchema.default("v1"),
     CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: previousKeysSchema,
@@ -170,7 +166,11 @@ const schema = z
         message: "is required for the bundled PostgreSQL service",
       });
     }
-    if (value.MAILDOCK_ENV === "test" && !value.DATABASE_URL && !value.POSTGRES_PASSWORD) {
+    if (
+      value.MAILDOCK_ENV === "test" &&
+      !value.DATABASE_URL &&
+      !value.POSTGRES_PASSWORD
+    ) {
       context.addIssue({
         code: "custom",
         path: ["POSTGRES_PASSWORD"],
@@ -191,7 +191,6 @@ export type AppConfig = Readonly<{
   appOrigin: string;
   databaseUrl: string;
   authSecret: string;
-  bootstrapSecretDigest?: string;
   credentialsEncryption: Readonly<{
     activeKeyId: string;
     keys: Readonly<Record<string, string>>;
@@ -242,11 +241,6 @@ export function parseConfig(
         ? result.data.DATABASE_URL
         : `postgresql://maildock:${encodeURIComponent(result.data.POSTGRES_PASSWORD!)}@postgres:5432/maildock`,
     authSecret: result.data.AUTH_SECRET,
-    bootstrapSecretDigest: result.data.MAILDOCK_BOOTSTRAP_SECRET
-      ? createHash("sha256")
-          .update(result.data.MAILDOCK_BOOTSTRAP_SECRET)
-          .digest("hex")
-      : undefined,
     credentialsEncryption: Object.freeze({
       activeKeyId: result.data.CREDENTIALS_ENCRYPTION_KEY_ID,
       keys: Object.freeze({

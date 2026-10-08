@@ -246,6 +246,10 @@ export const instanceState = pgTable(
   {
     id: integer("id").primaryKey(),
     initializedAt: timestamp("initialized_at", { withTimezone: true }),
+    bootstrapSecretDigest: text("bootstrap_secret_digest"),
+    bootstrapExpiresAt: timestamp("bootstrap_expires_at", {
+      withTimezone: true,
+    }),
     ownerUserId: text("owner_user_id").references(() => user.id, {
       onDelete: "restrict",
       onUpdate: "restrict",
@@ -287,6 +291,10 @@ export const instanceState = pgTable(
   },
   (table) => [
     check("instance_state_singleton", sql`${table.id} = 1`),
+    check(
+      "instance_state_bootstrap",
+      sql`(${table.bootstrapSecretDigest} is null and ${table.bootstrapExpiresAt} is null) or (${table.bootstrapSecretDigest} is not null and ${table.bootstrapSecretDigest} ~ '^[0-9a-f]{64}$' and ((${table.initializedAt} is null and ${table.ownerUserId} is null and ${table.bootstrapExpiresAt} is not null) or (${table.initializedAt} is not null and ${table.ownerUserId} is not null and ${table.bootstrapExpiresAt} is null)))`,
+    ),
     check(
       "instance_state_owner_binding",
       sql`(${table.initializedAt} is null and ${table.ownerUserId} is null) or (${table.initializedAt} is not null and ${table.ownerUserId} is not null and length(trim(${table.ownerUserId})) > 0 and ${table.ownerUserId} = trim(${table.ownerUserId}))`,

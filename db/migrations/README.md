@@ -41,5 +41,6 @@ The early migrations were generated with Drizzle's automatic names. The names ar
 | 0030 | authenticator replacement state |
 | 0031 | persistent authentication admission controls |
 | 0032 | restore-safe search definitions and recovery maintenance receipt |
+| 0033 | generated setup credential digest and web-process lease |
 
 The numbered `meta/*_snapshot.json` files and `meta/_journal.json` are generated migration metadata and should remain aligned with the historical SQL files.

@@ -24,9 +24,10 @@ const productionProbe = fileURLToPath(
 const resources = { containers: [], network: false, volume: false };
 await mkdir(output, { recursive: true });
 
-function docker(args, checked = true) {
+function docker(args, checked = true, input) {
   const result = spawnSync("docker", args, {
     encoding: "utf8",
+    input,
     maxBuffer: 8 * 1024 * 1024,
   });
   if (checked)
@@ -96,11 +97,23 @@ async function capture(container, label) {
   }
   console.log(`${label}: independent stdout/stderr canary assertions PASS`);
 }
-function probe(container, args = []) {
-  docker(["cp", productionProbe, `${container}:/app/production-image-probe.mjs`]);
+function probe(container, args = [], setupSecret) {
+  docker([
+    "cp",
+    productionProbe,
+    `${container}:/app/production-image-probe.mjs`,
+  ]);
   const result = docker(
-    ["exec", container, "node", "/app/production-image-probe.mjs", ...args],
+    [
+      "exec",
+      "-i",
+      container,
+      "node",
+      "/app/production-image-probe.mjs",
+      ...args,
+    ],
     false,
+    setupSecret,
   );
   const label = args.includes("--high") ? "high" : "default";
   // These outputs contain only synthetic probe summaries, never MFA/cookies.
@@ -125,7 +138,6 @@ try {
     `DATABASE_URL=postgresql://maildock:f12-disposable-only@${db}:5432/maildock`,
     `AUTH_SECRET=${randomBytes(32).toString("base64")}`,
     `CREDENTIALS_ENCRYPTION_KEY=${randomBytes(32).toString("base64")}`,
-    `MAILDOCK_BOOTSTRAP_SECRET=${randomBytes(32).toString("base64")}`,
     "ATTACHMENTS_PATH=/var/lib/maildock/attachments",
   ].join("\n");
   const envFile = path.join(temp, "synthetic.env");
@@ -164,7 +176,15 @@ try {
   docker(["run", "-d", "--name", app, ...common, image]);
   resources.containers.push(app);
   await ready(app);
-  await probe(app);
+  const setupLogs = docker(["logs", app]);
+  const setupSecret = setupLogs.stdout.match(
+    /Setup secret: ([A-Za-z0-9+/]{43}=)/,
+  )?.[1];
+  assert.ok(
+    setupSecret,
+    "generated setup credential missing from startup logs",
+  );
+  await probe(app, [], setupSecret);
   await capture(app, "default");
   const secretFile = path.join(temp, "synthetic-totp");
   docker(["cp", `${app}:/tmp/f12-totp`, secretFile]);

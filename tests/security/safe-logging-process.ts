@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 // Child-process canary harness: synthetic credentials and parent-owned disposable DB.
 // Never print result bodies or exception objects; stdout/stderr are the subject.
 import { writeFile } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import {
   startInitialMfa,
   completeInitialMfa,
@@ -28,14 +29,18 @@ const bootstrap = Buffer.alloc(32, 73).toString("base64");
 const config = parseConfig({
   MAILDOCK_ENV: "production",
   APP_ORIGIN: origin,
-  DATABASE_URL: process.env.F11_DATABASE_URL,
+  POSTGRES_PASSWORD: "synthetic",
   AUTH_SECRET: Buffer.alloc(32, 74).toString("base64"),
   CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 75).toString("base64"),
-  MAILDOCK_BOOTSTRAP_SECRET: bootstrap,
   ATTACHMENTS_PATH: process.cwd(),
   LOG_LEVEL: "info",
 });
-const database = createDatabase(config);
+// Transport seam for the parent-owned disposable database. Keep production
+// config parsing strict; deployment DATABASE_URL overrides remain unsupported.
+const database = createDatabase({
+  ...config,
+  databaseUrl: process.env.F11_DATABASE_URL!,
+});
 const secrets = [
   password,
   bootstrap,
@@ -96,11 +101,11 @@ try {
   await migrate(database.db, { migrationsFolder: "db/migrations" });
   const auth = createAuth(config, database.db);
   const setup = () =>
-    initializeOwner(
-      database.db,
-      { username: "owner-f11", password, bootstrapSecret: bootstrap },
-      config,
-    );
+    initializeOwnerFixture(database.db, {
+      username: "owner-f11",
+      password,
+      bootstrapSecret: bootstrap,
+    });
   await installFailure("user", "INSERT");
   await scenario("setup-rollback", setup);
   await dropFailure("user");

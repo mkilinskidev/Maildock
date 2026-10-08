@@ -170,7 +170,7 @@ export function InitialMfaForm() {
       ) : (
         <>
           <label>
-            Bootstrap secret
+            Setup secret
             <input
               name="bootstrapSecret"
               type="password"
@@ -182,8 +182,9 @@ export function InitialMfaForm() {
             />
           </label>
           <p className="muted auth-help">
-            Enter the bootstrap secret from your deployment configuration.
-            Reloading requires entering it again.
+            Use the setup secret from the Maildock container logs. Keep it until
+            authenticator setup is complete. Reloading requires entering it
+            again.
           </p>
           <label>
             Owner password

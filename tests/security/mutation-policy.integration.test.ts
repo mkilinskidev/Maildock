@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { setReadyFixture } from "./mfa-fixture";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +24,7 @@ import {
   type AppConfig,
 } from "@/shared/infrastructure/config/config";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import { checkOwnerApiAccess } from "@/modules/auth/application/api-access-check";
 
 const runtime = vi.hoisted(() => ({
@@ -132,21 +133,16 @@ describe("F4 real HTTP handlers and authenticated session boundary", () => {
       APP_ORIGIN: origin,
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/f4`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: Buffer.alloc(32, 7).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
       ATTACHMENTS_PATH: root,
       LOG_LEVEL: "fatal",
     });
     database = createDatabase(config);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
-    await initializeOwner(
-      database.db,
-      {
-        ...credentials,
-        bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-      },
-      config,
-    );
+    await initializeOwnerFixture(database.db, {
+      ...credentials,
+      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+    });
     auth = createAuth(config, database.db);
     runtime.auth = auth;
     runtime.config = config;

@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,7 +19,7 @@ import {
   vi,
 } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import {
   getValidOwnerSession,
   getValidBusinessSession,
@@ -108,7 +109,6 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/enrollment`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
       ATTACHMENTS_PATH: tmpdir(),
       LOG_LEVEL: "fatal",
     });
@@ -123,17 +123,20 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
     runtime.auth = auth;
   });
   beforeEach(async () => {
-    await database.db
-      .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);
-    await initializeOwner(
-      database.db,
-      { bootstrapSecret, username: "owner-01", password },
-      config,
-    );
+    await initializeOwnerFixture(database.db, {
+      bootstrapSecret,
+      username: "owner-01",
+      password,
+    });
     cookie = cookies(await login());
     runtime.headers = new Headers({ cookie });
   });
@@ -336,6 +339,9 @@ describe("F2.2 initial enrollment with real Better Auth/PostgreSQL", () => {
       freshLoginRequired: true,
       recoveryCodes: expect.arrayContaining([expect.any(String)]),
     });
+    const [bootstrapState] = await database.db.select().from(instanceState);
+    expect(bootstrapState.bootstrapSecretDigest).toBeNull();
+    expect(bootstrapState.bootstrapExpiresAt).toBeNull();
     expect(response.headers.get("cache-control")).toBe("no-store");
     const cleanup = response.headers.getSetCookie();
     for (const name of [

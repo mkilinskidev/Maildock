@@ -1,3 +1,4 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -21,7 +22,7 @@ import {
   vi,
 } from "vitest";
 import { createAuth } from "@/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "@/modules/auth/application/instance-auth";
+
 import {
   startInitialMfa,
   completeInitialMfa,
@@ -228,7 +229,6 @@ beforeAll(async () => {
     DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/maildock`,
     AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
     CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-    MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
     ATTACHMENTS_PATH: tmpdir(),
     LOG_LEVEL: "fatal",
   });
@@ -245,16 +245,21 @@ beforeAll(async () => {
 beforeEach(async () => {
   await database.db
     .update(instanceState)
-    .set({ initializedAt: null, ownerUserId: null });
+    .set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
   await database.db.delete(user);
   await database.db.delete(verification);
   await database.db.delete(rateLimit);
   await database.db.delete(authAdmission);
-  await initializeOwner(
-    database.db,
-    { bootstrapSecret, username: "owner-01", password },
-    config,
-  );
+  await initializeOwnerFixture(database.db, {
+    bootstrapSecret,
+    username: "owner-01",
+    password,
+  });
   ownerId = (await database.db.select().from(user))[0].id;
   cookie = cookies(await login());
   await startInitialMfa(database.db, config, headers(), {
@@ -945,7 +950,6 @@ describe("F2.4 management boundaries", () => {
           DATABASE_URL: config.databaseUrl,
           AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
           CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-          MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
           ATTACHMENTS_PATH: tmpdir(),
           LOG_LEVEL: "info",
         },

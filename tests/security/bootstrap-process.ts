@@ -1,5 +1,4 @@
 // Child application process used only by the PostgreSQL bootstrap regression tests.
-import { createHash } from "node:crypto";
 import {
   initializeOwner,
   SetupThrottledError,
@@ -11,19 +10,11 @@ const database = createDatabase({
   databasePoolSize: 2,
 });
 try {
-  await initializeOwner(
-    database.db,
-    {
-      bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
-      username: "child",
-      password: "child sufficiently long password",
-    },
-    {
-      bootstrapSecretDigest: createHash("sha256")
-        .update(Buffer.alloc(32, 7).toString("base64"))
-        .digest("hex"),
-    },
-  );
+  await initializeOwner(database.db, {
+    bootstrapSecret: Buffer.alloc(32, 7).toString("base64"),
+    username: "child",
+    password: "child sufficiently long password",
+  });
   process.send?.({ status: "created" });
 } catch (error) {
   process.send?.({

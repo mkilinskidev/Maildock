@@ -24,7 +24,7 @@ describe("local immutable blob storage", () => {
   it("uses ATTACHMENTS_PATH and returns authoritative size/hash with opaque keys", async () => {
     const config = parseConfig({
       APP_ORIGIN: "http://localhost",
-      DATABASE_URL: "postgresql://unused",
+      POSTGRES_PASSWORD: "unused-test-password",
       AUTH_SECRET: Buffer.alloc(32).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32).toString("base64"),
       ATTACHMENTS_PATH: root,

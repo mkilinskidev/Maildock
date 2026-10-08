@@ -1,9 +1,10 @@
+import { initializeOwnerFixture } from "./mfa-fixture";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createAuth } from "../../src/modules/auth/infrastructure/auth-factory";
-import { initializeOwner } from "../../src/modules/auth/application/instance-auth";
+
 import { parseConfig } from "../../src/shared/infrastructure/config/config";
 import { createDatabase } from "../../src/shared/infrastructure/database/database";
 import {
@@ -24,21 +25,23 @@ const credentials = {
 const config = parseConfig({
   MAILDOCK_ENV: "production",
   APP_ORIGIN: origin,
-  DATABASE_URL: process.env.F9_TEST_DATABASE_URL,
+  POSTGRES_PASSWORD: "test",
   AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
   CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-  MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
   ATTACHMENTS_PATH: tmpdir(),
   LOG_LEVEL: "fatal",
 });
-const database = createDatabase(config);
+// Only the test transport uses a host-mapped disposable database endpoint.
+const database = createDatabase({
+  ...config,
+  databaseUrl: process.env.F9_TEST_DATABASE_URL!,
+});
 try {
   await migrate(database.db, { migrationsFolder: "db/migrations" });
-  await initializeOwner(
-    database.db,
-    { ...credentials, bootstrapSecret },
-    config,
-  );
+  await initializeOwnerFixture(database.db, {
+    ...credentials,
+    bootstrapSecret,
+  });
   const auth = createAuth(config, database.db);
   const context = await auth.$context;
   assert.deepEqual(context.options.advanced?.ipAddress?.ipAddressHeaders, []);

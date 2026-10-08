@@ -1,3 +1,5 @@
+import { seedBootstrapFixture } from "./mfa-fixture";
+import { maintainBootstrap } from "@/modules/auth/infrastructure/bootstrap-startup";
 import {
   afterAll,
   beforeAll,
@@ -129,7 +131,6 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
       DATABASE_URL: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/bootstrap`,
       AUTH_SECRET: Buffer.alloc(32, 3).toString("base64"),
       CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
       ATTACHMENTS_PATH: tmpdir(),
     });
     database = createDatabase(config);
@@ -142,10 +143,16 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     runtime.config = config;
     await database.db
       .update(instanceState)
-      .set({ initializedAt: null, ownerUserId: null });
+      .set({
+        bootstrapSecretDigest: null,
+        bootstrapExpiresAt: null,
+        initializedAt: null,
+        ownerUserId: null,
+      });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);
+    await seedBootstrapFixture(database.db);
   });
   afterAll(async () => {
     vi.restoreAllMocks();
@@ -164,20 +171,48 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
       expect(await database.db.select().from(user)).toHaveLength(0);
     },
   );
-  it("fails closed without configured bootstrap secret", async () => {
-    runtime.config = { ...config, bootstrapSecretDigest: undefined };
+  it("fails closed without database bootstrap state and elects one startup issuer", async () => {
+    await database.db
+      .update(instanceState)
+      .set({ bootstrapSecretDigest: null, bootstrapExpiresAt: null });
     expect((await POST(request())).status).toBe(403);
     expect(hash).not.toHaveBeenCalled();
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const starts = await Promise.all([
+      maintainBootstrap(database.db),
+      maintainBootstrap(database.db),
+    ]);
+    expect(starts.filter((state) => state.digest)).toHaveLength(1);
+    expect(output).toHaveBeenCalledTimes(1);
+    const secret = String(output.mock.calls[0][0]).match(
+      /Setup secret: ([A-Za-z0-9+/]{43}=)/,
+    )![1];
+    const [state] = await database.db.select().from(instanceState);
+    expect(state.bootstrapSecretDigest).toBe(
+      createHash("sha256").update(secret).digest("hex"),
+    );
+    expect(
+      JSON.stringify(state, (_key, value) =>
+        typeof value === "bigint" ? String(value) : value,
+      ),
+    ).not.toContain(secret);
+    expect(
+      (await POST(request({ ...credentials, bootstrapSecret: secret }))).status,
+    ).toBe(201);
+    output.mockClear();
+    expect(
+      await maintainBootstrap(database.db, state.bootstrapSecretDigest!),
+    ).toEqual({ pending: false, digest: undefined });
+    expect(output).not.toHaveBeenCalled();
   });
   it.each([undefined, "wrong"])(
     "internal calls cannot bypass bootstrap authorization: %s",
     async (secret) => {
       await expect(
-        initializeOwner(
-          database.db,
-          { ...credentials, bootstrapSecret: secret },
-          config,
-        ),
+        initializeOwner(database.db, {
+          ...credentials,
+          bootstrapSecret: secret,
+        }),
       ).rejects.toBeInstanceOf(BootstrapAuthorizationError);
       expect(hash).not.toHaveBeenCalled();
       expect(await database.db.select().from(user)).toHaveLength(0);
@@ -185,11 +220,7 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
   );
   it("internal calls validate credentials after authorization", async () => {
     await expect(
-      initializeOwner(
-        database.db,
-        { ...credentials, password: "short" },
-        config,
-      ),
+      initializeOwner(database.db, { ...credentials, password: "short" }),
     ).rejects.toThrow();
     expect(hash).not.toHaveBeenCalled();
   });
@@ -226,7 +257,11 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
         typeof value === "bigint" ? value.toString() : value,
     );
     expect(persisted).not.toContain(bootstrapSecret);
-    expect(persisted).not.toContain(config.bootstrapSecretDigest);
+    const [state] = await database.db.select().from(instanceState);
+    expect(state.bootstrapSecretDigest).toBe(
+      createHash("sha256").update(bootstrapSecret).digest("hex"),
+    );
+    expect(state.bootstrapExpiresAt).toBeNull();
     const login = await auth.handler(
       new Request(`${origin}/api/auth/sign-in/username`, {
         method: "POST",
@@ -240,7 +275,35 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     expect(login.status).toBe(200);
   });
   it("remains closed before hashing after reconnect and removal of bootstrap configuration", async () => {
-    expect((await POST(request())).status).toBe(201);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const heldDigest = createHash("sha256")
+      .update(bootstrapSecret)
+      .digest("hex");
+    expect(await maintainBootstrap(database.db)).toEqual({
+      pending: true,
+      digest: undefined,
+    });
+    expect((await maintainBootstrap(database.db, heldDigest)).digest).toBe(
+      heldDigest,
+    );
+    expect(output).not.toHaveBeenCalled();
+    await database.db.execute(
+      sql`update instance_state set bootstrap_expires_at = clock_timestamp() - interval '1 second'`,
+    );
+    expect((await POST(request())).status).toBe(403);
+    const restarted = await maintainBootstrap(database.db);
+    expect(restarted.digest).not.toBe(heldDigest);
+    const secret = String(output.mock.calls[0][0]).match(
+      /Setup secret: ([A-Za-z0-9+/]{43}=)/,
+    )![1];
+    expect(await maintainBootstrap(database.db, heldDigest)).toEqual({
+      pending: true,
+      digest: undefined,
+    });
+    expect((await POST(request())).status).toBe(403);
+    expect(
+      (await POST(request({ ...credentials, bootstrapSecret: secret }))).status,
+    ).toBe(201);
     hash.mockClear();
     await database.client.end();
     database = createDatabase(config);
@@ -270,9 +333,12 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
       await database.db
         .insert(user)
         .values({ id, name: "Racing owner", email: "owner@localhost.invalid" });
-      await database.db
-        .update(instanceState)
-        .set({ initializedAt: new Date(), ownerUserId: id });
+      await database.db.update(instanceState).set({
+        initializedAt: new Date(),
+        ownerUserId: id,
+        bootstrapSecretDigest: null,
+        bootstrapExpiresAt: null,
+      });
       return "unused-test-hash";
     });
     expect((await POST(request())).status).toBe(409);
@@ -404,7 +470,7 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
   });
-  it("redacts bootstrap fields and retains only a digest in parsed configuration", () => {
+  it("redacts bootstrap fields and excludes bootstrap state from configuration", () => {
     const records: string[] = [];
     const logger = createLogger(
       { logLevel: "info" },
@@ -416,16 +482,17 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     );
     logger.info({
       bootstrapSecret,
-      bootstrapSecretDigest: config.bootstrapSecretDigest,
-      MAILDOCK_BOOTSTRAP_SECRET: bootstrapSecret,
+      bootstrapSecretDigest: createHash("sha256")
+        .update(bootstrapSecret)
+        .digest("hex"),
       body: { bootstrapSecret },
       config,
     });
     expect(records.join("")).not.toContain(bootstrapSecret);
-    expect(records.join("")).not.toContain(config.bootstrapSecretDigest);
-    expect(JSON.stringify(config)).not.toContain(bootstrapSecret);
-    expect(config.bootstrapSecretDigest).toBe(
+    expect(records.join("")).not.toContain(
       createHash("sha256").update(bootstrapSecret).digest("hex"),
     );
+    expect(JSON.stringify(config)).not.toContain(bootstrapSecret);
+    expect(config).not.toHaveProperty("bootstrapSecretDigest");
   });
 });

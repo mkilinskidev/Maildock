@@ -79,14 +79,19 @@ export async function verifyRecoverySchema(db: Database) {
       )
         throw new Error();
     }
-    const expectedFunctions = [
-      ...expected
-        .at(-1)!
-        .sql.join("\n")
+    // Later migrations need not redefine search functions. Derive each latest
+    // definition from the complete, hash-verified release history, rather than
+    // assuming the last migration owns all search definitions.
+    const expectedFunctions = new Map<string, string>();
+    for (const migration of expected) {
+      for (const definition of migration.sql
+        .join("\n")
         .matchAll(
-          /CREATE OR REPLACE FUNCTION public\.(maildock_search_(?:addresses|vector))\([\s\S]*?AS \$\$([\s\S]*?)\$\$;/g,
-        ),
-    ];
+          /CREATE(?: OR REPLACE)? FUNCTION public\.(maildock_search_(?:addresses|vector))\([\s\S]*?AS \$\$([\s\S]*?)\$\$;/g,
+        )) {
+        expectedFunctions.set(definition[1], definition[2]);
+      }
+    }
     const functions = await db.execute<{
       proname: string;
       prosrc: string;
@@ -97,17 +102,13 @@ export async function verifyRecoverySchema(db: Database) {
       from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
       where n.nspname='public' and p.proname in ('maildock_search_addresses','maildock_search_vector')`);
     if (
-      expectedFunctions.length !== 2 ||
+      expectedFunctions.size !== 2 ||
       functions.length !== 2 ||
       functions.some(
         (row) =>
           !row.ok ||
-          !expectedFunctions.some(
-            (def) =>
-              def[1] === row.proname &&
-              def[2].replaceAll("\r\n", "\n") ===
-                row.prosrc.replaceAll("\r\n", "\n"),
-          ),
+          expectedFunctions.get(row.proname)?.replaceAll("\r\n", "\n") !==
+            row.prosrc.replaceAll("\r\n", "\n"),
       )
     )
       throw new Error();

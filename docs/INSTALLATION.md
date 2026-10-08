@@ -20,17 +20,16 @@ Clone the repository and create the environment file:
 cp .env.example .env
 ```
 
-At minimum set a canonical HTTPS origin and four independent secrets:
+At minimum set a canonical HTTPS origin and three independent secrets:
 
 ```dotenv
 APP_ORIGIN=https://mail.example.com
 POSTGRES_PASSWORD=<strong-random-password>
 AUTH_SECRET=<base64-random-secret>
-MAILDOCK_BOOTSTRAP_SECRET=<base64-32-byte-secret>
 CREDENTIALS_ENCRYPTION_KEY=<base64-32-byte-key>
 ```
 
-Generate `AUTH_SECRET`, `MAILDOCK_BOOTSTRAP_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` independently. The following produces the required 32 random bytes in canonical base64:
+Generate `AUTH_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` independently. The following produces the required 32 random bytes in canonical base64:
 
 ```sh
 openssl rand -base64 32
@@ -51,25 +50,19 @@ Configure your reverse proxy/ingress so that the public HTTPS origin in `APP_ORI
 
 ### First-run owner setup
 
-Open:
+Open the Maildock **app container logs** (Coolify: the app's Logs view):
 
-```text
-https://mail.example.com/setup
+```sh
+docker compose logs app
 ```
 
-The setup form requires the bootstrap secret plus the new owner credentials. Setup is single-owner and closes permanently after successful initialization.
+Find **Maildock first-time setup** and copy the **Setup secret**. Open `https://mail.example.com/setup`, enter that secret, and create the owner account. No setup secret needs to be configured before starting Maildock.
 
-Immediately complete the mandatory TOTP enrollment and save the generated recovery codes outside Maildock.
+The secret is temporary and authorizes only initial instance provisioning. Owner creation permanently closes owner setup and freezes the existing setup secret for mandatory first MFA enrollment. Keep the copied secret until enrollment finishes; MFA completion clears its digest from PostgreSQL. Sign in as the owner, immediately complete mandatory TOTP enrollment using the same setup secret, and save recovery codes outside Maildock. Then verify password + TOTP sign-in, `/api/health/ready`, and configure mail accounts/OAuth providers.
 
-After setup:
+Before owner creation, one web process holds a 60-second database lease and renews it every 10 seconds. Other web replicas use that same credential; workers never generate secrets. Their startup message directs you to the active web container's logs. If its process stops or cannot renew, a surviving or restarted web process generates and logs a replacement after the lease expires (up to approximately 70 seconds). Use the latest setup message from that process; earlier secrets are invalid after replacement. A follower restart leaves the active secret unchanged. Database outages can delay takeover; setup fails closed while the lease is expired.
 
-1. remove `MAILDOCK_BOOTSTRAP_SECRET` from deployment configuration;
-2. recreate/restart the app so the secret is no longer present in its environment;
-3. verify sign-in with password + TOTP;
-4. verify `/api/health/ready`;
-5. configure mail accounts and OAuth providers as required.
-
-The bootstrap secret cannot reset or replace an existing owner.
+After owner creation, restarts never generate or print setup secrets. Until first MFA enrollment completes, the same secret remains valid only together with the authenticated owner session and password/TOTP; retrieve it from the original setup logs if needed. An upgrade from the previous manually configured bootstrap flow must complete any pending first MFA enrollment before deploying this version. The setup secret cannot reset or replace an existing owner. Protect access to container logs and avoid forwarding the intentional setup message to public log destinations.
 
 ## Local Docker evaluation
 
@@ -176,6 +169,6 @@ Health endpoints:
 - `GET /api/health/live` — process liveness only;
 - `GET /api/health/ready` — database/migration/storage readiness.
 
-Application logs are structured JSON on stdout/stderr. Configure bounded, access-controlled container/host log retention. Mail content, secrets and arbitrary dependency errors should not appear in normal diagnostics.
+Application diagnostics are structured JSON on stdout/stderr. The intentional first-time setup announcement is a short plaintext message containing the temporary setup secret. Configure bounded, access-controlled container/host log retention. Mail content, secrets and arbitrary dependency errors should not appear in normal diagnostics.
 
 Monitor PostgreSQL space/inodes/growth, attachment volume space/inodes/growth, pg-boss backlog/failures, log storage, and backup age/capacity/success. Deleting message/staged metadata does not currently guarantee immediate physical blob reclamation; do not invent age-only filesystem cleanup jobs.

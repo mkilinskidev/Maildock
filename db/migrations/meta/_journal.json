@@ -232,6 +232,13 @@
       "when": 1791350253217,
       "tag": "0032_restore_safe_search",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791461939649,
+      "tag": "0033_generated_bootstrap",
+      "breakpoints": true
     }
   ]
 }

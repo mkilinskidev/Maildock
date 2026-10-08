@@ -50,7 +50,7 @@ export function SetupForm() {
       className="auth-card"
     >
       <label>
-        Bootstrap secret
+        Setup secret
         <input
           name="bootstrapSecret"
           type="password"
@@ -62,7 +62,7 @@ export function SetupForm() {
         />
       </label>
       <p className="muted auth-help">
-        Enter the bootstrap secret from your deployment configuration.
+        Find the setup secret in the Maildock container logs.
       </p>
       <label>
         Username
