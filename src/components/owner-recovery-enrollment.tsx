@@ -75,28 +75,40 @@ export function OwnerRecoveryEnrollment() {
   }
   if (codes)
     return (
-      <div className="auth-card">
+      <section className="auth-card" aria-label="Owner recovery codes">
         <h2>Save your recovery codes</h2>
-        <p>
+        <p className="muted auth-help">
           Save these new recovery codes privately. Each code can be used once.
         </p>
         <pre className="mfa-recovery-codes">{codes.join("\n")}</pre>
+        <p className="muted auth-help">
+          Owner recovery is complete. Sign in again using your password and new
+          authenticator.
+        </p>
         <a className="button" href="/login">
           I saved my codes — sign in again
         </a>
-      </div>
+      </section>
     );
   return (
-    <div className="auth-card">
-      <p>
+    <form onSubmit={submit} className="auth-card" autoComplete="off">
+      <p className="muted auth-help">
         Owner recovery requires a new authenticator before opening your inbox.
       </p>
       {uri ? (
         <>
+          <p className="muted auth-help">
+            Scan this QR code with your authenticator app, then enter its
+            six-digit code.
+          </p>
           <QRCodeSVG
             className="mfa-qr"
             aria-label="Authenticator setup QR code"
             value={uri}
+            size={232}
+            marginSize={4}
+            title="Authenticator setup QR code"
+            role="img"
           />
           <label>
             Manual setup key
@@ -104,26 +116,29 @@ export function OwnerRecoveryEnrollment() {
               {new URL(uri).searchParams.get("secret")}
             </code>
           </label>
-          <form onSubmit={submit}>
-            <label>
-              Authenticator code
-              <input
-                name="code"
-                required
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9]{6}"
-                minLength={6}
-                maxLength={6}
-              />
-            </label>
-            <button className="button" disabled={pending}>
-              Verify authenticator
-            </button>
-          </form>
+          <p className="muted auth-help">
+            Time-based code · 6 digits · 30 seconds
+          </p>
+          <label>
+            Authenticator code
+            <input
+              name="code"
+              required
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              minLength={6}
+              maxLength={6}
+              autoFocus
+            />
+          </label>
+          <button className="button" disabled={pending}>
+            {pending ? "Please wait…" : "Verify authenticator"}
+          </button>
         </>
       ) : (
         <button
+          type="button"
           className="button"
           disabled={pending}
           onClick={() => void operation("resume")}
@@ -138,12 +153,13 @@ export function OwnerRecoveryEnrollment() {
       )}
       <a href="/login">Sign in again</a>
       <button
+        type="button"
         className="button"
         disabled={pending}
         onClick={() => void operation("cancel")}
       >
         Cancel enrollment
       </button>
-    </div>
+    </form>
   );
 }

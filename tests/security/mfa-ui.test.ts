@@ -17,7 +17,7 @@ const recoveryCodes = ["abcde-12345", "fghij-67890"];
 beforeAll(async () => {
   const result = await build({
     stdin: {
-      contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {InitialMfaForm} from './src/components/initial-mfa-form'; import {LoginForm} from './src/components/login-form'; import {OwnerRecoveryEnrollment} from './src/components/owner-recovery-enrollment'; createRoot(document.getElementById('root')).render(location.pathname === '/owner-recovery-mfa' ? <OwnerRecoveryEnrollment/> : location.pathname === '/initial-mfa' ? <InitialMfaForm/> : <LoginForm/>);`,
+      contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {InitialMfaForm} from './src/components/initial-mfa-form'; import {LoginForm} from './src/components/login-form'; import OwnerRecoveryPage from './src/app/owner-recovery-mfa/page'; createRoot(document.getElementById('root')).render(location.pathname === '/owner-recovery-mfa' ? <OwnerRecoveryPage/> : location.pathname === '/initial-mfa' ? <InitialMfaForm/> : <LoginForm/>);`,
       resolveDir: process.cwd(),
       loader: "tsx",
     },
@@ -40,7 +40,7 @@ beforeAll(async () => {
       response.setHeader("Content-Type", "text/html");
       response.setHeader("Cache-Control", "no-store");
       response.end(
-        '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"><main class="auth-page"><section class="auth-content"><h1>Maildock</h1><div id="root"></div></section></main><script src="/form.js"></script>',
+        `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css">${request.url === "/owner-recovery-mfa" ? '<div id="root"></div>' : '<main class="auth-page"><section class="auth-content"><h1>Maildock</h1><div id="root"></div></section></main>'}<script src="/form.js"></script>`,
       );
     }
   });
@@ -83,6 +83,73 @@ async function ephemeral(page: Page, secrets: string[]) {
   );
   for (const secret of secrets) expect(persisted).not.toContain(secret);
 }
+
+it("owner recovery shares initial MFA card spacing, QR presentation and mobile layout", async () => {
+  const initial = await opened("/initial-mfa");
+  const recovery = await opened("/owner-recovery-mfa");
+  try {
+    for (const { page } of [initial, recovery])
+      await page.route("**/api/auth/**", (route) =>
+        route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ totpURI }),
+        }),
+      );
+    await initial.page
+      .getByLabel("Setup secret", { exact: true })
+      .fill("b".repeat(44));
+    await initial.page.getByLabel("Owner password").fill("owner password 123");
+    await initial.page
+      .getByRole("button", { name: "Start or resume setup" })
+      .click();
+    await recovery.page
+      .getByRole("button", { name: "Show authenticator setup" })
+      .click();
+    await recovery.page
+      .getByRole("heading", { name: "Recover owner authenticator" })
+      .waitFor();
+    await recovery.page.getByRole("group", { name: "Appearance" }).waitFor();
+    const presentation = async (page: Page) => {
+      await page
+        .getByRole("img", { name: "Authenticator setup QR code" })
+        .waitFor();
+      return page.locator("form.auth-card").evaluate((form) => {
+        const styles = getComputedStyle(form);
+        const qr = form.querySelector(".mfa-qr")!;
+        const code = form.querySelector('input[name="code"]')!;
+        return {
+          display: styles.display,
+          gap: styles.gap,
+          padding: styles.padding,
+          qrWidth: qr.getBoundingClientRect().width,
+          qrHeight: qr.getBoundingClientRect().height,
+          codeIsGridChild: code.parentElement?.parentElement === form,
+        };
+      });
+    };
+    expect(await presentation(recovery.page)).toEqual(
+      await presentation(initial.page),
+    );
+    expect(
+      await recovery.page
+        .getByText("Time-based code · 6 digits · 30 seconds")
+        .count(),
+    ).toBe(1);
+    expect(
+      await recovery.page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await recovery.page.screenshot({
+      path: ".security-results/owner-recovery-enrollment-preview.png",
+      fullPage: true,
+    });
+    expect(recovery.external).toEqual([]);
+  } finally {
+    await initial.context.close();
+    await recovery.context.close();
+  }
+});
 
 it("CLI-recovered password login leads only to controlled enrollment and fresh login; secrets stay ephemeral", async () => {
   const { context, page, external } = await opened("/login");
@@ -130,7 +197,11 @@ it("CLI-recovered password login leads only to controlled enrollment and fresh l
       path: "/api/auth/owner-recovery/complete",
       body: { code: "123456" },
     });
-    expect(await page.locator("svg, input, .mfa-secret").count()).toBe(0);
+    expect(
+      await page
+        .locator(".auth-card svg, .auth-card input, .mfa-secret")
+        .count(),
+    ).toBe(0);
     await ephemeral(page, [totpURI, manualSecret, ...recoveryCodes]);
     await page.getByRole("link", { name: "I saved my codes" }).click();
     await page.waitForURL(origin + "/login");
@@ -162,7 +233,9 @@ it("recovery enrollment errors expose no server detail or codes and cancel retur
     expect(await page.locator("body").textContent()).not.toContain(
       "Secret internal detail",
     );
-    expect(await page.locator("svg, .mfa-recovery-codes").count()).toBe(0);
+    expect(
+      await page.locator(".auth-card svg, .mfa-recovery-codes").count(),
+    ).toBe(0);
     await page.getByRole("button", { name: "Cancel enrollment" }).click();
     await page.waitForURL(origin + "/login");
   } finally {

@@ -1801,7 +1801,7 @@ label.checkbox input {
   padding: 24px;
 }
 .auth-content {
-  width: min(100%, 390px);
+  width: min(100%, 400px);
 }
 .auth-brand {
   display: flex;

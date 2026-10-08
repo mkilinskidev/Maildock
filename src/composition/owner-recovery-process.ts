@@ -3,7 +3,11 @@ import { createWorkerDatabase } from "../shared/infrastructure/database/database
 import { validateDatabaseAuthority } from "../shared/infrastructure/database/database-authority";
 import { verifyRecoverySchema } from "../shared/infrastructure/database/restore-verification";
 import type { Database } from "../shared/infrastructure/database/database";
-import { ownerPasswordSchema } from "../modules/auth/domain/password-policy";
+import {
+  ownerPasswordSchema,
+  passwordMinLength,
+  passwordMaxLength,
+} from "../modules/auth/domain/password-policy";
 import {
   inspectOwnerRecovery,
   recoverOwner,
@@ -47,6 +51,9 @@ try {
     "RECOVER OWNER"
   )
     throw new OwnerRecoveryRejected("owner_recovery_confirmation");
+  process.stdout.write(
+    `New password requirements:\n  - At least ${passwordMinLength} characters.\n  - At most ${passwordMaxLength} characters.\n\n`,
+  );
   let password = await readTerminal("New password: ");
   let confirmation = await readTerminal("Confirm password: ");
   if (password !== confirmation)
