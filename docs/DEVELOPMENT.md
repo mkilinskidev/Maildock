@@ -20,9 +20,6 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 The base Compose file remains production-mode by design. Do not try to switch it to development through `.env`; `docker-compose.dev.yml` is the supported development override.
 
-```sh
-```
-
 ## Commands
 
 ```sh

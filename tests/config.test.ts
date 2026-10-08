@@ -90,6 +90,23 @@ describe("configuration", () => {
     }
   });
 
+  it("builds the bundled database connection safely from arbitrary PostgreSQL passwords", () => {
+    const password = "gXAuJ5Dz3GYsZdZc7j14KYpvH/+Te3Rlyle5Nqbt0/E=";
+    const config = parseConfig({
+      ...validEnvironment,
+      MAILDOCK_ENV: "production",
+      APP_ORIGIN: "https://maildock.example.test",
+      DATABASE_URL: undefined,
+      POSTGRES_PASSWORD: password,
+    });
+    const url = new URL(config.databaseUrl);
+    expect(url.hostname).toBe("postgres");
+    expect(url.port).toBe("5432");
+    expect(url.pathname).toBe("/maildock");
+    expect(url.username).toBe("maildock");
+    expect(decodeURIComponent(url.password)).toBe(password);
+  });
+
   it("requires HTTPS for a production origin", () => {
     expect(() =>
       parseConfig({ ...validEnvironment, MAILDOCK_ENV: "production" }),
