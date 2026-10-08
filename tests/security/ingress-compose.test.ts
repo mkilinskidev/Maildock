@@ -36,6 +36,20 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
   expect(services.app.environment.MAILDOCK_ENV).toBe("production");
   expect(services.app.environment.NODE_ENV).toBe("production");
   expect(services.app.environment.DATABASE_URL).toContain("@postgres:5432/");
+  expect(Object.keys(services.app.environment).sort()).toEqual(
+    [
+      "APP_ORIGIN",
+      "ATTACHMENTS_PATH",
+      "AUTH_SECRET",
+      "CREDENTIALS_ENCRYPTION_KEY",
+      "CREDENTIALS_ENCRYPTION_KEY_ID",
+      "CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS",
+      "DATABASE_URL",
+      "MAILDOCK_BOOTSTRAP_SECRET",
+      "MAILDOCK_ENV",
+      "NODE_ENV",
+    ].sort(),
+  );
   expect(services.postgres.build).toEqual(
     expect.objectContaining({ dockerfile: "Dockerfile.postgres" }),
   );

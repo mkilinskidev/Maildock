@@ -2,7 +2,7 @@
 
 Maildock validates application configuration at process startup. Invalid required values fail closed instead of silently falling back.
 
-The base Docker Compose file reads operator values from `.env` or the shell. Keep `.env` private; rendered Compose configuration can contain secrets too.
+The base Docker Compose file deliberately exposes only the small set of values needed for a normal deployment. Keep `.env` private; rendered Compose configuration can contain secrets too. Advanced application settings remain supported by the application but should be supplied only through a reviewed Compose override or platform-specific container configuration.
 
 ## Required production values
 
@@ -12,7 +12,6 @@ The base Docker Compose file reads operator values from `.env` or the shell. Kee
 | `POSTGRES_PASSWORD` | Password for the bundled PostgreSQL application login. Compose builds `DATABASE_URL` from it. |
 | `AUTH_SECRET` | Better Auth / MFA secret material. Must decode from base64 to at least 32 bytes. Preserve it for backup/recovery. |
 | `CREDENTIALS_ENCRYPTION_KEY` | Active AES-256-GCM master key. Canonical base64 of exactly 32 bytes. Preserve it for backup/recovery. |
-| `CREDENTIALS_ENCRYPTION_KEY_ID` | Identifier for the active credential key, e.g. `v1`. |
 | `MAILDOCK_BOOTSTRAP_SECRET` | First-run owner authorization only. Canonical base64 of exactly 32 bytes. Remove after successful initialization. |
 
 Generate independent random values for the three base64 secrets:
@@ -27,13 +26,13 @@ Never reuse one value for multiple purposes.
 
 | Variable | Default / base Compose behavior | Notes |
 | --- | --- | --- |
-| `MAILDOCK_ENV` | `production` in base Compose | `development`, `test`, or `production`. Production enforces HTTPS `APP_ORIGIN`. |
-| `DATABASE_URL` | built by Compose | Direct Node development supplies a PostgreSQL URL explicitly. |
-| `ATTACHMENTS_PATH` | `/var/lib/maildock/attachments` | Must be absolute. Base Compose mounts persistent storage here. |
-| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, `trace`. |
-| `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` | `{}` | JSON object mapping old key IDs to base64 keys during controlled rotation. |
-| `MICROSOFT_CLIENT_ID` | empty | Legacy/bootstrap convenience for Microsoft OAuth only; database configuration becomes authoritative once a provider row exists. |
-| `MICROSOFT_CLIENT_SECRET` | empty | Same precedence as the client ID. Prefer Settings for new installations. |
+| `MAILDOCK_ENV` | `production` in base Compose | The development Compose override changes this to `development`. |
+| `DATABASE_URL` | built by Compose | Internal connection to the bundled PostgreSQL service. |
+| `ATTACHMENTS_PATH` | `/var/lib/maildock/attachments` | Internal persistent attachment path. |
+| `CREDENTIALS_ENCRYPTION_KEY_ID` | `v1` | Internal initial key identifier. Change only as part of a reviewed key-rotation procedure. |
+| `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` | `{}` | Used only during a reviewed key-rotation procedure. |
+
+Microsoft and Google OAuth providers are configured in **Settings → Integrations → OAuth providers**. The base Compose deployment does not expose provider credentials as deployment variables.
 
 Google OAuth has no Google-specific environment variables. Configure it in **Settings → Integrations → OAuth providers**.
 
@@ -51,7 +50,7 @@ Google OAuth has no Google-specific environment variables. Configure it in **Set
 | `MAILDOCK_CONTENT_POLL_INTERVAL_MS` | 400 | 100–2500; message-reader readiness polling |
 | `MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES` | 5242880 | 1 KiB–20 MiB |
 
-The base Compose file passes these settings through. Omit an optional numeric variable to keep the application default. An explicitly empty numeric value is invalid.
+These are advanced overrides, not normal deployment inputs. The base Compose file intentionally does not declare them, so application defaults apply. Supply an override only when an installation has a measured reason to tune a value. An explicitly empty numeric value is invalid.
 
 ## Attachment and MIME limits
 

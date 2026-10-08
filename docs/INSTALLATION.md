@@ -23,13 +23,11 @@ cp .env.example .env
 At minimum set a canonical HTTPS origin and four independent secrets:
 
 ```dotenv
-MAILDOCK_ENV=production
 APP_ORIGIN=https://mail.example.com
 POSTGRES_PASSWORD=<strong-random-password>
 AUTH_SECRET=<base64-random-secret>
 MAILDOCK_BOOTSTRAP_SECRET=<base64-32-byte-secret>
 CREDENTIALS_ENCRYPTION_KEY=<base64-32-byte-key>
-CREDENTIALS_ENCRYPTION_KEY_ID=v1
 ```
 
 Generate `AUTH_SECRET`, `MAILDOCK_BOOTSTRAP_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` independently. The following produces the required 32 random bytes in canonical base64:
@@ -104,7 +102,7 @@ Caddy, Traefik, nginx, Nginx Proxy Manager, Coolify-managed ingress and similar 
 
 Git-based Docker Compose platforms such as Coolify may build the stack directly from the repository. The production Compose definition is self-contained at runtime: PostgreSQL authority, maintenance and recovery helpers are baked into the Maildock PostgreSQL image instead of bind-mounted from the repository checkout. Only the named `postgres_data` and `attachments_data` volumes carry persistent application data.
 
-For Coolify, use a Git-based Docker Compose application with the repository root as the base directory and `docker-compose.yml` as the Compose file. Configure the required environment variables in the platform, route the public domain to the `app` service on port 3000, and keep PostgreSQL private. Repository preservation is not required for Maildock runtime file mounts.
+For Coolify, use a Git-based Docker Compose application with the repository root as the base directory and `docker-compose.yml` as the Compose file. Configure the five deployment variables shown above in the platform, route the public domain to the `app` service on port 3000, and keep PostgreSQL private. Advanced tuning variables are intentionally absent from the base Compose interface. Repository preservation is not required for Maildock runtime file mounts.
 
 Do not replace the named data volumes with ephemeral container storage. Platform-managed persistent storage is not a backup; keep using the matched database/blob recovery procedure described in [Backup & recovery](BACKUP_AND_RECOVERY.md).
 
