@@ -1,8 +1,22 @@
 # Development
 
+## Supported development environment
+
+Maildock's supported complete development environment runs through Docker Compose. This is the canonical way to run the application locally.
+
+The Docker development stack provides the components and configuration required by the application, including the bundled PostgreSQL service, database migrations, the Next.js web application, background workers and job processing, and persistent application storage.
+
+External, locally installed, managed, or independently provisioned PostgreSQL instances are not supported. Development uses the same Maildock-managed PostgreSQL service as production because database roles, ownership, authority hardening, migrations, pg-boss state, and recovery invariants are part of the application architecture.
+
+Do not bootstrap a fresh Maildock development environment with `pnpm db:migrate` and `pnpm dev`. `pnpm dev` starts only Next.js and does not provide the complete application runtime. Likewise, `pnpm start:worker` starts the compiled worker and is not a fresh-checkout development bootstrap command.
+
 ## Toolchain
 
-Maildock uses Node.js 24 LTS (`>=24.15 <25`; container pins 24.21.0), pnpm 12.7.0, TypeScript 6 and PostgreSQL 18. Docker is required for integration/security tests.
+Maildock uses Node.js 24 LTS (`>=24.15 <25`; container pins 24.21.0), pnpm 12.7.0, TypeScript 6 and PostgreSQL 18.
+
+Docker with Docker Compose is required for both the supported development environment and the supported test environment.
+
+For repository tooling and commands executed directly on the host:
 
 ```sh
 corepack enable
@@ -10,9 +24,11 @@ corepack prepare pnpm@12.7.0 --activate
 pnpm install
 ```
 
-## Local application
+## Start Maildock locally
 
-Maildock development uses the same bundled PostgreSQL service as production. External/local independently managed PostgreSQL instances are unsupported. Copy `.env.example` to `.env`, use a development origin such as `http://localhost:3000`, and start the complete stack with:
+Copy `.env.example` to `.env` and configure the required values for the Docker development stack. Use a development origin such as `http://localhost:3000`.
+
+Then start the complete environment:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
@@ -20,22 +36,51 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 The base Compose file remains production-mode by design. Do not try to switch it to development through `.env`; `docker-compose.dev.yml` is the supported development override.
 
-## Commands
+Use Docker Compose to inspect or stop the stack:
 
 ```sh
-pnpm dev
-pnpm build
-pnpm start
-pnpm start:worker
-pnpm typecheck
-pnpm lint
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+```
+
+The development Compose override is intended for local development only. Production deployment requirements are documented separately in [Installation](INSTALLATION.md) and [Configuration](CONFIGURATION.md).
+
+## Testing
+
+Docker with Docker Compose is required for the supported Maildock test environment.
+
+The test suites run in isolated Docker containers so that contributors and CI use the same controlled runtime and service dependencies. A local PostgreSQL installation or manually configured application database is not required for the supported test workflow.
+
+Run the standard test suite with:
+
+```sh
 pnpm test
+```
+
+Run the security test suites with:
+
+```sh
 pnpm test:security
 pnpm test:security:browser
-pnpm db:generate
-pnpm db:migrate
-pnpm format:check
 ```
+
+Docker must be installed and the Docker daemon must be running before executing the test suites.
+
+Do not treat a locally installed PostgreSQL instance or manually started Maildock processes as the canonical test environment.
+
+## Repository commands
+
+Commands that can be useful directly on the host include:
+
+```sh
+pnpm build
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm db:generate
+```
+
+`pnpm db:migrate`, `pnpm start`, and `pnpm start:worker` are runtime/operational commands used by the application and deployment workflows. They are not the supported way to assemble a fresh local development environment manually.
 
 ## Repository layout
 
