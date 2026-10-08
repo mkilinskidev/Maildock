@@ -1830,6 +1830,24 @@ label.checkbox input {
 .auth-card button {
   width: 100%;
 }
+.auth-password-field {
+  display: grid;
+  gap: 6px;
+}
+.auth-password-input {
+  position: relative;
+  min-width: 0;
+}
+.auth-password-input input {
+  padding-right: 44px;
+}
+.auth-password-input .icon-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 40px;
+  height: 100%;
+}
 .auth-theme {
   display: flex;
   justify-content: center;
