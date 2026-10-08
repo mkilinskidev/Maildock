@@ -18,7 +18,7 @@ Production requires HTTPS at the exact `APP_ORIGIN`, no alternate untrusted raw 
 
 Normal runtime uses an ordinary PostgreSQL application owner rather than a cluster administrator. Startup/migration/recovery roots validate expected authority.
 
-Mail passwords, OAuth provider secrets and durable OAuth authorization state are encrypted with AES-256-GCM using an external key ring. Required encryption keys and `AUTH_SECRET` are part of the recovery set and must never be committed or logged.
+Mail passwords, OAuth provider secrets and durable OAuth authorization state are encrypted with AES-256-GCM using an external key ring. Required encryption keys and `AUTH_SECRET` are part of the recovery set and must never be committed or logged. `AUTH_SECRET` protects Better Auth authentication/MFA cryptographic state; it is distinct from the AES-256-GCM key protecting saved mail credentials and from the temporary generated setup secret. Keep it stable and backed up: changing it is not a supported MFA reset or session-revocation procedure. See [Configuration](CONFIGURATION.md#authentication-secret-auth_secret).
 
 ## Untrusted mail
 
