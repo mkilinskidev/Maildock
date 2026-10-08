@@ -15,7 +15,7 @@ COPY . .
 ENV NODE_ENV=production \
     MAILDOCK_ENV=production \
     APP_ORIGIN=https://build.invalid \
-    DATABASE_URL=postgresql://build:build@localhost:5432/build \
+    POSTGRES_PASSWORD=build-only-placeholder \
     ATTACHMENTS_PATH=/tmp/maildock-attachments
 RUN AUTH_SECRET="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))")" \
     CREDENTIALS_ENCRYPTION_KEY="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))")" \

@@ -35,7 +35,8 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
   expect(services.app.expose).toContain("3000");
   expect(services.app.environment.MAILDOCK_ENV).toBe("production");
   expect(services.app.environment.NODE_ENV).toBe("production");
-  expect(services.app.environment.DATABASE_URL).toContain("@postgres:5432/");
+  expect(services.app.environment.POSTGRES_PASSWORD).toBeTruthy();
+  expect(services.app.environment.DATABASE_URL).toBeUndefined();
   expect(Object.keys(services.app.environment).sort()).toEqual(
     [
       "APP_ORIGIN",
@@ -44,7 +45,7 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
       "CREDENTIALS_ENCRYPTION_KEY",
       "CREDENTIALS_ENCRYPTION_KEY_ID",
       "CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS",
-      "DATABASE_URL",
+      "POSTGRES_PASSWORD",
       "MAILDOCK_BOOTSTRAP_SECRET",
       "MAILDOCK_ENV",
       "NODE_ENV",

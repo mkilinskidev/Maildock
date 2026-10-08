@@ -45,7 +45,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-The PostgreSQL init path creates the hardened database authority model before normal application startup. The app waits for PostgreSQL health, validates database authority, runs migrations, then starts web and worker processes.
+Maildock supports only the PostgreSQL service bundled with this Compose stack; external or independently managed PostgreSQL instances are not supported. The PostgreSQL init path creates the hardened database authority model before normal application startup. The app waits for PostgreSQL health, validates database authority, runs migrations, then starts web and worker processes.
 
 Configure your reverse proxy/ingress so that the public HTTPS origin in `APP_ORIGIN` reaches the app's internal port 3000. Do not create a second untrusted raw HTTP route to the app. Maildock deliberately does not trust forwarded client-IP headers for authentication decisions.
 

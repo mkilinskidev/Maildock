@@ -7,7 +7,7 @@ fi
 authority=/docker-entrypoint-initdb.d/99-maildock-authority.sql
 # This socket connection must close before the new password-authenticated one.
 psql -X -w -v ON_ERROR_STOP=1 -U maildock -d maildock -f "$authority"
-# Environment credentials must still match the existing DATABASE_URL. Changing
+# Environment credentials must still match the existing bundled database login. Changing
 # POSTGRES_PASSWORD never resets credentials in an existing PostgreSQL volume.
 # initdb's loopback HBA rules can use trust. Use the private service address and
 # reject passwordless/custom trust authentication before claiming verification.

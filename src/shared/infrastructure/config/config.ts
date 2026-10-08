@@ -55,7 +55,9 @@ const schema = z
       .enum(["development", "test", "production"])
       .default("development"),
     APP_ORIGIN: z.url(),
-    DATABASE_URL: z.string().min(1).startsWith("postgresql://"),
+    POSTGRES_PASSWORD: z.string().min(1).optional(),
+    // Test harness compatibility only. Production/development deployments use the bundled postgres service.
+    DATABASE_URL: z.string().min(1).startsWith("postgresql://").optional(),
     AUTH_SECRET: secretSchema,
     MAILDOCK_BOOTSTRAP_SECRET: z
       .union([z.literal(""), encryptionKeySchema])
@@ -161,6 +163,20 @@ const schema = z
           "must be a canonical origin without credentials, path, query, or fragment",
       });
     }
+    if (value.MAILDOCK_ENV !== "test" && !value.POSTGRES_PASSWORD) {
+      context.addIssue({
+        code: "custom",
+        path: ["POSTGRES_PASSWORD"],
+        message: "is required for the bundled PostgreSQL service",
+      });
+    }
+    if (value.MAILDOCK_ENV === "test" && !value.DATABASE_URL && !value.POSTGRES_PASSWORD) {
+      context.addIssue({
+        code: "custom",
+        path: ["POSTGRES_PASSWORD"],
+        message: "or the internal test database URL is required",
+      });
+    }
     if (value.MAILDOCK_ENV === "production" && origin.protocol !== "https:") {
       context.addIssue({
         code: "custom",
@@ -221,7 +237,10 @@ export function parseConfig(
   return Object.freeze({
     environment: result.data.MAILDOCK_ENV,
     appOrigin: new URL(result.data.APP_ORIGIN).origin,
-    databaseUrl: result.data.DATABASE_URL,
+    databaseUrl:
+      result.data.MAILDOCK_ENV === "test" && result.data.DATABASE_URL
+        ? result.data.DATABASE_URL
+        : `postgresql://maildock:${encodeURIComponent(result.data.POSTGRES_PASSWORD!)}@postgres:5432/maildock`,
     authSecret: result.data.AUTH_SECRET,
     bootstrapSecretDigest: result.data.MAILDOCK_BOOTSTRAP_SECRET
       ? createHash("sha256")

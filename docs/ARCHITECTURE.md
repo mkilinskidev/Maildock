@@ -31,7 +31,7 @@ Maildock application
    +---- persistent blob/attachment storage
 ```
 
-PostgreSQL is the only mandatory infrastructure service besides the application. Redis, Elasticsearch, external queues and object storage are not required.
+The PostgreSQL 18 service bundled with Maildock's official Docker Compose stack is mandatory infrastructure and part of the application security boundary. External, managed, shared, or independently provisioned PostgreSQL is explicitly unsupported: Maildock owns its database roles, ownership, authority hardening, migrations, pg-boss state, and recovery invariants. Redis, Elasticsearch, external queues and object storage are not required.
 
 ## Product boundary
 

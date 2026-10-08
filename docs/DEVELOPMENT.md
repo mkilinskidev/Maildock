@@ -12,17 +12,15 @@ pnpm install
 
 ## Local application
 
-Start PostgreSQL or provide a PostgreSQL 18 instance, copy `.env.example` to `.env`, and use a development origin such as `http://localhost:3000`.
-
-```sh
-pnpm db:migrate
-pnpm dev
-```
-
-`pnpm dev` starts Next.js only. Durable background jobs require a worker process. For the easiest complete local stack use:
+Maildock development uses the same bundled PostgreSQL service as production. External/local independently managed PostgreSQL instances are unsupported. Copy `.env.example` to `.env`, use a development origin such as `http://localhost:3000`, and start the complete stack with:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+The base Compose file remains production-mode by design. Do not try to switch it to development through `.env`; `docker-compose.dev.yml` is the supported development override.
+
+```sh
 ```
 
 ## Commands
