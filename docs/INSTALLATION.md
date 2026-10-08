@@ -10,7 +10,7 @@ With PostgreSQL and the application running, use a private terminal:
 docker compose exec app maildock owner-recovery
 ```
 
-The command displays the immutable owner's login username. Read the warning, type exactly `RECOVER OWNER`, and enter the new password twice. Password input is not echoed or masked. The existing policy requires 12–128 characters. Do not use `-T`, pipes, password arguments, environment variables or terminal recording. The production launcher uses bundled Node, without pnpm.
+The command displays the immutable owner's login username. Read the warning and type exactly `RECOVER OWNER`. Before prompting for the new password, the CLI displays the current password requirements from the same shared policy used for validation (currently 12–128 characters); enter the new password twice. Password input is not echoed or masked. Do not use `-T`, pipes, password arguments, environment variables or terminal recording. The production launcher uses bundled Node, without pnpm.
 
 Recovery preserves user ID, username and owner binding. It changes the password, revokes sessions and pending authentication, invalidates the old authenticator and recovery codes, and clears any remaining setup proof. It does not modify mail accounts, messages, OAuth configuration, application settings or cryptographic keys. An existing owner with unfinished first MFA or interrupted replacement is supported. Uninitialized or inconsistent instances are refused rather than repaired.
 
