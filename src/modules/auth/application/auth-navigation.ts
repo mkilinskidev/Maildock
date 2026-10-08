@@ -5,6 +5,7 @@ export async function ownerLanding(
   auth: ReturnType<typeof createAuth>,
   headers: Headers,
 ): Promise<"/" | "/initial-mfa" | "/login" | "/replace-authenticator"> {
+  if (await auth.isOwnerRecoveryPending()) return "/login";
   if (await auth.isMfaReplacementPending()) return "/replace-authenticator";
   const owner = await getValidOwnerSession(auth, headers);
   if (!owner) return "/login";

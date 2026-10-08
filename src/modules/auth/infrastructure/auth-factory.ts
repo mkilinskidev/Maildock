@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { betterAuthLogger } from "./auth-logger";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
@@ -9,6 +10,7 @@ import { isInstanceReady } from "@/modules/auth/application/instance-readiness";
 import { logoutCookies } from "@/modules/auth/infrastructure/logout-cookies";
 import { withoutTrustedDevice } from "./mfa-cookies";
 import { initialMfaHttp } from "../application/initial-mfa-http";
+import { recoveryPasswordLogin } from "../application/owner-recovery";
 import {
   ownerPasswordSchema,
   passwordMinLength,
@@ -110,13 +112,26 @@ export function createAuth(config: AppConfig, database: Database) {
                 securityEvent("admission_rejected");
                 return authThrottleResponse(retry);
               }
-              const response = await scoped.handler(
-                new Request(request.url, {
-                  method: "POST",
-                  headers: await withoutTrustedDevice(scoped, request.headers),
-                  body: JSON.stringify(input),
-                }),
+              const recovery = await recoveryPasswordLogin(
+                tx,
+                config,
+                input.username,
+                input.password,
               );
+              if (recovery?.ok)
+                await appendRecoveryCleanup(scoped, request.headers, recovery);
+              const response =
+                recovery ??
+                (await scoped.handler(
+                  new Request(request.url, {
+                    method: "POST",
+                    headers: await withoutTrustedDevice(
+                      scoped,
+                      request.headers,
+                    ),
+                    body: JSON.stringify(input),
+                  }),
+                ));
               if (response.ok) await clearLoginFailures(tx, input.username);
               else if ([400, 401, 403].includes(response.status))
                 await recordLoginFailure(tx, input.username);
@@ -149,21 +164,84 @@ export function createAuth(config: AppConfig, database: Database) {
   for (const name of sessionIssuingMethods) {
     const original = auth.api[name];
     const wrapped = Object.assign(
-      ((input: unknown) =>
-        withInitialMfaBoundary(config, database, async (scoped) => {
-          const supplied = input as { headers?: HeadersInit };
-          return Reflect.apply(scoped.api[name], undefined, [
-            {
-              ...supplied,
-              headers: await withoutTrustedDevice(scoped, supplied?.headers),
-            },
-          ]) as Promise<unknown>;
-        })) as typeof original,
+      (async (input: unknown) => {
+        if (name === "signInUsername")
+          await reserveAuthWork(database, "password");
+        const result = await withInitialMfaBoundary(
+          config,
+          database,
+          async (scoped, tx) => {
+            const supplied = input as { headers?: HeadersInit };
+            if (name === "signInUsername") {
+              const parsed = loginSchema.parse(
+                (input as { body?: unknown })?.body,
+              );
+              const retry = await getLoginDelaySeconds(tx, parsed.username);
+              if (retry) return authThrottleResponse(retry);
+              const pending = await recoveryPasswordLogin(
+                tx,
+                config,
+                parsed.username,
+                parsed.password,
+              );
+              if (pending) {
+                if (pending.ok) {
+                  await clearLoginFailures(tx, parsed.username);
+                  await appendRecoveryCleanup(
+                    scoped,
+                    new Headers(supplied?.headers),
+                    pending,
+                  );
+                } else if (pending.status !== 429)
+                  await recordLoginFailure(tx, parsed.username);
+                return pending;
+              }
+            }
+            return Reflect.apply(scoped.api[name], undefined, [
+              {
+                ...supplied,
+                headers: await withoutTrustedDevice(scoped, supplied?.headers),
+              },
+            ]) as Promise<unknown>;
+          },
+        );
+        // Convert API errors AFTER commit: failed proofs must retain counters.
+        if (
+          result instanceof Response &&
+          name === "signInUsername" &&
+          !(input as { asResponse?: boolean }).asResponse
+        ) {
+          if (!result.ok)
+            throw new APIError(
+              result.status === 429 ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED",
+              { message: "Sign in could not be completed." },
+            );
+          const response = await result.json();
+          return (input as { returnHeaders?: boolean }).returnHeaders
+            ? { response, headers: result.headers }
+            : response;
+        }
+        return result;
+      }) as typeof original,
       { path: original.path, options: original.options },
     );
     Object.assign(auth.api, { [name]: wrapped });
   }
   return auth;
+}
+
+async function appendRecoveryCleanup(
+  auth: ReturnType<typeof createAuthEngine>,
+  headers: Headers,
+  response: Response,
+) {
+  const cleanup = await auth.api.clearInitialMfaCookies({
+    headers,
+    asResponse: true,
+  });
+  if (!cleanup.ok) throw new Error("Recovery cookie cleanup failed.");
+  for (const cookie of cleanup.headers.getSetCookie())
+    response.headers.append("Set-Cookie", cookie);
 }
 
 function createAuthEngine(config: AppConfig, database: Database) {
@@ -220,13 +298,14 @@ function createAuthEngine(config: AppConfig, database: Database) {
                   .where(
                     eq(authSchema.mfaReplacement.ownerUserId, session.userId),
                   )
-              ).length
+              ).length ||
+              (await database.select().from(authSchema.ownerRecovery)).length
             )
               return false;
             return {
               data: {
                 ...session,
-                // Better Auth 1.7.5 hardcodes 24h for rememberMe:false. Its
+                // Better Auth 1.7.7 hardcodes 24h for rememberMe:false. Its
                 // supported database hook corrects expiry without changing cookies.
                 expiresAt: new Date(
                   session.createdAt.getTime() +
@@ -319,6 +398,8 @@ function createAuthEngine(config: AppConfig, database: Database) {
   });
   // Bind the authorization reader to the same database as Better Auth.
   return Object.assign(auth, {
+    isOwnerRecoveryPending: async () =>
+      (await database.select().from(authSchema.ownerRecovery)).length > 0,
     isMfaReplacementPending: async () =>
       (await database.select().from(authSchema.mfaReplacement)).length > 0,
     isInstanceOwner: (userId: string) => isInstanceOwner(database, userId),

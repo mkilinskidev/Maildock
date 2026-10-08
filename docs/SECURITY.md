@@ -1,5 +1,17 @@
 # Security model
 
+## Host-administrator owner recovery
+
+Host/container administrative access is equivalent to break-glass authority over the Maildock owner. Application database-role access or its connection credentials also lies outside browser authentication protection. Only an interactive container CLI starts owner recovery: no HTTP endpoint resets the password or reclaims the owner through `/setup`.
+
+The transaction uses the shared auth advisory lock (`1296125023`) and READ COMMITTED isolation. It preserves immutable identity/binding, replaces password/factor material, revokes sessions and verification challenges, clears replacement/bootstrap proof, and persists `owner_recovery`. Ambiguous/corrupt states are refused. `AUTH_SECRET` and credential-encryption keys are never rotated by this operation.
+
+While pending, business readiness and normal sessions are denied. Correct new credentials issue a random ten-minute enrollment token, stored only as SHA-256 digest. Its HttpOnly, SameSite=Strict cookie is Secure in production. This is not a persistent recovery secret. Re-login, cancel, completion, offline maintenance and explicit administrator restart invalidate prior browser authority. The pending marker survives expiry/restart. TOTP and encrypted recovery codes use installed Better Auth-compatible primitives; codes are withheld until verification commits. Completion requires fresh password-plus-MFA login.
+
+Global work limits, password backoff, shared proof budgets and per-ceremony TOTP limits apply. Sensitive responses are no-store, QR is rendered locally, and secrets stay out of URLs, logs and browser persistence. Fixed security events record start, restart and completion. The CLI does not echo passwords; terminal recording and access to process memory remain administrator responsibilities.
+
+Already-authorized in-flight operations may finish; recovery does not reverse provider-side effects. Database backup rollback may revive earlier auth and always requires separate offline restore maintenance. See [Installation](INSTALLATION.md#break-glass-owner-recovery) and [Backup & recovery](BACKUP_AND_RECOVERY.md).
+
 Maildock is a single-owner application with access to sensitive mail and sending authority. Security is therefore part of the product architecture, not an optional deployment mode.
 
 ## Authentication

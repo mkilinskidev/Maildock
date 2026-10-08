@@ -58,8 +58,13 @@ export function LoginForm() {
       const result = (await response.json()) as {
         twoFactorRedirect?: boolean;
         restart?: boolean;
+        ownerRecoveryRequired?: boolean;
       };
       if (response.ok) {
+        if (result.ownerRecoveryRequired) {
+          window.location.replace("/owner-recovery-mfa");
+          return;
+        }
         if (step === "password" && result.twoFactorRedirect) {
           setStep("totp");
           return;

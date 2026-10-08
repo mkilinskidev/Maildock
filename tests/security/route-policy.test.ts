@@ -7,6 +7,18 @@ import { expect, it } from "vitest";
 // or receive a specific boundary review here; no generic skip flag is allowed.
 const boundaries = new Map([
   [
+    "auth/owner-recovery/resume/route.ts:POST",
+    "Exact Origin + bounded strict empty JSON + M + CLI-created marker + expiring digest-only enrollment authority; no business session",
+  ],
+  [
+    "auth/owner-recovery/complete/route.ts:POST",
+    "Exact Origin + bounded strict JSON + M + current enrollment authority + bounded TOTP proof + atomic verification/revocation; fresh login required",
+  ],
+  [
+    "auth/owner-recovery/cancel/route.ts:POST",
+    "Exact Origin + bounded strict empty JSON + M + current enrollment authority revocation; durable recovery preserved",
+  ],
+  [
     "auth/mfa/manage/recovery/regenerate/route.ts:POST",
     "Exact Origin + bounded strict JSON + synchronized business owner/password/current MFA + encrypted replacement after commit",
   ],

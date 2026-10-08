@@ -141,14 +141,12 @@ describe("first-run bootstrap HTTP boundary with real PostgreSQL", () => {
     vi.restoreAllMocks();
     hash = vi.spyOn(passwords, "hashPassword");
     runtime.config = config;
-    await database.db
-      .update(instanceState)
-      .set({
-        bootstrapSecretDigest: null,
-        bootstrapExpiresAt: null,
-        initializedAt: null,
-        ownerUserId: null,
-      });
+    await database.db.update(instanceState).set({
+      bootstrapSecretDigest: null,
+      bootstrapExpiresAt: null,
+      initializedAt: null,
+      ownerUserId: null,
+    });
     await database.db.delete(user);
     await database.db.delete(rateLimit);
     await database.db.delete(authAdmission);

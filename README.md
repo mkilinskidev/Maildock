@@ -1,5 +1,7 @@
 # Maildock
 
+Lost owner password or MFA material? A host administrator can run `docker compose exec app maildock owner-recovery`. It preserves the owner and mail data, revokes existing authentication, and requires new MFA. See [operator recovery](docs/INSTALLATION.md#break-glass-owner-recovery).
+
 Maildock is a single-owner, self-hosted web mail client for managing multiple email accounts from one browser interface.
 
 It keeps a local PostgreSQL read model for fast browsing and search while IMAP/SMTP providers remain authoritative for mail. Maildock supports standard IMAP/SMTP accounts plus OAuth for Microsoft and Google accounts, durable background synchronization and sending, attachments, local drafts, conversations, rich HTML mail, signatures, search, notifications, and account diagnostics.

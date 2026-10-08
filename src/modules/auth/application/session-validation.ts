@@ -7,6 +7,7 @@ export async function getValidOwnerSession(
   requestHeaders: Headers,
 ) {
   try {
+    if (await authInstance.isOwnerRecoveryPending()) return null;
     const session = await authInstance.api.getSession({
       headers: requestHeaders,
       query: { disableRefresh: true, disableCookieCache: true },

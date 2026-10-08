@@ -10,12 +10,12 @@ Keep environment configuration private. Rendered Compose configuration and platf
 
 These are the only operator-supplied variables expected for a standard production installation.
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `APP_ORIGIN` | yes | — | Exact canonical browser origin. Production requires HTTPS and no path, query, fragment, or embedded credentials. |
-| `POSTGRES_PASSWORD` | yes | — | Password for Maildock's bundled PostgreSQL service. The application connects to the fixed internal `postgres:5432/maildock` endpoint as `maildock`; arbitrary passwords, including URL-special characters, are supported. |
-| `AUTH_SECRET` | yes | — | Better Auth / MFA secret material. Base64 value decoding to at least 32 bytes. Preserve it for backup/recovery. |
-| `CREDENTIALS_ENCRYPTION_KEY` | yes | — | Active AES-256-GCM master key. Canonical base64 of exactly 32 bytes. Preserve it for backup/recovery. |
+| Variable                     | Required | Default | Purpose                                                                                                                                                                                                                   |
+| ---------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_ORIGIN`                 | yes      | —       | Exact canonical browser origin. Production requires HTTPS and no path, query, fragment, or embedded credentials.                                                                                                          |
+| `POSTGRES_PASSWORD`          | yes      | —       | Password for Maildock's bundled PostgreSQL service. The application connects to the fixed internal `postgres:5432/maildock` endpoint as `maildock`; arbitrary passwords, including URL-special characters, are supported. |
+| `AUTH_SECRET`                | yes      | —       | Better Auth / MFA secret material. Base64 value decoding to at least 32 bytes. Preserve it for backup/recovery.                                                                                                           |
+| `CREDENTIALS_ENCRYPTION_KEY` | yes      | —       | Active AES-256-GCM master key. Canonical base64 of exactly 32 bytes. Preserve it for backup/recovery.                                                                                                                     |
 
 Generate `AUTH_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` independently:
 
@@ -33,13 +33,13 @@ For Coolify and similar platforms, this four-variable set is the normal deployme
 
 The production Compose file supplies these values itself. Operators normally should not add or change them.
 
-| Variable | Base value | Purpose |
-| --- | --- | --- |
-| `NODE_ENV` | `production` | Node/Next.js production mode. |
-| `MAILDOCK_ENV` | `production` | Maildock security mode. The development Compose override changes this to `development`. |
-| `ATTACHMENTS_PATH` | `/var/lib/maildock/attachments` | Internal persistent attachment path. |
-| `CREDENTIALS_ENCRYPTION_KEY_ID` | `v1` | Initial active encryption-key identifier. Change only during a reviewed key-rotation procedure. |
-| `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` | `{}` | Previous key map used only during controlled key rotation. |
+| Variable                               | Base value                      | Purpose                                                                                         |
+| -------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                             | `production`                    | Node/Next.js production mode.                                                                   |
+| `MAILDOCK_ENV`                         | `production`                    | Maildock security mode. The development Compose override changes this to `development`.         |
+| `ATTACHMENTS_PATH`                     | `/var/lib/maildock/attachments` | Internal persistent attachment path.                                                            |
+| `CREDENTIALS_ENCRYPTION_KEY_ID`        | `v1`                            | Initial active encryption-key identifier. Change only during a reviewed key-rotation procedure. |
+| `CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS` | `{}`                            | Previous key map used only during controlled key rotation.                                      |
 
 `POSTGRES_DB=maildock` and `POSTGRES_USER=maildock` are also fixed by the bundled PostgreSQL service and are not deployment inputs.
 
@@ -55,28 +55,28 @@ An explicitly empty numeric variable is invalid; either omit it or provide a val
 
 ### Runtime and synchronization tuning
 
-| Variable | Default | Accepted range / meaning |
-| --- | ---: | --- |
-| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug`, or `trace` |
-| `DATABASE_POOL_SIZE` | 10 | 1–50, per postgres-js process |
-| `WORKER_CONCURRENCY` | 5 | 1–50, discovery/runtime worker tuning; not a universal queue concurrency limit |
-| `MAILDOCK_INITIAL_SYNC_DAYS` | 30 | 1–365 days in the initial recent window |
-| `MAILDOCK_MESSAGE_FETCH_BATCH_SIZE` | 150 | 10–500 |
-| `MAILDOCK_BACKFILL_CHUNK_SIZE` | 500 | 1–5000 |
-| `MAILDOCK_MESSAGE_SYNC_CONCURRENCY` | 2 | 1–10 |
-| `MAILDOCK_MAIL_POLL_INTERVAL_SECONDS` | 300 | 30–3600 seconds |
-| `MAILDOCK_CONTENT_POLL_INTERVAL_MS` | 400 | 100–2500 ms; message-reader readiness polling |
-| `MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES` | 5242880 | 1 KiB–20 MiB |
+| Variable                               | Default | Accepted range / meaning                                                       |
+| -------------------------------------- | ------: | ------------------------------------------------------------------------------ |
+| `LOG_LEVEL`                            |  `info` | `fatal`, `error`, `warn`, `info`, `debug`, or `trace`                          |
+| `DATABASE_POOL_SIZE`                   |      10 | 1–50, per postgres-js process                                                  |
+| `WORKER_CONCURRENCY`                   |       5 | 1–50, discovery/runtime worker tuning; not a universal queue concurrency limit |
+| `MAILDOCK_INITIAL_SYNC_DAYS`           |      30 | 1–365 days in the initial recent window                                        |
+| `MAILDOCK_MESSAGE_FETCH_BATCH_SIZE`    |     150 | 10–500                                                                         |
+| `MAILDOCK_BACKFILL_CHUNK_SIZE`         |     500 | 1–5000                                                                         |
+| `MAILDOCK_MESSAGE_SYNC_CONCURRENCY`    |       2 | 1–10                                                                           |
+| `MAILDOCK_MAIL_POLL_INTERVAL_SECONDS`  |     300 | 30–3600 seconds                                                                |
+| `MAILDOCK_CONTENT_POLL_INTERVAL_MS`    |     400 | 100–2500 ms; message-reader readiness polling                                  |
+| `MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES` | 5242880 | 1 KiB–20 MiB                                                                   |
 
 ### Attachment and MIME limits
 
 All values are bytes.
 
-| Variable | Default | Accepted range |
-| --- | ---: | --- |
-| `MAILDOCK_MAX_ATTACHMENT_BYTES` | 15728640 (15 MiB) | 1 KiB–100 MiB |
-| `MAILDOCK_MAX_OUTGOING_ATTACHMENT_BYTES` | 18874368 (18 MiB) | 1 KiB–100 MiB |
-| `MAILDOCK_MAX_OUTGOING_MIME_BYTES` | 26214400 (25 MiB) | 1 KiB–150 MiB |
+| Variable                                 |           Default | Accepted range |
+| ---------------------------------------- | ----------------: | -------------- |
+| `MAILDOCK_MAX_ATTACHMENT_BYTES`          | 15728640 (15 MiB) | 1 KiB–100 MiB  |
+| `MAILDOCK_MAX_OUTGOING_ATTACHMENT_BYTES` | 18874368 (18 MiB) | 1 KiB–100 MiB  |
+| `MAILDOCK_MAX_OUTGOING_MIME_BYTES`       | 26214400 (25 MiB) | 1 KiB–150 MiB  |
 
 The outgoing MIME limit includes transfer encoding and headers.
 

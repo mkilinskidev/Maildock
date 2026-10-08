@@ -1,5 +1,11 @@
 # Backup & recovery
 
+## Lost owner credentials versus backup restore
+
+For a running instance with lost owner password/authenticator/recovery codes, use the [interactive administrator command](INSTALLATION.md#break-glass-owner-recovery). Host/container administration is recovery authority. It preserves mail/application data and keys and requires new MFA. It does not perform restore fencing or replace mandatory maintenance below.
+
+A backup may capture pending `owner_recovery`. Restore with ingress and all writers stopped, then run the usual mandatory `maintain` and `verify`. Maintenance invalidates restored browser enrollment authority but preserves the pending authenticator. Exit 2 means pending MFA. Private-file `resume-mfa` requires the new owner password; `complete-mfa` requires that password and pending TOTP, clears the marker, rotates recovery codes and produces a new receipt. Verify the receipt before reopening traffic. If the new password/pending factor is unavailable, perform mandatory maintenance first; keep public ingress closed while using `--restart-pending` and controlled browser enrollment. Never skip restore fencing because owner recovery is available.
+
 Maildock recovery is deliberately conservative because persistent state spans PostgreSQL, filesystem blobs and cryptographic keys.
 
 A PostgreSQL dump by itself is **not** a complete Maildock backup.

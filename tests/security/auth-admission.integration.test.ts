@@ -212,14 +212,12 @@ beforeAll(async () => {
   runtime.auth = auth;
 });
 beforeEach(async () => {
-  await database.db
-    .update(instanceState)
-    .set({
-      bootstrapSecretDigest: null,
-      bootstrapExpiresAt: null,
-      initializedAt: null,
-      ownerUserId: null,
-    });
+  await database.db.update(instanceState).set({
+    bootstrapSecretDigest: null,
+    bootstrapExpiresAt: null,
+    initializedAt: null,
+    ownerUserId: null,
+  });
   await database.db.delete(user);
   await database.db.delete(verification);
   await database.db.delete(rateLimit);
@@ -252,6 +250,11 @@ beforeEach(async () => {
     ),
   );
   expect(await getValidBusinessSession(auth, headers())).not.toBeNull();
+  // Fixture server logins now reserve the shared password work budget too.
+  // Assertions below measure the submitted HTTP request, not fixture setup.
+  await database.db
+    .delete(authAdmission)
+    .where(eq(authAdmission.key, "work:password"));
 });
 afterAll(async () => {
   await database?.client.end();

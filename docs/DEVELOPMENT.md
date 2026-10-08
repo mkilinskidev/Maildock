@@ -64,6 +64,18 @@ pnpm test:security
 pnpm test:security:browser
 ```
 
+Owner recovery also requires verification in the final production image, including a real Docker PTY, hidden password input, safe refusal paths, process restart and fresh MFA login:
+
+```sh
+docker build -t maildock-owner-recovery:local .
+node tests/security/production-runtime-dependencies.mjs maildock-owner-recovery:local
+node tests/security/production-image-regression.mjs maildock-owner-recovery:local
+node tests/security/owner-recovery-production-regression.mjs maildock-owner-recovery:local
+MAILDOCK_RECOVERY_TEST_IMAGE=maildock-owner-recovery:local node tests/security/recovery-production-regression.mjs
+```
+
+These drills create disposable containers and synthetic data. The restore drill builds the hardened PostgreSQL image once and reuses it across its isolated Compose projects.
+
 Docker must be installed and the Docker daemon must be running before executing the test suites.
 
 Do not treat a locally installed PostgreSQL instance or manually started Maildock processes as the canonical test environment.

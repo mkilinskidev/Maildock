@@ -388,6 +388,44 @@ export const recoveryMaintenance = pgTable(
   ],
 );
 
+// Host-authorized recovery persists until verified enrollment, not cookie expiry.
+export const ownerRecovery = pgTable(
+  "owner_recovery",
+  {
+    id: integer("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id, {
+        onDelete: "restrict",
+        onUpdate: "restrict",
+      }),
+    generationId: uuid("generation_id").notNull(),
+    factorId: text("factor_id")
+      .notNull()
+      .references(() => twoFactor.id, {
+        onDelete: "restrict",
+        onUpdate: "restrict",
+      }),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    tokenDigest: text("token_digest"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    failedAttempts: integer("failed_attempts").default(0).notNull(),
+  },
+  (table) => [
+    check("owner_recovery_singleton", sql`${table.id} = 1`),
+    check(
+      "owner_recovery_attempts",
+      sql`${table.failedAttempts} between 0 and 5`,
+    ),
+    check(
+      "owner_recovery_token",
+      sql`(${table.tokenDigest} is null and ${table.expiresAt} is null) or (${table.tokenDigest} ~ '^[0-9a-f]{64}$' and ${table.tokenDigest} is not null and ${table.expiresAt} is not null)`,
+    ),
+  ],
+);
+
 export const session = pgTable(
   "session",
   {

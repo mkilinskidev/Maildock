@@ -3,6 +3,8 @@ import type { Database } from "../../../shared/infrastructure/database/database"
 import {
   instanceState,
   session,
+  ownerRecovery,
+  mfaReplacement,
   twoFactor,
   user,
 } from "../../../shared/infrastructure/database/schema";
@@ -24,6 +26,7 @@ export async function isInstanceReady(
       factorId: twoFactor.id,
       factorUserId: twoFactor.userId,
       verified: twoFactor.verified,
+      ceremonyAbsent: sql<boolean>`not exists (select from ${ownerRecovery}) and not exists (select from ${mfaReplacement})`,
       // Authorization also rechecks the exact session in this same snapshot.
       // An owner read that straddles atomic READY + revocation cannot authorize
       // a session already deleted by the enrollment completion transaction.
@@ -57,6 +60,7 @@ export async function isInstanceReady(
     state.factorId !== null &&
     state.factorUserId === state.ownerUserId &&
     state.verified === true &&
+    state.ceremonyAbsent === true &&
     state.sessionExists === true
   );
 }

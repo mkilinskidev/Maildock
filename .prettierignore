@@ -3,3 +3,6 @@ dist-worker
 node_modules
 pnpm-lock.yaml
 coverage
+.security-results
+# Drizzle-generated snapshots retain the generator's serialization.
+db/migrations/meta/*_snapshot.json

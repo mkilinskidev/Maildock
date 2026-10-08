@@ -13,6 +13,7 @@
     "build": "next build && tsc -p tsconfig.worker.json && node scripts/fix-worker-imports.mjs",
     "start": "next start",
     "start:worker": "node dist-worker/composition/worker-process.js",
+    "owner-recovery": "tsx src/composition/owner-recovery-process.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

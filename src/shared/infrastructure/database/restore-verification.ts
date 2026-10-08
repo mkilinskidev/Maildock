@@ -136,11 +136,13 @@ export async function verifyRecoveryState(
   const accounts = await db.select().from(schema.account);
   const factors = await db.select().from(schema.twoFactor);
   const replacements = await db.select().from(schema.mfaReplacement);
+  const recoveries = await db.select().from(schema.ownerRecovery);
   const state = states[0],
     owner = users[0],
     credential = accounts[0],
     factor = factors[0],
     replacement = replacements[0];
+  const ownerRecovery = recoveries[0];
   if (
     states.length !== 1 ||
     state.id !== 1 ||
@@ -170,21 +172,32 @@ export async function verifyRecoveryState(
     factor.userId !== owner.id ||
     !Number.isInteger(factor.failedVerificationCount) ||
     factor.failedVerificationCount < 0 ||
-    replacements.length > 1
+    replacements.length > 1 ||
+    recoveries.length > 1 ||
+    (replacement && ownerRecovery) ||
+    (ownerRecovery &&
+      (ownerRecovery.id !== 1 ||
+        ownerRecovery.ownerUserId !== owner.id ||
+        ownerRecovery.factorId !== factor?.id ||
+        state.bootstrapSecretDigest !== null ||
+        state.bootstrapExpiresAt !== null))
   )
     throw new RecoveryError("recovery_owner");
   let status: "verified" | "pending_mfa";
   if (
     factor.verified === true &&
     owner.twoFactorEnabled === true &&
-    !replacement
+    !replacement &&
+    !ownerRecovery
   )
     status = "verified";
   else if (
     factor.verified === false &&
     owner.twoFactorEnabled === false &&
-    replacement?.ownerUserId === owner.id &&
-    replacement.factorId === factor.id
+    ((replacement?.ownerUserId === owner.id &&
+      replacement.factorId === factor.id) ||
+      (ownerRecovery?.ownerUserId === owner.id &&
+        ownerRecovery.factorId === factor.id))
   )
     status = "pending_mfa";
   else throw new RecoveryError("recovery_owner"); // Initial enrollment retains the bootstrap contract.
@@ -287,7 +300,16 @@ export async function verifyRecoveryState(
   } catch {
     throw new RecoveryError("recovery_blobs");
   }
-  return { state, owner, credential, factor, replacement, secret, status };
+  return {
+    state,
+    owner,
+    credential,
+    factor,
+    replacement,
+    ownerRecovery,
+    secret,
+    status,
+  };
 }
 
 export async function verifyMaintenance(
@@ -314,7 +336,9 @@ export async function verifyMaintenance(
     receipt.status !== checked.status ||
     !remaining[0]?.ok ||
     (checked.status === "pending_mfa" &&
-      checked.replacement.expiresAt.getTime() > Date.now())
+      ((checked.replacement?.expiresAt.getTime() ?? 0) > Date.now() ||
+        checked.ownerRecovery?.tokenDigest != null ||
+        checked.ownerRecovery?.expiresAt != null))
   )
     throw new RecoveryError("recovery_incomplete");
   return checked.status;

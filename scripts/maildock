@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+if [ "${1-}" != "owner-recovery" ]; then
+  echo 'Usage: maildock owner-recovery [--restart-pending]' >&2
+  exit 1
+fi
+shift
+cd /app
+exec node dist-worker/composition/owner-recovery-process.js "$@"

@@ -63,7 +63,7 @@ BEGIN
         'instance_state','login_throttle','mail_accounts','mailbox_messages','mailbox_roles','mailboxes',
         'message_attachments','message_commands','message_contents','messages','mfa_replacement',
         'notification_events','oauth_authorization_states','oauth_provider_configs',
-        'outgoing_message_attachments','outgoing_messages','rate_limit','recovery_maintenance','remote_content_senders',
+        'outgoing_message_attachments','outgoing_messages','owner_recovery','rate_limit','recovery_maintenance','remote_content_senders',
         'session','signature_resources','signatures','staged_attachments','two_factor','user','verification'))
       OR (n.nspname = 'public' AND c.relkind = 'S' AND c.relname <> 'mail_account_order_seq')
       OR (n.nspname = 'drizzle' AND c.relkind IN ('r','p','S')

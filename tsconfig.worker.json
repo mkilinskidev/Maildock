@@ -13,6 +13,7 @@
     "src/composition/worker.ts",
     "src/composition/worker-process.ts",
     "src/composition/recovery-process.ts",
+    "src/composition/owner-recovery-process.ts",
     "src/modules/jobs/**/*.ts",
     "src/modules/accounts/domain/**/*.ts",
     "src/modules/accounts/application/accounts-service.ts",

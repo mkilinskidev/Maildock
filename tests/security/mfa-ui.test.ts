@@ -17,7 +17,7 @@ const recoveryCodes = ["abcde-12345", "fghij-67890"];
 beforeAll(async () => {
   const result = await build({
     stdin: {
-      contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {InitialMfaForm} from './src/components/initial-mfa-form'; import {LoginForm} from './src/components/login-form'; createRoot(document.getElementById('root')).render(location.pathname === '/initial-mfa' ? <InitialMfaForm/> : <LoginForm/>);`,
+      contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {InitialMfaForm} from './src/components/initial-mfa-form'; import {LoginForm} from './src/components/login-form'; import {OwnerRecoveryEnrollment} from './src/components/owner-recovery-enrollment'; createRoot(document.getElementById('root')).render(location.pathname === '/owner-recovery-mfa' ? <OwnerRecoveryEnrollment/> : location.pathname === '/initial-mfa' ? <InitialMfaForm/> : <LoginForm/>);`,
       resolveDir: process.cwd(),
       loader: "tsx",
     },
@@ -83,6 +83,92 @@ async function ephemeral(page: Page, secrets: string[]) {
   );
   for (const secret of secrets) expect(persisted).not.toContain(secret);
 }
+
+it("CLI-recovered password login leads only to controlled enrollment and fresh login; secrets stay ephemeral", async () => {
+  const { context, page, external } = await opened("/login");
+  const calls: { path: string; body: unknown }[] = [];
+  await page.route("**/api/auth/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    calls.push({ path, body: route.request().postDataJSON() });
+    await route.fulfill({
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify(
+        path.endsWith("/username")
+          ? { ownerRecoveryRequired: true }
+          : path.endsWith("/resume")
+            ? { totpURI }
+            : { completed: true, freshLoginRequired: true, recoveryCodes },
+      ),
+    });
+  });
+  try {
+    await page.getByLabel("Username").fill("owner");
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("Recovered password!");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL(origin + "/owner-recovery-mfa");
+    await page
+      .getByRole("button", { name: "Show authenticator setup" })
+      .click();
+    await page.getByLabel("Authenticator setup QR code").waitFor();
+    expect(await page.locator(".mfa-secret").textContent()).toBe(manualSecret);
+    expect(await page.locator("img, svg image").count()).toBe(0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await ephemeral(page, ["Recovered password!", totpURI, manualSecret]);
+    await page.getByLabel("Authenticator code").fill("123456");
+    await page.getByRole("button", { name: "Verify authenticator" }).click();
+    await page
+      .getByRole("heading", { name: "Save your recovery codes" })
+      .waitFor();
+    expect(calls.at(-1)).toEqual({
+      path: "/api/auth/owner-recovery/complete",
+      body: { code: "123456" },
+    });
+    expect(await page.locator("svg, input, .mfa-secret").count()).toBe(0);
+    await ephemeral(page, [totpURI, manualSecret, ...recoveryCodes]);
+    await page.getByRole("link", { name: "I saved my codes" }).click();
+    await page.waitForURL(origin + "/login");
+    expect(await page.locator(".mfa-recovery-codes").count()).toBe(0);
+    expect(external).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+it("recovery enrollment errors expose no server detail or codes and cancel returns to login", async () => {
+  const { context, page } = await opened("/owner-recovery-mfa");
+  await page.route("**/api/auth/owner-recovery/*", async (route) => {
+    const cancel = route.request().url().endsWith("/cancel");
+    await route.fulfill({
+      status: cancel ? 200 : 401,
+      contentType: "application/json",
+      body: JSON.stringify(
+        cancel
+          ? { cancelled: true }
+          : { error: "Secret internal detail", recoveryCodes },
+      ),
+    });
+  });
+  try {
+    await page
+      .getByRole("button", { name: "Show authenticator setup" })
+      .click();
+    await page.getByRole("alert").waitFor();
+    expect(await page.locator("body").textContent()).not.toContain(
+      "Secret internal detail",
+    );
+    expect(await page.locator("svg, .mfa-recovery-codes").count()).toBe(0);
+    await page.getByRole("button", { name: "Cancel enrollment" }).click();
+    await page.waitForURL(origin + "/login");
+  } finally {
+    await context.close();
+  }
+});
 
 it("enrollment locally renders QR/manual key; reload requires renewed bootstrap/password; codes disappear on navigation", async () => {
   const { context, page, external } = await opened("/initial-mfa");

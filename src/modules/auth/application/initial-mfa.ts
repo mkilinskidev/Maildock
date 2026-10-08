@@ -15,6 +15,7 @@ import {
   session,
   twoFactor,
   user,
+  ownerRecovery,
 } from "@/shared/infrastructure/database/schema";
 
 export class InitialMfaRejected extends Error {}
@@ -32,6 +33,8 @@ export const initialMfaCompleteSchema = z
   .strict();
 
 async function pendingState(tx: Database, ownerId: string) {
+  if ((await tx.select().from(ownerRecovery)).length)
+    throw new InitialMfaRejected();
   if ((await tx.select().from(mfaReplacement)).length)
     throw new InitialMfaRejected();
   const states = await tx.select().from(instanceState);
@@ -62,6 +65,8 @@ export async function startInitialMfa(
   headers: Headers,
   input: z.infer<typeof initialMfaStartSchema>,
 ) {
+  if ((await database.select().from(ownerRecovery)).length)
+    throw new InitialMfaRejected();
   await authorizeBootstrap(database, input.bootstrapSecret, "initial-mfa");
   // Persist admission independently: failed passwords/codes cannot roll it back.
   await reserveSetupAttempt(database, true, "initial-mfa");
@@ -102,6 +107,8 @@ export async function completeInitialMfa(
   headers: Headers,
   input: z.infer<typeof initialMfaCompleteSchema>,
 ) {
+  if ((await database.select().from(ownerRecovery)).length)
+    throw new InitialMfaRejected();
   await authorizeBootstrap(database, input.bootstrapSecret, "initial-mfa");
   await reserveSetupAttempt(database, true, "initial-mfa");
   return withInitialMfaBoundary(config, database, async (auth, tx) => {

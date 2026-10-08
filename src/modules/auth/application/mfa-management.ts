@@ -1,11 +1,9 @@
 import { securityEvent } from "../../../shared/infrastructure/logging/security-events";
 import { ownerPasswordSchema } from "../domain/password-policy";
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { APIError } from "better-auth/api";
-import { symmetricDecrypt } from "better-auth/crypto";
-import { createOTP } from "@better-auth/utils/otp";
 import { withInitialMfaBoundary } from "../infrastructure/auth-factory";
 import {
   reserveAuthWork,
@@ -18,6 +16,11 @@ import { getValidBusinessSession } from "./session-validation";
 import { isInstanceReady } from "./instance-readiness";
 import { isInstanceOwner } from "./owner-binding";
 import { InitialMfaRejected } from "./initial-mfa";
+import {
+  pendingFactorURI,
+  verifyPendingFactor,
+  markFactorVerified,
+} from "../infrastructure/mfa-enrollment";
 import type { Database } from "@/shared/infrastructure/database/database";
 import type { AppConfig } from "@/shared/infrastructure/config/config";
 import {
@@ -26,6 +29,7 @@ import {
   twoFactor,
   user,
   verification,
+  ownerRecovery,
 } from "@/shared/infrastructure/database/schema";
 
 export const managementSchema = z.discriminatedUnion("proofType", [
@@ -239,6 +243,7 @@ export async function startAuthenticatorReplacement(
 }
 
 async function pendingReplacement(tx: Database, headers: Headers) {
+  if ((await tx.select().from(ownerRecovery)).length) throw rejected();
   const cookies = (headers.get("cookie") ?? "")
     .split(";")
     .map((item) => item.trim())
@@ -313,18 +318,9 @@ export async function resumeAuthenticatorReplacement(
     database,
     config,
     headers,
-    async (auth, _tx, { factor, owner }) => {
-      const context = await auth.$context;
-      const secret = await symmetricDecrypt({
-        key: context.secretConfig,
-        data: factor.secret,
-      });
-      // The exact installed primitive/options used by Better Auth 1.7.5.
+    async (_auth, _tx, { factor, owner }) => {
       return {
-        totpURI: createOTP(secret, { digits: 6, period: 30 }).url(
-          "Maildock",
-          owner.email,
-        ),
+        totpURI: await pendingFactorURI(config, factor, owner.email),
       };
     },
   );
@@ -341,12 +337,7 @@ export async function completeAuthenticatorReplacement(
     config,
     headers,
     async (auth, tx, { factor, record }) => {
-      const context = await auth.$context;
-      const secret = await symmetricDecrypt({
-        key: context.secretConfig,
-        data: factor.secret,
-      });
-      if (!(await createOTP(secret, { digits: 6, period: 30 }).verify(code))) {
+      if (!(await verifyPendingFactor(config, factor, code))) {
         // Return instead of throwing: the bounded ceremony budget must COMMIT.
         await tx
           .update(mfaReplacement)
@@ -359,19 +350,7 @@ export async function completeAuthenticatorReplacement(
       }
       // No verifyTOTP endpoint here: for an unverified factor it rotates a
       // session. This narrow composition verifies via its installed primitive.
-      await tx
-        .update(twoFactor)
-        .set({ verified: true })
-        .where(
-          and(
-            eq(twoFactor.id, factor.id),
-            eq(twoFactor.userId, record.ownerUserId),
-          ),
-        );
-      await tx
-        .update(user)
-        .set({ twoFactorEnabled: true })
-        .where(eq(user.id, record.ownerUserId));
+      await markFactorVerified(tx, factor);
       await tx
         .delete(mfaReplacement)
         .where(eq(mfaReplacement.ownerUserId, record.ownerUserId));

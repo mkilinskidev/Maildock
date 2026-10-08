@@ -1,5 +1,33 @@
 # Installation & deployment
 
+## Break-glass owner recovery
+
+Administrative access to the host or application container grants owner recovery authority. Protect Docker access as carefully as mailbox credentials. This is an interactive local administrator operation, with no email recovery or public recovery-initiation endpoint.
+
+With PostgreSQL and the application running, use a private terminal:
+
+```sh
+docker compose exec app maildock owner-recovery
+```
+
+The command displays the immutable owner's login username. Read the warning, type exactly `RECOVER OWNER`, and enter the new password twice. Password input is not echoed or masked. The existing policy requires 12–128 characters. Do not use `-T`, pipes, password arguments, environment variables or terminal recording. The production launcher uses bundled Node, without pnpm.
+
+Recovery preserves user ID, username and owner binding. It changes the password, revokes sessions and pending authentication, invalidates the old authenticator and recovery codes, and clears any remaining setup proof. It does not modify mail accounts, messages, OAuth configuration, application settings or cryptographic keys. An existing owner with unfinished first MFA or interrupted replacement is supported. Uninitialized or inconsistent instances are refused rather than repaired.
+
+Sign in with the displayed username and the new password. This grants only a ten-minute enrollment ceremony. Show the QR code, enroll a new authenticator, verify its six-digit code, and save the new recovery codes privately. Then sign in again with password and MFA. Expiry, closing the browser or application restart does not undo recovery: sign in again to resume the same pending authenticator. Re-login invalidates the preceding browser ceremony. Failed proofs are throttled; a fresh ceremony does not refund the shared factor proof budget. If the completion response is lost, sign in with new password/TOTP and regenerate recovery codes through MFA management.
+
+Normal `owner-recovery` refuses while recovery is pending. If the new password or pending authenticator must be replaced, explicitly restart:
+
+```sh
+docker compose exec app maildock owner-recovery --restart-pending
+```
+
+The additional warning, exact confirmation and both password prompts are required again. The flag is refused without pending recovery. Restart invalidates the preceding password, pending authenticator and browser authority.
+
+Exit 0 confirms commit; MFA enrollment is still required. Exit 1 means refusal/failure; exit 130 means input interruption before submission. A disconnect during commit can leave the outcome unknown: inspect by rerunning the ordinary command and attempting the new login, without automatically restarting pending recovery. Mismatch or interruption before submission changes nothing. JavaScript strings cannot be reliably zeroized; the short-lived CLI clears references and never persists/logs them.
+
+New authentication is fenced atomically. Already-authorized requests or in-flight mail work can finish; workers pause through the readiness supervisor. For backup restore, always follow [Backup & recovery](BACKUP_AND_RECOVERY.md), including stopped writers and mandatory maintenance. Owner recovery does not replace that procedure.
+
 This document is the operator path for a fresh Maildock installation. Maildock is Docker-first and the supported base stack contains exactly two services: `app` and `postgres`.
 
 ## Requirements
@@ -89,7 +117,6 @@ Production is safe only when all of these are true:
 - logs and platform inspection output are access-controlled.
 
 Caddy, Traefik, nginx, Nginx Proxy Manager, Coolify-managed ingress and similar systems can satisfy this contract. Maildock does not require a particular proxy product.
-
 
 ## Platform deployments
 

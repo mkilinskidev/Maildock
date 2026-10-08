@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 const handler = toNextJsHandler(auth);
 
-// Login adds bounded JSON/work admission in createAuth; Better Auth 1.7.5
+// Login adds bounded JSON/work admission in createAuth; Better Auth 1.7.7
 // also enforces Origin/CSRF (trustedOrigins = [APP_ORIGIN], neither disabled).
 // Its login/session protocol must not pass through the owner-session guard.
 

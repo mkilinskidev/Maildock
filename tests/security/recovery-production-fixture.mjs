@@ -88,6 +88,8 @@ try {
       await db.db.update(s.instanceState).set({
         initializedAt: new Date(),
         ownerUserId: owner,
+        bootstrapSecretDigest: null,
+        bootstrapExpiresAt: null,
         passwordAlgorithm: "argon2id",
         passwordParameters: parameters,
       });

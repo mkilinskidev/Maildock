@@ -50,6 +50,7 @@ COPY --from=build --chown=maildock:maildock /app/public ./public
 COPY --from=build --chown=maildock:maildock /app/dist-worker ./dist-worker
 COPY --from=build --chown=maildock:maildock /app/db ./db
 COPY --from=build --chown=maildock:maildock /app/scripts/container-entrypoint.mjs ./scripts/container-entrypoint.mjs
+COPY --from=build --chmod=755 /app/scripts/maildock /usr/local/bin/maildock
 COPY --from=build --chown=maildock:maildock /app/scripts/postgres/maildock-restore-compatibility.sh ./scripts/postgres/maildock-restore-compatibility.sh
 COPY --from=build --chown=maildock:maildock /app/scripts/postgres/recovery ./scripts/postgres/recovery
 USER maildock

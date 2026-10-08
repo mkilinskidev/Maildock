@@ -1,7 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 import { createOTP } from "@better-auth/utils/otp";
-import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
+import {
+  prepareRecoveryCodes,
+  markFactorVerified,
+} from "../infrastructure/mfa-enrollment";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import * as schema from "../../../shared/infrastructure/database/schema";
@@ -84,14 +87,10 @@ export async function restoreSecurityState(
           await recordManagementFailure(tx, "factor");
           return { refused: true as const };
         }
+        await markFactorVerified(tx, checked.factor);
         await tx
-          .update(schema.twoFactor)
-          .set({ verified: true })
-          .where(eq(schema.twoFactor.id, checked.factor.id));
-        await tx
-          .update(schema.user)
-          .set({ twoFactorEnabled: true })
-          .where(eq(schema.user.id, expectedOwner));
+          .delete(schema.ownerRecovery)
+          .where(eq(schema.ownerRecovery.ownerUserId, expectedOwner));
         await tx
           .delete(schema.mfaReplacement)
           .where(eq(schema.mfaReplacement.ownerUserId, expectedOwner));
@@ -129,20 +128,18 @@ export async function restoreSecurityState(
       let ciphertext = checked.factor.backupCodes;
       let recoveryCodes: string[] = [];
       if (status === "verified") {
-        // Installed Better Auth 1.7.5 encrypted format: ten random 5-5 codes.
-        recoveryCodes = Array.from({ length: 10 }, () => {
-          const value = generateRandomString(10, "a-z", "0-9", "A-Z");
-          return `${value.slice(0, 5)}-${value.slice(5)}`;
-        });
-        ciphertext = await symmetricEncrypt({
-          key: config.authSecret,
-          data: JSON.stringify(recoveryCodes),
-        });
+        const prepared = await prepareRecoveryCodes(config.authSecret);
+        recoveryCodes = prepared.recoveryCodes;
+        ciphertext = prepared.ciphertext;
         await tx
           .update(schema.twoFactor)
           .set({ backupCodes: ciphertext })
           .where(eq(schema.twoFactor.id, checked.factor.id));
       } else {
+        await tx
+          .update(schema.ownerRecovery)
+          .set({ tokenDigest: null, expiresAt: null })
+          .where(eq(schema.ownerRecovery.ownerUserId, expectedOwner));
         await tx
           .update(schema.mfaReplacement)
           .set({

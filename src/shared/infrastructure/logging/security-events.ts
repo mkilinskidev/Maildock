@@ -2,6 +2,9 @@ import { createLogger } from "./logger";
 import { bestEffortDiagnostic } from "./diagnostics";
 
 export type SecurityEvent =
+  | "owner_recovery_started"
+  | "owner_recovery_restarted"
+  | "owner_recovery_completed"
   | "setup_completed"
   | "mfa_login_completed"
   | "mfa_enrollment_completed"

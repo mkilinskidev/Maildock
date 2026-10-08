@@ -19,13 +19,16 @@ const legacyDrill = process.argv.includes("--legacy");
 const productionImage =
   process.env.MAILDOCK_RECOVERY_TEST_IMAGE ??
   "maildock-f125-implementation:d98c1d3";
+const postgresImage =
+  process.env.MAILDOCK_RECOVERY_TEST_POSTGRES_IMAGE ??
+  "maildock-recovery-postgres:local";
 await writeFile(
   env,
   `APP_ORIGIN=https://recovery.invalid\nPOSTGRES_PASSWORD=synthetic-${id}\nAUTH_SECRET=${randomBytes(32).toString("base64")}\nCREDENTIALS_ENCRYPTION_KEY=${randomBytes(32).toString("base64")}\nLOG_LEVEL=info\n`,
 );
 await writeFile(
   override,
-  `services:\n  app:\n    image: ${productionImage}\n    volumes:\n      - operator_data:/operator\nvolumes:\n  operator_data:\n    external: true\n    name: ${operator}\n`,
+  `services:\n  app:\n    image: ${productionImage}\n    volumes:\n      - operator_data:/operator\n  postgres:\n    image: ${postgresImage}\nvolumes:\n  operator_data:\n    external: true\n    name: ${operator}\n`,
 );
 async function docker(args, expectedFailure = false) {
   try {
@@ -93,6 +96,14 @@ async function offline(project, operation) {
 }
 const owner = "d7afb047-b000-4b7d-bff7-450de57c5800";
 try {
+  await docker([
+    "build",
+    "-f",
+    "Dockerfile.postgres",
+    "-t",
+    postgresImage,
+    ".",
+  ]);
   await docker(["volume", "create", operator]);
   await compose(source, ["up", "-d", "--no-build"]);
   const app = await wait(source, "app");

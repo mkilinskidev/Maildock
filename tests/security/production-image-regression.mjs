@@ -134,6 +134,7 @@ try {
   console.log(`image ${image}: ${imageId.stdout.trim()}`);
   const env = [
     "MAILDOCK_ENV=production",
+    "POSTGRES_PASSWORD=f12-disposable-only",
     "APP_ORIGIN=https://f12.invalid",
     `DATABASE_URL=postgresql://maildock:f12-disposable-only@${db}:5432/maildock`,
     `AUTH_SECRET=${randomBytes(32).toString("base64")}`,
@@ -153,6 +154,8 @@ try {
     db,
     "--network",
     network,
+    "--network-alias",
+    "postgres",
     "-e",
     "POSTGRES_USER=maildock",
     "-e",

@@ -243,14 +243,12 @@ beforeAll(async () => {
   runtime.auth = auth;
 });
 beforeEach(async () => {
-  await database.db
-    .update(instanceState)
-    .set({
-      bootstrapSecretDigest: null,
-      bootstrapExpiresAt: null,
-      initializedAt: null,
-      ownerUserId: null,
-    });
+  await database.db.update(instanceState).set({
+    bootstrapSecretDigest: null,
+    bootstrapExpiresAt: null,
+    initializedAt: null,
+    ownerUserId: null,
+  });
   await database.db.delete(user);
   await database.db.delete(verification);
   await database.db.delete(rateLimit);

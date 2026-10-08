@@ -249,13 +249,11 @@ describe("F7 owner username contract with real Better Auth and PostgreSQL", () =
         providerId: "credential",
         password: await passwords.hashPassword(password),
       });
-      await database.db
-        .update(instanceState)
-        .set({
-          initializedAt: new Date(),
-          ownerUserId: id,
-          bootstrapExpiresAt: null,
-        });
+      await database.db.update(instanceState).set({
+        initializedAt: new Date(),
+        ownerUserId: id,
+        bootstrapExpiresAt: null,
+      });
       const before = await database.db.select().from(user);
       expect(
         (
