@@ -4,10 +4,22 @@
 
 Administrative access to the host or application container grants owner recovery authority. Protect Docker access as carefully as mailbox credentials. This is an interactive local administrator operation, with no email recovery or public recovery-initiation endpoint.
 
-With PostgreSQL and the application running, use a private terminal:
+With PostgreSQL and the application running, use a private terminal from the Maildock deployment directory:
 
 ```sh
 docker compose exec app maildock owner-recovery
+```
+
+Alternatively, when running the command outside the deployment directory, execute it directly in the running application container:
+
+```sh
+docker exec -it <app-container-name> maildock owner-recovery
+```
+
+For example, a Docker Compose deployment may name the container `maildock-app-1`:
+
+```sh
+docker exec -it maildock-app-1 maildock owner-recovery
 ```
 
 The command displays the immutable owner's login username. Read the warning and type exactly `RECOVER OWNER`. Before prompting for the new password, the CLI displays the current password requirements from the same shared policy used for validation (currently 12–128 characters); enter the new password twice. Password input is not echoed or masked. Do not use `-T`, pipes, password arguments, environment variables or terminal recording. The production launcher uses bundled Node, without pnpm.
