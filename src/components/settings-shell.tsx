@@ -390,20 +390,18 @@ export function SettingsShell({
                   <ChevronRight aria-hidden="true" />
                 </button>
               </div>
-              {oauthProviders
-                .filter((provider) => !provider.configured)
-                .map((provider) => (
-                  <p key={provider.id}>
-                    {provider.name} OAuth is not configured.{" "}
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() => select("oauth-providers")}
-                    >
-                      Configure OAuth providers
-                    </button>
-                  </p>
-                ))}
+              {oauthProviders.some((provider) => !provider.configured) ? (
+                <p className="muted account-provider-hint">
+                  OAuth providers can be configured in{" "}
+                  <button
+                    type="button"
+                    onClick={() => select("oauth-providers")}
+                  >
+                    Settings
+                  </button>
+                  .
+                </p>
+              ) : null}
             </>
           ) : null}
           {section === "add-imap" ? (
