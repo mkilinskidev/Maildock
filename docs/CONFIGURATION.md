@@ -119,7 +119,17 @@ CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS={"v1":"<old-key>"}
 
 Do not remove an old key while stored envelopes still reference it. Maildock has the multi-key decryption seam but does not currently provide a one-click key-rotation job; rotation must be a reviewed operator procedure.
 
-Losing a required credential key makes the corresponding stored secrets unrecoverable. Losing or changing `AUTH_SECRET` invalidates protected authentication/MFA state. Back up both as part of the matched recovery set.
+Losing a required credential key makes the corresponding stored secrets unrecoverable. Losing or changing `AUTH_SECRET` can invalidate protected authentication/MFA state. Back up both as part of the matched recovery set.
+
+## Authentication secret (`AUTH_SECRET`)
+
+`AUTH_SECRET` is Maildock's long-lived **Better Auth cryptographic secret**, not the temporary first-run setup secret and not the key that encrypts saved mail-account credentials. Maildock passes it to Better Auth as the `secret` option. Better Auth uses its secret for authentication-related signing, encryption and hashing; in Maildock this includes protection of MFA material managed by the Better Auth two-factor plugin.
+
+Maildock stores sessions in PostgreSQL and explicitly disables Better Auth's cookie session cache. Therefore **do not assume that replacing `AUTH_SECRET` automatically revokes every existing database-backed session**. Use the application's session-revocation and offline recovery procedures when revocation is required; see [Security](SECURITY.md) and [Backup & recovery](BACKUP_AND_RECOVERY.md).
+
+Generate `AUTH_SECRET` independently from `CREDENTIALS_ENCRYPTION_KEY`, keep it stable across restarts and deployments, and preserve it securely alongside the matching database backup. An unplanned replacement or loss can prevent access to encrypted MFA material and disrupt authentication; simply substituting a new value is **not** a supported owner/MFA recovery procedure. Maildock does not document or provide a tested, non-disruptive `AUTH_SECRET` rotation workflow. Do not assume upstream Better Auth versioned-secret rotation features are configured in this application.
+
+The generated **setup secret** has a separate, short-lived role: it proves access to a fresh deployment during owner creation and initial MFA enrollment, and is retired after MFA setup. It is never a replacement for `AUTH_SECRET`.
 
 ## Legacy Microsoft OAuth environment variables
 
