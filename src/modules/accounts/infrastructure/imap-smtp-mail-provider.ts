@@ -95,6 +95,7 @@ type ImapClient = {
       unseen: true;
       uidNext: true;
       highestModseq?: boolean;
+      uidValidity: true;
     },
   ): Promise<
     | {
@@ -102,6 +103,7 @@ type ImapClient = {
         unseen?: number;
         uidNext?: number;
         highestModseq?: bigint;
+        uidValidity?: bigint;
       }
     | false
   >;
@@ -1136,6 +1138,9 @@ export class ImapSmtpMailProvider implements MailProvider {
       connected = true;
       const mailbox = await client.mailboxOpen(remotePath, { readOnly: true });
       selected = true;
+      // ImapFlow mutates its selected mailbox object during STATUS/events.
+      const selectedModseq = mailbox.highestModseq;
+      const selectedEpoch = mailbox.uidValidity;
       const snapshot = await measureStage("persistence", () =>
         sink.selected(mailbox.uidValidity.toString()),
       );
@@ -1329,27 +1334,48 @@ export class ImapSmtpMailProvider implements MailProvider {
           await iterator.return(undefined);
         }
       }
-      const status = await client.status?.(remotePath, {
+      if (typeof client.status !== "function")
+        throw new Error("Mailbox STATUS is unavailable.");
+      const status = await client.status(remotePath, {
         messages: true,
         unseen: true,
         uidNext: true,
+        uidValidity: true,
         ...(condstore ? { highestModseq: true } : {}),
       });
-      if (status === false)
+      if (
+        !status ||
+        !Number.isSafeInteger(status.messages) ||
+        status.messages! < 0 ||
+        status.messages! > 0xffffffff ||
+        !Number.isSafeInteger(status.unseen) ||
+        status.unseen! < 0 ||
+        status.unseen! > status.messages! ||
+        !Number.isSafeInteger(status.uidNext) ||
+        status.uidNext! < 1 ||
+        status.uidNext! > 0xffffffff ||
+        typeof status.uidValidity !== "bigint" ||
+        status.uidValidity < 1n ||
+        status.uidValidity > 0xffffffffn ||
+        (condstore &&
+          (typeof status.highestModseq !== "bigint" ||
+            status.highestModseq < 1n ||
+            status.highestModseq > 0xffffffffffffffffn))
+      )
         throw new Error("Mailbox status observation failed.");
+      if (status.uidValidity !== selectedEpoch)
+        throw new MailboxEpochChangedError();
       assertImapHealthy(originalClient);
       for (let offset = 0; offset < missing.length; offset += batchSize)
         await sink.removed(missing.slice(offset, offset + batchSize));
-      const observed = status ?? {};
+      const observed = status;
       assertImapHealthy(originalClient);
       await sink.completed({
-        uidNext: (observed.uidNext ?? mailbox.uidNext ?? 1).toString(),
-        messageCount: (observed.messages ?? mailbox.exists ?? 0).toString(),
+        uidNext: observed.uidNext!.toString(),
+        messageCount: observed.messages!.toString(),
         unseenCount: observed.unseen?.toString() ?? null,
         // SELECT's MODSEQ predates all queries; a later STATUS could skip a concurrent flag change.
-        highestModseq: condstore
-          ? (mailbox.highestModseq?.toString() ?? null)
-          : null,
+        highestModseq: condstore ? (selectedModseq?.toString() ?? null) : null,
         condstore,
       });
       assertImapHealthy(originalClient);

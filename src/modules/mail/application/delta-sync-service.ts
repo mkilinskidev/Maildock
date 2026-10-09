@@ -259,21 +259,32 @@ export class DeltaSyncService {
           },
           removed: async (uids: readonly string[]) => {
             if (epoch === undefined || !uids.length) return;
-            const gone = await this.database
-              .delete(mailboxMessages)
-              .where(
-                and(
-                  eq(mailboxMessages.mailboxId, mailboxId),
-                  eq(mailboxMessages.uidValidity, epoch),
-                  inArray(mailboxMessages.uid, uids.map(BigInt)),
-                ),
-              )
-              .returning({ id: mailboxMessages.id });
+            // Confirmed absence is irreversible within an epoch: UIDs cannot
+            // be reused. Commit bounded batches; retries keep the old MODSEQ.
+            const gone = await this.database.transaction(async (tx) => {
+              const [current] = await tx
+                .select({ epoch: mailboxes.recentSyncUidValidity })
+                .from(mailboxes)
+                .where(eq(mailboxes.id, mailboxId))
+                .for("update");
+              if (current?.epoch !== epoch)
+                throw new MailboxEpochChangedError();
+              return tx
+                .delete(mailboxMessages)
+                .where(
+                  and(
+                    eq(mailboxMessages.mailboxId, mailboxId),
+                    eq(mailboxMessages.uidValidity, epoch!),
+                    inArray(mailboxMessages.uid, uids.map(BigInt)),
+                  ),
+                )
+                .returning({ id: mailboxMessages.id });
+            });
             removedCount += gone.length;
           },
           completed: async (observation) => {
             const completedAt = new Date();
-            await this.database
+            const completed = await this.database
               .update(mailboxes)
               .set({
                 uidNext: BigInt(observation.uidNext),
@@ -300,8 +311,11 @@ export class DeltaSyncService {
                 and(
                   eq(mailboxes.id, mailboxId),
                   eq(mailboxes.deltaUidValidity, epoch!),
+                  eq(mailboxes.recentSyncUidValidity, epoch!),
                 ),
-              );
+              )
+              .returning({ id: mailboxes.id });
+            if (!completed.length) throw new MailboxEpochChangedError();
           },
         },
       );

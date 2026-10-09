@@ -37,6 +37,10 @@ type Script = {
   failFetch?: string;
   failSearch?: string;
   failStatus?: boolean;
+  throwStatus?: boolean;
+  unavailableStatus?: boolean;
+  statusOverride?: unknown;
+  mutateSelected?: boolean;
   presence?: (query: string) => Promise<number[] | false | undefined>;
 };
 
@@ -50,30 +54,40 @@ function harness(script: Script = {}) {
   };
   const remote = script.remote ?? [];
   const fetched = script.fetched ?? remote;
+  const selectedMailbox = {
+    uidValidity: script.epoch ?? 10n,
+    uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
+    exists: remote.length,
+    ...(script.selectModseq === undefined
+      ? {}
+      : { highestModseq: script.selectModseq }),
+  };
   const fake: ProtocolClientFactories = {
     createImap: () => ({
       capabilities: new Map(script.condstore ? [["CONDSTORE", true]] : []),
       enabled: new Set(),
       connect: async () => undefined,
       list: async () => [],
-      mailboxOpen: async () => ({
-        uidValidity: script.epoch ?? 10n,
-        uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
-        exists: remote.length,
-        ...(script.selectModseq === undefined
-          ? {}
-          : { highestModseq: script.selectModseq }),
-      }),
+      mailboxOpen: async () => selectedMailbox,
       mailboxClose: async () => true,
-      status: async () =>
-        script.failStatus
-          ? false
-          : {
-              messages: remote.length,
-              unseen: 0,
-              uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
-              highestModseq: script.statusModseq ?? script.selectModseq,
-            },
+      status: script.unavailableStatus
+        ? undefined
+        : async () => {
+            if (script.throwStatus) throw new Error("STATUS failed");
+            if (script.mutateSelected)
+              selectedMailbox.highestModseq = script.statusModseq;
+            if ("statusOverride" in script)
+              return script.statusOverride as never;
+            return script.failStatus
+              ? false
+              : {
+                  uidValidity: script.epoch ?? 10n,
+                  messages: remote.length,
+                  unseen: 0,
+                  uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
+                  highestModseq: script.statusModseq ?? script.selectModseq,
+                };
+          },
       search: async (query) => {
         calls.searches.push(query);
         if ("since" in query) return script.recent ?? [];
@@ -182,6 +196,105 @@ async function run(
 }
 
 describe("Phase 1E IMAP delta provider", () => {
+  it.each([{ unavailableStatus: true }, { throwStatus: true }])(
+    "requires STATUS even when SELECT has valid values: %s",
+    async (script) => {
+      const fake = harness({ remote: [], ...script });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: null,
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          2,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+  it.each([undefined, 0n, -1n, "30", 0x10000000000000000n])(
+    "rejects missing/invalid CONDSTORE STATUS MODSEQ %#",
+    async (highestModseq) => {
+      const fake = harness({
+        remote: [],
+        condstore: true,
+        selectModseq: 20n,
+        statusOverride: {
+          messages: 0,
+          unseen: 0,
+          uidNext: 2,
+          uidValidity: 10n,
+          highestModseq,
+        },
+      });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: "10",
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          2,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+
+  it.each([
+    undefined,
+    null,
+    false,
+    {},
+    { messages: -1, unseen: 0, uidNext: 2, uidValidity: 10n },
+    { messages: 0, unseen: 1, uidNext: 2, uidValidity: 10n },
+    { messages: 0, unseen: 0, uidNext: 0, uidValidity: 10n },
+    { messages: 0, unseen: 0, uidNext: 2, uidValidity: 0n },
+    { messages: 0, unseen: 0, uidNext: 2, uidValidity: 11n },
+  ])(
+    "rejects invalid STATUS observation %# before removal or completion",
+    async (statusOverride) => {
+      const fake = harness({ remote: [], statusOverride });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: null,
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          2,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+  it("keeps SELECT MODSEQ when ImapFlow mutates the selected object during STATUS", async () => {
+    const result = await run(
+      {
+        remote: [1],
+        condstore: true,
+        selectModseq: 20n,
+        statusModseq: 30n,
+        mutateSelected: true,
+      },
+      { lastSeenUid: "1", highestModseq: "10", localUids: ["1"] },
+    );
+    expect(result.state.completed?.highestModseq).toBe("20");
+  });
+
   it("reduces 41,246 unchanged CONDSTORE placements from 275 presence commands to 42", async () => {
     const remote = Array.from({ length: 41246 }, (_, i) => i + 1);
     const result = await run(
