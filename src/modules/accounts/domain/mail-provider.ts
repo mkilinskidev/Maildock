@@ -21,6 +21,9 @@ export type ProviderImapAccount = Pick<ProviderAccount, "accountId" | "imap">;
 export type ConnectionFailureCategory =
   | "dns_or_host_unreachable"
   | "connection_timeout"
+  | "socket_timeout"
+  | "provider_disconnected"
+  | "cancelled"
   | "tls_certificate_failure"
   | "authentication_rejected"
   | "starttls_unavailable"

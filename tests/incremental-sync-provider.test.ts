@@ -332,6 +332,29 @@ describe("Phase 1E IMAP delta provider", () => {
     expect(target.state.removed).toEqual([]);
     expect(target.state.completed).toBeNull();
   });
+  it("classifies reconciliation timeout and leaves MODSEQ incomplete", async () => {
+    const fake = harness({
+      remote: [1],
+      presence: async () => {
+        throw Object.assign(new Error("secret"), { code: "ETIMEOUT" });
+      },
+    });
+    const target = sink({
+      lastSeenUid: "1",
+      highestModseq: "10",
+      localUids: ["1"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toMatchObject({ category: "socket_timeout" });
+    expect(target.state.completed).toBeNull();
+    expect(target.state.removed).toEqual([]);
+  });
   it("handles no new messages and leaves the UID checkpoint alone", async () => {
     const { state } = await run(
       { remote: [1, 2] },

@@ -1,3 +1,7 @@
+import {
+  withPerformance,
+  measureStage,
+} from "../../../shared/infrastructure/logging/performance";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -32,6 +36,15 @@ export class DeltaSyncService {
   ) {}
 
   async run(
+    accountId: string,
+    mailboxId: string,
+    reason: DeltaReason,
+  ): Promise<void> {
+    return withPerformance("delta", () =>
+      this.runImpl(accountId, mailboxId, reason),
+    );
+  }
+  private async runImpl(
     accountId: string,
     mailboxId: string,
     reason: DeltaReason,
@@ -79,8 +92,9 @@ export class DeltaSyncService {
     let lastSeen = 0n;
     let emptyBootstrap = false;
     try {
-      const account =
-        await this.accounts.getProviderImapAccountForWork(accountId);
+      const account = await measureStage("credentials", () =>
+        this.accounts.getProviderImapAccountForWork(accountId),
+      );
       if (!this.provider.synchronizeDeltaMailbox)
         throw new Error("Delta provider is unavailable.");
       await this.provider.synchronizeDeltaMailbox(

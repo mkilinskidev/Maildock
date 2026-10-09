@@ -1,3 +1,4 @@
+import { withPerformance, measureStage, beginStage } from "../../../shared/infrastructure/logging/performance";
 import { and, eq, ne } from "drizzle-orm";
 import {
   persistAttachmentMetadata,
@@ -166,7 +167,10 @@ export class MessageContentService {
     }
   }
 
-  async run(accountId: string, mailboxId: string, messageId: string) {
+  async run(accountId: string, mailboxId: string, messageId: string, attempt?: number) {
+    return withPerformance("content", () => this.runImpl(accountId, mailboxId, messageId), attempt);
+  }
+  private async runImpl(accountId: string, mailboxId: string, messageId: string) {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Content worker dependencies are unavailable.");
     try {
@@ -189,7 +193,9 @@ export class MessageContentService {
         throw new MessageContentUnavailableError(
           "Mailbox UIDVALIDITY changed. Synchronize metadata again.",
         );
+      const finishMime = beginStage("mime_discovery");
       const parts = selectDisplayParts(row.message.mimeStructure);
+      finishMime();
       if (parts.length === 0)
         throw new MessageContentUnavailableError(
           "No display text part is available.",
@@ -199,7 +205,7 @@ export class MessageContentService {
         .set({ status: "fetching", error: null, updatedAt: new Date() })
         .where(eq(messageContents.messageId, messageId));
       const account =
-        await this.accounts.getProviderImapAccountForWork(accountId);
+        await measureStage("credentials", () => this.accounts!.getProviderImapAccountForWork(accountId));
       const result = await this.provider.fetchMessageContent(account, {
         remotePath: row.mailbox.remotePath,
         uid: row.placement.uid.toString(),
@@ -207,8 +213,10 @@ export class MessageContentService {
         parts,
         maxPartBytes: this.config.maxMessageTextPartBytes,
       });
+      const finishSanitize = beginStage("sanitization");
       let html: string | null = null;
       let blocked = false;
+      try {
       if (result.html !== null) {
         try {
           const sanitized = sanitizeEmailHtml(result.html);
@@ -232,7 +240,9 @@ export class MessageContentService {
         throw new MessageContentUnavailableError(
           "Sanitized message exceeds the configured size limit.",
         );
-      await this.database
+      } catch (error) { finishSanitize(true); throw error; }
+      finishSanitize();
+      await measureStage("persistence", () => this.database
         .update(messageContents)
         .set({
           status: "ready",
@@ -245,7 +255,7 @@ export class MessageContentService {
           fetchedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(messageContents.messageId, messageId));
+        .where(eq(messageContents.messageId, messageId)));
     } catch (error) {
       const reason =
         error instanceof MessageContentUnavailableError ||
@@ -260,6 +270,7 @@ export class MessageContentService {
           set: { status: "failed", error: reason, updatedAt: new Date() },
           setWhere: ne(messageContents.status, "ready"),
         });
+      if (error instanceof MailProviderOperationError) throw error;
       throw new Error(reason);
     }
   }
