@@ -43,5 +43,6 @@ The early migrations were generated with Drizzle's automatic names. The names ar
 | 0032      | restore-safe search definitions and recovery maintenance receipt |
 | 0033      | generated setup credential digest and web-process lease          |
 | 0034      | host-authorized owner recovery and bounded MFA enrollment state  |
+| 0035      | content request generation and worker attempt fencing            |
 
 The numbered `meta/*_snapshot.json` files and `meta/_journal.json` are generated migration metadata and should remain aligned with the historical SQL files.

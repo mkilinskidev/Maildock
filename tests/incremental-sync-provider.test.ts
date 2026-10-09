@@ -36,6 +36,12 @@ type Script = {
   condstore?: boolean;
   failFetch?: string;
   failSearch?: string;
+  failStatus?: boolean;
+  throwStatus?: boolean;
+  unavailableStatus?: boolean;
+  statusOverride?: unknown;
+  mutateSelected?: boolean;
+  presence?: (query: string) => Promise<number[] | false | undefined>;
 };
 
 function harness(script: Script = {}) {
@@ -48,27 +54,40 @@ function harness(script: Script = {}) {
   };
   const remote = script.remote ?? [];
   const fetched = script.fetched ?? remote;
+  const selectedMailbox = {
+    uidValidity: script.epoch ?? 10n,
+    uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
+    exists: remote.length,
+    ...(script.selectModseq === undefined
+      ? {}
+      : { highestModseq: script.selectModseq }),
+  };
   const fake: ProtocolClientFactories = {
     createImap: () => ({
       capabilities: new Map(script.condstore ? [["CONDSTORE", true]] : []),
       enabled: new Set(),
       connect: async () => undefined,
       list: async () => [],
-      mailboxOpen: async () => ({
-        uidValidity: script.epoch ?? 10n,
-        uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
-        exists: remote.length,
-        ...(script.selectModseq === undefined
-          ? {}
-          : { highestModseq: script.selectModseq }),
-      }),
+      mailboxOpen: async () => selectedMailbox,
       mailboxClose: async () => true,
-      status: async () => ({
-        messages: remote.length,
-        unseen: 0,
-        uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
-        highestModseq: script.statusModseq ?? script.selectModseq,
-      }),
+      status: script.unavailableStatus
+        ? undefined
+        : async () => {
+            if (script.throwStatus) throw new Error("STATUS failed");
+            if (script.mutateSelected)
+              selectedMailbox.highestModseq = script.statusModseq;
+            if ("statusOverride" in script)
+              return script.statusOverride as never;
+            return script.failStatus
+              ? false
+              : {
+                  uidValidity: script.epoch ?? 10n,
+                  messages: remote.length,
+                  unseen: 0,
+                  uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
+                  highestModseq: script.statusModseq ?? script.selectModseq,
+                };
+          },
       search: async (query) => {
         calls.searches.push(query);
         if ("since" in query) return script.recent ?? [];
@@ -78,6 +97,7 @@ function harness(script: Script = {}) {
           const start = Number(uid.slice(0, -2));
           return remote.filter((item) => item >= start);
         }
+        if (script.presence) return script.presence(uid);
         const requested = uid.split(",").map(Number);
         return remote.filter((item) => requested.includes(item));
       },
@@ -176,6 +196,278 @@ async function run(
 }
 
 describe("Phase 1E IMAP delta provider", () => {
+  it.each([{ unavailableStatus: true }, { throwStatus: true }])(
+    "requires STATUS even when SELECT has valid values: %s",
+    async (script) => {
+      const fake = harness({ remote: [], ...script });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: null,
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          2,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+  it.each([undefined, 0n, -1n, "30", 0x10000000000000000n])(
+    "rejects missing/invalid CONDSTORE STATUS MODSEQ %#",
+    async (highestModseq) => {
+      const fake = harness({
+        remote: [],
+        condstore: true,
+        selectModseq: 20n,
+        statusOverride: {
+          messages: 0,
+          unseen: 0,
+          uidNext: 2,
+          uidValidity: 10n,
+          highestModseq,
+        },
+      });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: "10",
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          2,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+
+  it.each([
+    undefined,
+    null,
+    false,
+    {},
+    { messages: -1, unseen: 0, uidNext: 2, uidValidity: 10n },
+    { messages: 0, unseen: 1, uidNext: 2, uidValidity: 10n },
+    { messages: 0, unseen: 0, uidNext: 0, uidValidity: 10n },
+    { messages: 0, unseen: 0, uidNext: 2, uidValidity: 0n },
+    { messages: 0, unseen: 0, uidNext: 2, uidValidity: 11n },
+  ])(
+    "rejects invalid STATUS observation %# before removal or completion",
+    async (statusOverride) => {
+      const fake = harness({ remote: [], statusOverride });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: null,
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          2,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+  it("keeps SELECT MODSEQ when ImapFlow mutates the selected object during STATUS", async () => {
+    const result = await run(
+      {
+        remote: [1],
+        condstore: true,
+        selectModseq: 20n,
+        statusModseq: 30n,
+        mutateSelected: true,
+      },
+      { lastSeenUid: "1", highestModseq: "10", localUids: ["1"] },
+    );
+    expect(result.state.completed?.highestModseq).toBe("20");
+  });
+
+  it("reduces 41,246 unchanged CONDSTORE placements from 275 presence commands to 42", async () => {
+    const remote = Array.from({ length: 41246 }, (_, i) => i + 1);
+    const result = await run(
+      { remote, condstore: true, selectModseq: 20n },
+      {
+        lastSeenUid: "41246",
+        highestModseq: "20",
+        localUids: remote.map(String),
+      },
+      150,
+    );
+    expect(result.calls.searches).toHaveLength(43); // new UID detection + 42 presence
+    expect(result.calls.fetches).toHaveLength(1); // changedSince
+    expect(result.state.removed).toEqual([]);
+    expect(result.state.messages.size).toBe(0);
+    expect(result.state.completed?.highestModseq).toBe("20");
+  });
+  it("does not delete earlier missing UIDs when a later presence command fails", async () => {
+    const localUids = Array.from({ length: 1001 }, (_, i) => String(i + 1));
+    const fake = harness({
+      remote: [],
+      condstore: true,
+      selectModseq: 20n,
+      failSearch: "1001",
+    });
+    const target = sink({
+      lastSeenUid: "1001",
+      highestModseq: "10",
+      localUids,
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+    expect(target.state.checkpoint).toBe("1001");
+  });
+
+  it.each([false as const, undefined, [0], [1, 1], [999]])(
+    "fails closed for interrupted/malformed presence response %j",
+    async (response) => {
+      const fake = harness({
+        remote: [1],
+        condstore: true,
+        selectModseq: 20n,
+        presence: async () => response,
+      });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: "10",
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          150,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+  it("preserves arrival boundaries and detects an expunge during presence reconciliation", async () => {
+    const remote = [1, 2];
+    const result = await run(
+      {
+        remote,
+        presence: async () => {
+          remote.push(3);
+          remote.splice(0, 1);
+          return [2, 3].filter((uid) => uid <= 2);
+        },
+      },
+      { lastSeenUid: "2", highestModseq: null, localUids: ["1", "2"] },
+    );
+    expect(result.state.removed).toEqual(["1"]);
+    expect(result.state.messages.size).toBe(0);
+    expect(result.state.checkpoint).toBe("2");
+    const next = await run(
+      { remote: [2, 3] },
+      { lastSeenUid: "2", highestModseq: null, localUids: ["2"] },
+    );
+    expect([...next.state.messages.keys()]).toEqual(["3"]);
+  });
+  it("rejects a successful partial SEARCH when FETCH still finds the missing placement", async () => {
+    const fake = harness({ remote: [1, 2], presence: async () => [1] });
+    const target = sink({
+      lastSeenUid: "2",
+      highestModseq: "10",
+      localUids: ["1", "2"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+  });
+  it("does not delete confirmed absences when STATUS fails", async () => {
+    const fake = harness({ remote: [], failStatus: true });
+    const target = sink({
+      lastSeenUid: "1",
+      highestModseq: "10",
+      localUids: ["1"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+  });
+  it("does not delete when the independent absence FETCH fails", async () => {
+    const fake = harness({
+      remote: [],
+      condstore: true,
+      selectModseq: 20n,
+      failFetch: "1",
+    });
+    const target = sink({
+      lastSeenUid: "1",
+      highestModseq: "10",
+      localUids: ["1"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+  });
+  it("classifies reconciliation timeout and leaves MODSEQ incomplete", async () => {
+    const fake = harness({
+      remote: [1],
+      presence: async () => {
+        throw Object.assign(new Error("secret"), { code: "ETIMEOUT" });
+      },
+    });
+    const target = sink({
+      lastSeenUid: "1",
+      highestModseq: "10",
+      localUids: ["1"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toMatchObject({ category: "socket_timeout" });
+    expect(target.state.completed).toBeNull();
+    expect(target.state.removed).toEqual([]);
+  });
   it("handles no new messages and leaves the UID checkpoint alone", async () => {
     const { state } = await run(
       { remote: [1, 2] },

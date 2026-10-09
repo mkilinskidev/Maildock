@@ -1,3 +1,8 @@
+import {
+  withPerformance,
+  measureStage,
+  beginStage,
+} from "../../../shared/infrastructure/logging/performance";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, gt, lte } from "drizzle-orm";
 import { z } from "zod";
@@ -370,65 +375,80 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
     return id;
   }
   async accessToken(accountId: string): Promise<string> {
+    return withPerformance("google_credentials", () =>
+      this.accessTokenImpl(accountId),
+    );
+  }
+  private async accessTokenImpl(accountId: string): Promise<string> {
     const credentials = await this.credentials();
-    const result = await this.database.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(mailAccounts)
-        .where(
-          and(
-            eq(mailAccounts.id, accountId),
-            eq(mailAccounts.authMethod, "oauth2"),
-            eq(mailAccounts.oauthProviderId, this.id),
-          ),
-        )
-        .for("update");
-      if (!row) throw new GoogleReconnectRequired();
-      try {
-        if (!row.oauthCache || row.oauthStatus !== "connected")
-          throw new GoogleReconnectRequired();
-        const stored = this.readAuthorization(accountId, row.oauthCache);
-        // No persisted access-token cache: every acquisition returns a freshly
-        // issued token and restart/expiry cannot leave a stale token behind.
-        const tokens = await this.requestToken({
-          client_id: credentials.clientId,
-          client_secret: credentials.clientSecret,
-          grant_type: "refresh_token",
-          refresh_token: stored.refreshToken,
-        });
-        if (tokens.refresh_token)
-          await tx
-            .update(mailAccounts)
-            .set({
-              oauthCache: this.encryptAuthorization(
-                accountId,
-                stored.subject,
-                tokens.refresh_token,
-              ),
-              updatedAt: new Date(),
-            })
-            .where(eq(mailAccounts.id, accountId));
-        return tokens.access_token;
-      } catch (error) {
-        if (!(error instanceof GoogleReconnectRequired)) throw error;
-        // Commit revocation while holding the same row lock as refresh and
-        // reconnect, so a stale failure cannot revoke a newly replaced grant.
-        await tx
-          .update(mailAccounts)
-          .set({
-            oauthStatus: "reconnect_required",
-            updatedAt: new Date(),
-          })
+    const finishLock = beginStage("oauth_lock");
+    let lockMeasured = false;
+    const result = await this.database
+      .transaction(async (tx) => {
+        const [row] = await tx
+          .select()
+          .from(mailAccounts)
           .where(
             and(
               eq(mailAccounts.id, accountId),
               eq(mailAccounts.authMethod, "oauth2"),
               eq(mailAccounts.oauthProviderId, this.id),
             ),
+          )
+          .for("update");
+        finishLock();
+        lockMeasured = true;
+        if (!row) throw new GoogleReconnectRequired();
+        try {
+          if (!row.oauthCache || row.oauthStatus !== "connected")
+            throw new GoogleReconnectRequired();
+          const stored = this.readAuthorization(accountId, row.oauthCache);
+          // No persisted access-token cache: every acquisition returns a freshly
+          // issued token and restart/expiry cannot leave a stale token behind.
+          const tokens = await measureStage("oauth_http", () =>
+            this.requestToken({
+              client_id: credentials.clientId,
+              client_secret: credentials.clientSecret,
+              grant_type: "refresh_token",
+              refresh_token: stored.refreshToken,
+            }),
           );
-        return error;
-      }
-    });
+          if (tokens.refresh_token)
+            await tx
+              .update(mailAccounts)
+              .set({
+                oauthCache: this.encryptAuthorization(
+                  accountId,
+                  stored.subject,
+                  tokens.refresh_token,
+                ),
+                updatedAt: new Date(),
+              })
+              .where(eq(mailAccounts.id, accountId));
+          return tokens.access_token;
+        } catch (error) {
+          if (!(error instanceof GoogleReconnectRequired)) throw error;
+          // Commit revocation while holding the same row lock as refresh and
+          // reconnect, so a stale failure cannot revoke a newly replaced grant.
+          await tx
+            .update(mailAccounts)
+            .set({
+              oauthStatus: "reconnect_required",
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(mailAccounts.id, accountId),
+                eq(mailAccounts.authMethod, "oauth2"),
+                eq(mailAccounts.oauthProviderId, this.id),
+              ),
+            );
+          return error;
+        }
+      })
+      .finally(() => {
+        if (!lockMeasured) finishLock(true);
+      });
     if (result instanceof GoogleReconnectRequired) throw result;
     return result;
   }

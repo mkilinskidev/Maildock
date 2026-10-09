@@ -65,6 +65,29 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe("received email reader", () => {
+  it("distinguishes automatic retry from terminal failure", async () => {
+    await mount(
+      <Reader
+        value={{
+          ...detail,
+          content: { ...detail.content, status: "pending", retrying: true },
+        }}
+      />,
+    );
+    expect(host.textContent).toContain("Automatic retry is scheduled");
+    expect(host.textContent).not.toContain("Retry download");
+    await act(async () =>
+      root!.render(
+        <Reader
+          value={{
+            ...detail,
+            content: { ...detail.content, status: "failed", retrying: false },
+          }}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("Retry download");
+  });
   it("gives both inline status notices the same reader spacing class", async () => {
     vi.stubGlobal(
       "fetch",

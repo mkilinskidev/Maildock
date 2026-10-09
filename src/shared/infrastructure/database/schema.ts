@@ -1051,6 +1051,8 @@ export const messageContents = pgTable(
       .primaryKey()
       .references(() => messages.id, { onDelete: "cascade" }),
     status: text("status").default("not_fetched").notNull(),
+    requestGeneration: uuid("request_generation").defaultRandom().notNull(),
+    fetchAttempt: uuid("fetch_attempt"),
     plainText: text("plain_text"),
     searchText: text("search_text"),
     sanitizedHtml: text("sanitized_html"),

@@ -1,4 +1,13 @@
 import {
+  withPerformance,
+  instrumentImap,
+  measureStage,
+  beginStage,
+  reconciliationMetrics,
+  recordPerformanceError,
+} from "../../../shared/infrastructure/logging/performance";
+import { presenceBatches, missingUids } from "./uid-presence";
+import {
   ImapFlow,
   type FetchMessageObject,
   type ImapFlowOptions,
@@ -86,6 +95,7 @@ type ImapClient = {
       unseen: true;
       uidNext: true;
       highestModseq?: boolean;
+      uidValidity: true;
     },
   ): Promise<
     | {
@@ -93,6 +103,7 @@ type ImapClient = {
         unseen?: number;
         uidNext?: number;
         highestModseq?: bigint;
+        uidValidity?: bigint;
       }
     | false
   >;
@@ -118,7 +129,7 @@ type ImapClient = {
     range: string,
     query: Readonly<{
       uid: true;
-      flags: true;
+      flags?: true;
       envelope?: true;
       headers?: string[];
       bodyStructure?: true;
@@ -235,10 +246,12 @@ export function smtpOptions(
   };
 }
 
-function sanitizeError(
+export function sanitizeError(
   error: unknown,
   protocol: "IMAP" | "SMTP",
 ): Exclude<ProtocolConnectionResult, { success: true }> {
+  if (error instanceof MailProviderOperationError)
+    return { success: false, category: error.category, message: error.message };
   const candidate = error as {
     code?: unknown;
     responseCode?: unknown;
@@ -252,7 +265,43 @@ function sanitizeError(
       : "";
   let category: ConnectionFailureCategory = "internal_error";
 
-  if (code === "EAUTH" || /auth|credential|login|password/.test(message)) {
+  if (
+    [
+      "CONNECT_TIMEOUT",
+      "GREETING_TIMEOUT",
+      "UPGRADE_TIMEOUT",
+      "ETIMEDOUT",
+    ].includes(code)
+  ) {
+    category = "connection_timeout";
+  } else if (code === "ETIMEOUT") {
+    category = "socket_timeout";
+  } else if (
+    [
+      "ECONNRESET",
+      "EPIPE",
+      "ENOTCONN",
+      "NOCONNECTION",
+      "CONNECTIONCLOSED",
+      "ECONNECTIONCLOSED",
+    ].includes(code)
+  ) {
+    category = "provider_disconnected";
+  } else if (["ABORT_ERR", "ECANCELLED"].includes(code)) {
+    category = "cancelled";
+  } else if (
+    [
+      "CERT_HAS_EXPIRED",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    ].includes(code)
+  ) {
+    category = "tls_certificate_failure";
+  } else if (
+    code === "EAUTH" ||
+    /auth|credential|login|password/.test(message)
+  ) {
     category = "authentication_rejected";
   } else if (/starttls/.test(message)) {
     category = "starttls_unavailable";
@@ -285,6 +334,9 @@ function sanitizeError(
   const descriptions: Record<ConnectionFailureCategory, string> = {
     dns_or_host_unreachable: "DNS lookup failed or the host is unreachable.",
     connection_timeout: "The connection timed out.",
+    socket_timeout: "The connection became inactive and timed out.",
+    provider_disconnected: "The mail server disconnected.",
+    cancelled: "The mail operation was cancelled.",
     tls_certificate_failure: "TLS certificate validation failed.",
     authentication_rejected: `${protocol} authentication was rejected.`,
     starttls_unavailable: `${protocol} did not provide the required STARTTLS upgrade.`,
@@ -1053,7 +1105,32 @@ export class ImapSmtpMailProvider implements MailProvider {
     batchSize: number,
     sink: DeltaMailboxSyncSink,
   ): Promise<void> {
-    const client = this.createImap(imapOptions(account.imap));
+    return withPerformance("delta", () =>
+      this.synchronizeDeltaMailboxImpl(account, remotePath, batchSize, sink),
+    );
+  }
+
+  private async synchronizeDeltaMailboxImpl(
+    account: ProviderImapAccount,
+    remotePath: string,
+    batchSize: number,
+    sink: DeltaMailboxSyncSink,
+  ): Promise<void> {
+    const originalClient = this.createImap(imapOptions(account.imap));
+    const client = instrumentImap(originalClient);
+    const originalSink = sink;
+    sink = new Proxy(originalSink, {
+      get(target, key) {
+        const callback = Reflect.get(target, key) as (
+          ...args: unknown[]
+        ) => Promise<unknown>;
+        if (key === "selected") return callback.bind(target);
+        return (...args: unknown[]) =>
+          measureStage("persistence", () =>
+            Reflect.apply(callback, target, args),
+          );
+      },
+    });
     let connected = false;
     let selected = false;
     try {
@@ -1061,7 +1138,13 @@ export class ImapSmtpMailProvider implements MailProvider {
       connected = true;
       const mailbox = await client.mailboxOpen(remotePath, { readOnly: true });
       selected = true;
-      const snapshot = await sink.selected(mailbox.uidValidity.toString());
+      // ImapFlow mutates its selected mailbox object during STATUS/events.
+      const selectedModseq = mailbox.highestModseq;
+      const selectedEpoch = mailbox.uidValidity;
+      const snapshot = await measureStage("persistence", () =>
+        sink.selected(mailbox.uidValidity.toString()),
+      );
+      reconciliationMetrics(snapshot.localUids.length, 0, false);
       let lastSeen = BigInt(snapshot.lastSeenUid);
       if (snapshot.emptyBootstrapCutoff) {
         // Preserve the recent-window boundary when Phase 1C found no placements.
@@ -1211,45 +1294,98 @@ export class ImapSmtpMailProvider implements MailProvider {
           if (changes.length) await sink.flagsBatch(changes);
         }
       }
-      // SEARCH over known local UIDs is complete evidence for their absence. It never imports history.
-      for (
-        let offset = 0;
-        offset < snapshot.localUids.length;
-        offset += batchSize
-      ) {
-        const group = snapshot.localUids.slice(offset, offset + batchSize);
+      // No deletions until every bounded SEARCH and STATUS has succeeded.
+      const missing: string[] = [];
+      let returnedUids = 0;
+      for (const group of presenceBatches(snapshot.localUids)) {
         const found = await uidSearch.call(
           client,
           { uid: group.join(",") },
           { uid: true },
         );
-        if (found === false || found === undefined)
-          throw new Error("Known UID reconciliation failed.");
-        const present = new Set(found);
-        const missing = group.filter((uid) => !present.has(Number(uid)));
-        if (missing.length) await sink.removed(missing);
+        missing.push(...missingUids(group, found));
+        returnedUids += (found as number[]).length;
+        reconciliationMetrics(
+          snapshot.localUids.length,
+          returnedUids,
+          condstore,
+        );
       }
-      const status = await client.status?.(remotePath, {
+      reconciliationMetrics(snapshot.localUids.length, returnedUids, condstore);
+      // ImapFlow can discard malformed SEARCH entries. Independently confirm
+      // absence before deletion; contradictory FETCH evidence fails closed.
+      for (const group of presenceBatches(missing)) {
+        const iterator = client.fetch(
+          group.join(","),
+          { uid: true },
+          { uid: true },
+        );
+        try {
+          for (;;) {
+            const next = await iterator.next();
+            if (next.done) {
+              if (next.value === false)
+                throw new Error("UID absence confirmation failed.");
+              break;
+            }
+            throw new Error("UID presence listing was incomplete.");
+          }
+        } finally {
+          await iterator.return(undefined);
+        }
+      }
+      if (typeof client.status !== "function")
+        throw new Error("Mailbox STATUS is unavailable.");
+      const status = await client.status(remotePath, {
         messages: true,
         unseen: true,
         uidNext: true,
+        uidValidity: true,
         ...(condstore ? { highestModseq: true } : {}),
       });
-      if (status === false)
+      if (
+        !status ||
+        !Number.isSafeInteger(status.messages) ||
+        status.messages! < 0 ||
+        status.messages! > 0xffffffff ||
+        !Number.isSafeInteger(status.unseen) ||
+        status.unseen! < 0 ||
+        status.unseen! > status.messages! ||
+        !Number.isSafeInteger(status.uidNext) ||
+        status.uidNext! < 1 ||
+        status.uidNext! > 0xffffffff ||
+        typeof status.uidValidity !== "bigint" ||
+        status.uidValidity < 1n ||
+        status.uidValidity > 0xffffffffn ||
+        (condstore &&
+          (typeof status.highestModseq !== "bigint" ||
+            status.highestModseq < 1n ||
+            status.highestModseq > 0xffffffffffffffffn))
+      )
         throw new Error("Mailbox status observation failed.");
-      const observed = status ?? {};
+      if (status.uidValidity !== selectedEpoch)
+        throw new MailboxEpochChangedError();
+      assertImapHealthy(originalClient);
+      for (let offset = 0; offset < missing.length; offset += batchSize)
+        await sink.removed(missing.slice(offset, offset + batchSize));
+      const observed = status;
+      assertImapHealthy(originalClient);
       await sink.completed({
-        uidNext: (observed.uidNext ?? mailbox.uidNext ?? 1).toString(),
-        messageCount: (observed.messages ?? mailbox.exists ?? 0).toString(),
+        uidNext: observed.uidNext!.toString(),
+        messageCount: observed.messages!.toString(),
         unseenCount: observed.unseen?.toString() ?? null,
         // SELECT's MODSEQ predates all queries; a later STATUS could skip a concurrent flag change.
-        highestModseq: condstore
-          ? (mailbox.highestModseq?.toString() ?? null)
-          : null,
+        highestModseq: condstore ? (selectedModseq?.toString() ?? null) : null,
         condstore,
       });
-      assertImapHealthy(client);
+      assertImapHealthy(originalClient);
     } catch (error) {
+      try {
+        assertImapHealthy(originalClient);
+      } catch (original) {
+        error = original;
+      }
+      recordPerformanceError(error);
       if (
         error instanceof MailProviderOperationError ||
         error instanceof MailboxEpochChangedError
@@ -1370,7 +1506,17 @@ export class ImapSmtpMailProvider implements MailProvider {
     account: ProviderImapAccount,
     request: DisplayContentRequest,
   ): Promise<DisplayContentResult> {
-    const client = this.createImap(imapOptions(account.imap));
+    return withPerformance("content", () =>
+      this.fetchMessageContentImpl(account, request),
+    );
+  }
+
+  private async fetchMessageContentImpl(
+    account: ProviderImapAccount,
+    request: DisplayContentRequest,
+  ): Promise<DisplayContentResult> {
+    const originalClient = this.createImap(imapOptions(account.imap));
+    const client = instrumentImap(originalClient);
     let connected = false;
     let selected = false;
     try {
@@ -1389,86 +1535,100 @@ export class ImapSmtpMailProvider implements MailProvider {
         plainText: null,
         html: null,
       };
-      for (const selectedPart of request.parts) {
-        if (!/^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(selectedPart.part))
-          throw new Error("Invalid MIME part.");
-        const downloaded = await client.download(uid, selectedPart.part, {
-          uid: true,
-          maxBytes: request.maxPartBytes + 1,
-        });
-        if (!downloaded.content)
-          throw new Error("Selected MIME part is unavailable.");
-        const chunks: Buffer[] = [];
-        let length = 0;
-        try {
-          for await (const chunk of downloaded.content) {
-            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            length += bytes.length;
-            if (length > request.maxPartBytes)
-              throw new MailProviderOperationError({
-                success: false,
-                category: "verification_failed",
-                message: "Message text part exceeds the configured size limit.",
-              });
-            chunks.push(bytes);
+      const finishContent = beginStage("content_fetch");
+      try {
+        for (const selectedPart of request.parts) {
+          if (!/^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(selectedPart.part))
+            throw new Error("Invalid MIME part.");
+          const downloaded = await client.download(uid, selectedPart.part, {
+            uid: true,
+            maxBytes: request.maxPartBytes + 1,
+          });
+          if (!downloaded.content)
+            throw new Error("Selected MIME part is unavailable.");
+          const chunks: Buffer[] = [];
+          let length = 0;
+          try {
+            for await (const chunk of downloaded.content) {
+              const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+              length += bytes.length;
+              if (length > request.maxPartBytes)
+                throw new MailProviderOperationError({
+                  success: false,
+                  category: "verification_failed",
+                  message:
+                    "Message text part exceeds the configured size limit.",
+                });
+              chunks.push(bytes);
+            }
+          } catch (error) {
+            downloaded.content.destroy();
+            await finished(downloaded.content).catch(() => undefined);
+            throw error;
           }
-        } catch (error) {
-          downloaded.content.destroy();
-          await finished(downloaded.content).catch(() => undefined);
-          throw error;
+          if (
+            downloaded.meta.contentType &&
+            downloaded.meta.contentType !== selectedPart.type
+          )
+            throw new Error("MIME part type changed.");
+          if (
+            downloaded.meta.disposition === "attachment" ||
+            downloaded.meta.filename
+          )
+            throw new Error("MIME part is an attachment.");
+          // ImapFlow 2.0.6 download() decodes transfer encoding (or accepts
+          // server-decoded BINARY) and converts recognized text charsets to UTF-8.
+          // On successful conversion it changes meta.charset to "utf-8"; an
+          // unsupported charset remains unchanged with unconverted bytes.
+          const charset = downloaded.meta.charset
+            ?.toLowerCase()
+            .replace(/[^a-z0-9]/g, "");
+          if (charset && !["utf8", "ascii", "usascii"].includes(charset))
+            throw new MailProviderOperationError({
+              success: false,
+              category: "verification_failed",
+              message: "Unsupported message charset.",
+            });
+          const bytes = Buffer.concat(chunks);
+          if (
+            (charset === "ascii" || charset === "usascii") &&
+            bytes.some((byte) => byte > 0x7f)
+          )
+            throw new MailProviderOperationError({
+              success: false,
+              category: "verification_failed",
+              message: "Message text does not match its declared charset.",
+            });
+          let value: string;
+          try {
+            // Missing charset is accepted only when the resulting bytes really
+            // are UTF-8. Fatal decoding avoids silent replacement characters.
+            value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          } catch {
+            throw new MailProviderOperationError({
+              success: false,
+              category: "verification_failed",
+              message:
+                "Message text is not valid UTF-8 after charset conversion.",
+            });
+          }
+          if (selectedPart.type === "text/plain") result.plainText = value;
+          else result.html = value;
         }
-        if (
-          downloaded.meta.contentType &&
-          downloaded.meta.contentType !== selectedPart.type
-        )
-          throw new Error("MIME part type changed.");
-        if (
-          downloaded.meta.disposition === "attachment" ||
-          downloaded.meta.filename
-        )
-          throw new Error("MIME part is an attachment.");
-        // ImapFlow 2.0.6 download() decodes transfer encoding (or accepts
-        // server-decoded BINARY) and converts recognized text charsets to UTF-8.
-        // On successful conversion it changes meta.charset to "utf-8"; an
-        // unsupported charset remains unchanged with unconverted bytes.
-        const charset = downloaded.meta.charset
-          ?.toLowerCase()
-          .replace(/[^a-z0-9]/g, "");
-        if (charset && !["utf8", "ascii", "usascii"].includes(charset))
-          throw new MailProviderOperationError({
-            success: false,
-            category: "verification_failed",
-            message: "Unsupported message charset.",
-          });
-        const bytes = Buffer.concat(chunks);
-        if (
-          (charset === "ascii" || charset === "usascii") &&
-          bytes.some((byte) => byte > 0x7f)
-        )
-          throw new MailProviderOperationError({
-            success: false,
-            category: "verification_failed",
-            message: "Message text does not match its declared charset.",
-          });
-        let value: string;
-        try {
-          // Missing charset is accepted only when the resulting bytes really
-          // are UTF-8. Fatal decoding avoids silent replacement characters.
-          value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        } catch {
-          throw new MailProviderOperationError({
-            success: false,
-            category: "verification_failed",
-            message:
-              "Message text is not valid UTF-8 after charset conversion.",
-          });
-        }
-        if (selectedPart.type === "text/plain") result.plainText = value;
-        else result.html = value;
+      } catch (error) {
+        finishContent(true);
+        throw error;
       }
-      assertImapHealthy(client);
+      finishContent();
+      assertImapHealthy(originalClient);
       return result;
     } catch (error) {
+      try {
+        assertImapHealthy(originalClient);
+      } catch (original) {
+        error = original;
+      }
+      recordPerformanceError(error);
       if (error instanceof MailProviderOperationError) throw error;
       // Avoid leaking server text, paths, or message data through job failures.
       throw new MailProviderOperationError(sanitizeError(error, "IMAP"));

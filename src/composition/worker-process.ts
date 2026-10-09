@@ -4,7 +4,11 @@ import { registerAttachmentWorker } from "../modules/mail/infrastructure/attachm
 import { createWorkerComposition } from "./worker.js";
 import { registerMailboxDiscoveryWorker } from "../modules/mail/infrastructure/mailbox-discovery-jobs.js";
 import { registerRecentSyncWorker } from "../modules/mail/infrastructure/recent-sync-jobs.js";
-import { registerContentWorker } from "../modules/mail/infrastructure/content-jobs.js";
+import {
+  registerContentWorker,
+  enqueueContent,
+  contentJobState,
+} from "../modules/mail/infrastructure/content-jobs.js";
 import { registerDeltaWorker } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { registerBackfillWorker } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
 import { registerMessageCommandWorker } from "../modules/mail/infrastructure/message-command-jobs.js";
@@ -42,7 +46,25 @@ async function main() {
     );
   }
 
+  let contentRecoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let contentRecoveryWork: Promise<void> | undefined;
+  function recoverContent() {
+    if (contentRecoveryWork) return;
+    contentRecoveryWork = worker.content
+      .recoverPending({
+        schedule: (accountId, mailboxId, messageId) =>
+          enqueueContent(worker.jobs.boss, accountId, mailboxId, messageId),
+        state: (mailboxId, messageId, pendingSince) =>
+          contentJobState(worker.jobs.boss, mailboxId, messageId, pendingSince),
+      })
+      .catch((error) => logFailure(worker.logger, error, "jobs", "runtime"))
+      .finally(() => {
+        contentRecoveryWork = undefined;
+      });
+  }
   async function stopBusinessWorkers() {
+    if (contentRecoveryTimer) clearInterval(contentRecoveryTimer);
+    await contentRecoveryWork;
     worker.attachmentPoller.stop();
     worker.poller.stop();
     worker.backfillPoller.stop();
@@ -108,6 +130,8 @@ async function main() {
       worker.withMailboxLock,
     );
     await registerContentWorker(worker.jobs.boss, worker.content);
+    recoverContent();
+    contentRecoveryTimer = setInterval(recoverContent, 60_000);
     await registerMessageCommandWorker(
       worker.jobs.boss,
       worker.commands,

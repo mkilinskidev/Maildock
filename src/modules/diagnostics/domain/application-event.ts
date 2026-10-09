@@ -64,6 +64,9 @@ export const diagnosticDetailsSchema = z
       .enum([
         "dns_or_host_unreachable",
         "connection_timeout",
+        "socket_timeout",
+        "provider_disconnected",
+        "cancelled",
         "tls_certificate_failure",
         "authentication_rejected",
         "starttls_unavailable",

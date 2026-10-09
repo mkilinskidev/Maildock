@@ -19,7 +19,15 @@ vi.mock("next/link", () => ({
 vi.mock("@/components/theme-control", () => ({ ThemeControl: () => null }));
 vi.mock("@/components/logout-button", () => ({ LogoutButton: () => null }));
 vi.mock("@/components/message-reader", () => ({
-  MessageReader: () => <div data-reader />,
+  MessageReader: ({
+    detail,
+  }: {
+    detail?: { content?: { status: string; plainText?: string } };
+  }) => (
+    <div data-reader>
+      {detail?.content?.status}:{detail?.content?.plainText}
+    </div>
+  ),
 }));
 vi.mock("@/components/global-search-results", () => ({
   GlobalSearchResults: ({
@@ -704,4 +712,38 @@ it("uses the same selection-mode presentation for conversation members", async (
   expect(list.classList.contains("selection-mode")).toBe(true);
   await selectAll();
   expect(list.classList.contains("selection-mode")).toBe(false);
+});
+
+it("keeps polling a delayed automatic content retry and displays later ready content", async () => {
+  await mount({ auto: { mode: "manually", seconds: 0 } });
+  const original = fetcher.getMockImplementation()! as (
+    input: string,
+    init?: RequestInit,
+  ) => Promise<Response>;
+  let ready = false;
+  fetcher.mockImplementation(async (input: string, init?: RequestInit) => {
+    if (/\/messages\/first$/.test(String(input)))
+      return Response.json({
+        ...row("first"),
+        to: [],
+        cc: [],
+        attachments: [],
+        content: ready
+          ? { status: "ready", plainText: "Recovered body" }
+          : { status: "pending", retrying: true, error: null },
+      });
+    return original(input, init);
+  });
+  await open();
+  expect(host.querySelector("[data-reader]")?.textContent).toContain("pending");
+  ready = true;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  expect(host.querySelector("[data-reader]")?.textContent).toContain(
+    "Recovered body",
+  );
+  expect(
+    fetcher.mock.calls.filter(([url]) => String(url).endsWith("/content")),
+  ).toHaveLength(0);
 });

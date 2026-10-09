@@ -53,20 +53,34 @@ export function guardImapClient<T extends EventClient>(client: T): T {
                 check();
                 const next = await iterator.next();
                 check();
-                if (next.done) return;
+                if (next.done) return next.value;
                 yield next.value;
               }
+            } catch (error) {
+              check();
+              throw error;
             } finally {
-              await iterator.return?.();
+              try {
+                await iterator.return?.();
+              } catch (error) {
+                check();
+                throw error;
+              }
             }
           })();
         }
         if (result instanceof Promise) {
-          return result.then((answer: unknown) => {
-            // A positive remote acknowledgement must survive later teardown.
-            if (!acknowledgedMutations.has(name)) check();
-            return answer;
-          });
+          return result.then(
+            (answer: unknown) => {
+              // A positive remote acknowledgement must survive later teardown.
+              if (!acknowledgedMutations.has(name)) check();
+              return answer;
+            },
+            (error) => {
+              check();
+              throw error;
+            },
+          );
         }
         check();
         return result;

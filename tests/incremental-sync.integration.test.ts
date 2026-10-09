@@ -979,6 +979,133 @@ describe("Phase 1E persisted delta state", () => {
     expect((await mailbox()).deltaSyncStatus).toBe("failed");
   });
 
+  it("retries confirmed deletion batches after a later batch rolls back", async () => {
+    await seed(1);
+    await seed(2);
+    await seed(3);
+    const id = (await mailbox()).id;
+    await db
+      .update(mailboxes)
+      .set({ deltaUidValidity: 10n, deltaHighestModseq: 10n })
+      .where(eq(mailboxes.id, id));
+    runProvider = async (sink) => {
+      await sink.selected("10");
+      await sink.removed(["1"]);
+      await sink.removed(["2", "invalid"]);
+    };
+    await expect(sync()).rejects.toThrow();
+    expect((await placements()).map((row) => row.uid)).toEqual([2n, 3n]);
+    expect((await mailbox()).deltaHighestModseq).toBe(10n);
+    runProvider = async (sink) => {
+      const snapshot = await sink.selected("10");
+      expect(snapshot.localUids).toEqual(["2", "3", "4"]);
+      await sink.removed(["1", "2"]);
+      await sink.completed({
+        uidNext: "5",
+        messageCount: "2",
+        unseenCount: "0",
+        highestModseq: "20",
+        condstore: true,
+      });
+    };
+    // A concurrently arrived UID is outside the old snapshot and must survive.
+    await seed(4);
+    await sync();
+    expect((await placements()).map((row) => row.uid)).toEqual([3n, 4n]);
+    expect((await mailbox()).deltaHighestModseq).toBe(20n);
+  });
+
+  it("retains the prior checkpoint on completion failure after confirmed removals", async () => {
+    await seed(1);
+    await seed(2);
+    const id = (await mailbox()).id;
+    await db
+      .update(mailboxes)
+      .set({ deltaUidValidity: 10n, deltaHighestModseq: 10n })
+      .where(eq(mailboxes.id, id));
+    await db.execute(
+      sql`CREATE FUNCTION reject_delta_completion() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN IF NEW.delta_sync_status = 'success' THEN RAISE EXCEPTION 'checkpoint failure'; END IF; RETURN NEW; END $body$`,
+    );
+    await db.execute(
+      sql`CREATE TRIGGER reject_delta_completion BEFORE UPDATE ON mailboxes FOR EACH ROW EXECUTE FUNCTION reject_delta_completion()`,
+    );
+    runProvider = async (sink) => {
+      await sink.selected("10");
+      await sink.removed(["1"]);
+      await sink.completed({
+        uidNext: "3",
+        messageCount: "1",
+        unseenCount: "0",
+        highestModseq: "20",
+        condstore: true,
+      });
+    };
+    try {
+      await expect(sync()).rejects.toThrow();
+      expect((await placements()).map((row) => row.uid)).toEqual([2n]);
+      expect((await mailbox()).deltaHighestModseq).toBe(10n);
+      expect((await mailbox()).deltaSyncStatus).toBe("failed");
+    } finally {
+      await db.execute(sql`DROP TRIGGER reject_delta_completion ON mailboxes`);
+      await db.execute(sql`DROP FUNCTION reject_delta_completion()`);
+    }
+    await sync();
+    expect((await mailbox()).deltaHighestModseq).toBe(20n);
+    expect((await placements()).map((row) => row.uid)).toEqual([2n]);
+  });
+
+  it("blocks old-epoch removals and completion after a concurrent epoch reset", async () => {
+    await seed(1);
+    await seed(2);
+    const id = (await mailbox()).id;
+    runProvider = async (sink) => {
+      await sink.selected("10");
+      await sink.removed(["1"]);
+      await db
+        .update(mailboxes)
+        .set({
+          recentSyncUidValidity: 11n,
+          deltaUidValidity: 11n,
+          deltaHighestModseq: 7n,
+        })
+        .where(eq(mailboxes.id, id));
+      await db
+        .update(mailboxMessages)
+        .set({ uidValidity: 11n })
+        .where(eq(mailboxMessages.mailboxId, id));
+      await sink.removed(["2"]);
+    };
+    await sync();
+    expect(
+      (await placements()).map((row) => [row.uid, row.uidValidity]),
+    ).toEqual([[2n, 11n]]);
+    expect((await mailbox()).deltaHighestModseq).toBe(7n);
+    await db
+      .update(mailboxes)
+      .set({ recentSyncStatus: "success" })
+      .where(eq(mailboxes.id, id));
+    runProvider = async (sink) => {
+      await sink.selected("11");
+      await db
+        .update(mailboxes)
+        .set({
+          recentSyncUidValidity: 12n,
+          deltaUidValidity: 12n,
+          deltaHighestModseq: 8n,
+        })
+        .where(eq(mailboxes.id, id));
+      await sink.completed({
+        uidNext: "3",
+        messageCount: "1",
+        unseenCount: "0",
+        highestModseq: "99",
+        condstore: true,
+      });
+    };
+    await sync();
+    expect((await mailbox()).deltaHighestModseq).toBe(8n);
+  });
+
   it("removes only confirmed known placements", async () => {
     await seed(1);
     await seed(2);
