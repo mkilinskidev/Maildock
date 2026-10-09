@@ -329,6 +329,7 @@ describe("durable outgoing mail", () => {
       hasAttachments: true,
     });
     await database.db.insert(mailboxMessages).values({
+      accountId,
       id: randomUUID(),
       mailboxId: mailbox.id,
       messageId,

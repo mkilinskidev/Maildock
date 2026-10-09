@@ -1,3 +1,4 @@
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
 import { randomUUID } from "node:crypto";
 
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
@@ -192,8 +193,12 @@ export class MailboxService {
     accountId: string,
     remoteMailboxes: readonly RemoteMailbox[],
     observedAt = new Date(),
+    revision?: string,
   ): Promise<void> {
     await this.database.transaction(async (tx) => {
+      // Offline metadata reconciliation remains available; remote discovery always supplies its revision.
+      if (revision !== undefined)
+        await assertImapPublication(tx, accountId, revision);
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`mailbox-discovery:${accountId}`}, 0))`,
       );

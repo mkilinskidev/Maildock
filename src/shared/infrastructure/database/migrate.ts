@@ -1,3 +1,4 @@
+import { assertNativeReleaseCompatible } from "./native-release-guard.js";
 import { logFailure } from "../logging/diagnostics";
 import { createLogger } from "../logging/logger";
 import { AesGcmSecretEncryption } from "../crypto/aes-gcm-secret-encryption";
@@ -15,6 +16,7 @@ async function main() {
 
   try {
     await validateDatabaseAuthority(database.client);
+    await assertNativeReleaseCompatible(database.client);
     await migrate(database.db, { migrationsFolder: "db/migrations" });
     await createOAuthComposition(
       database.db,

@@ -1,3 +1,4 @@
+import { MailTransportRouter } from "../domain/receive-transport";
 import { createOAuthComposition } from "./oauth-composition";
 import { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
@@ -25,6 +26,7 @@ import { PgBossMessageCommandScheduler } from "@/modules/mail/infrastructure/mes
 import { OutgoingMessageService } from "@/modules/mail/application/outgoing-message-service";
 import { PgBossOutgoingScheduler } from "@/modules/mail/infrastructure/outgoing-jobs";
 
+export const transportRouter = new MailTransportRouter();
 const config = getConfig();
 const outgoingScheduler = new PgBossOutgoingScheduler(config);
 export const blobStorage = new LocalBlobStorage(config.attachmentsPath);
@@ -61,6 +63,7 @@ export const accountsService = new AccountsService(
   new PgBossMailboxDiscoveryScheduler(config),
   oauthProviders,
   new ApplicationEventService(db, createLogger(config)),
+  transportRouter,
 );
 
 export const mailboxService = new MailboxService(db);

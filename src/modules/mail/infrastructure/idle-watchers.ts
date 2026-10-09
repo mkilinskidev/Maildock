@@ -1,5 +1,5 @@
 import { ImapFlow } from "imapflow";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { PgBoss } from "pg-boss";
 
@@ -12,7 +12,7 @@ import {
 } from "../../../shared/infrastructure/database/schema";
 import { enqueueDelta } from "./delta-sync-jobs";
 
-type Watch = { stop(): void };
+type Watch = { stop(): void; revision?: string };
 export function idleReconnectDelay(backoff: number, random: number): number {
   return backoff + Math.floor((random * backoff) / 2);
 }
@@ -64,6 +64,7 @@ export class IdleWatcherManager {
       const eligible = await this.database
         .select({
           accountId: mailAccounts.id,
+          revision: mailAccounts.workRevision,
           mailboxId: mailboxes.id,
           remotePath: mailboxes.remotePath,
           capabilities: mailAccounts.imapCapabilities,
@@ -73,6 +74,11 @@ export class IdleWatcherManager {
         .where(
           and(
             eq(mailAccounts.enabled, true),
+            eq(mailAccounts.providerType, "imap_smtp"),
+            or(
+              eq(mailAccounts.authMethod, "password"),
+              eq(mailAccounts.oauthStatus, "connected"),
+            ),
             eq(mailboxes.selectable, true),
             eq(mailboxes.lifecycleStatus, "active"),
             eq(mailboxes.recentSyncStatus, "success"),
@@ -85,7 +91,11 @@ export class IdleWatcherManager {
       );
       const desired = new Set(inboxes.map((row) => row.mailboxId));
       for (const [id, watch] of this.watches)
-        if (!desired.has(id)) {
+        if (
+          !desired.has(id) ||
+          watch.revision !==
+            inboxes.find((row) => row.mailboxId === id)?.revision?.toString()
+        ) {
           watch.stop();
           this.watches.delete(id);
         }
@@ -93,7 +103,12 @@ export class IdleWatcherManager {
         if (!this.watches.has(row.mailboxId))
           this.watches.set(
             row.mailboxId,
-            this.watch(row.accountId, row.mailboxId, row.remotePath),
+            this.watch(
+              row.accountId,
+              row.mailboxId,
+              row.remotePath,
+              row.revision?.toString(),
+            ),
           );
     } finally {
       this.refreshing = false;
@@ -104,6 +119,7 @@ export class IdleWatcherManager {
     accountId: string,
     mailboxId: string,
     remotePath: string,
+    revision?: string,
   ): Watch {
     let cancelled = false;
     let client: IdleClient | undefined;
@@ -123,8 +139,10 @@ export class IdleWatcherManager {
     const loop = async () => {
       while (!cancelled && !this.stopped) {
         try {
-          const account =
-            await this.accounts.getProviderImapAccountForWork(accountId);
+          const account = await this.accounts.getProviderImapAccountForWork(
+            accountId,
+            revision,
+          );
           if (cancelled || this.stopped) break;
           client = this.createClient({
             ...imapOptions(account.imap),
@@ -188,6 +206,7 @@ export class IdleWatcherManager {
     };
     void loop();
     return {
+      revision,
       stop: () => {
         cancelled = true;
         if (wakeTimer) clearTimeout(wakeTimer);

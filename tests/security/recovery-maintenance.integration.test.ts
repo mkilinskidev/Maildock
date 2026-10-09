@@ -825,8 +825,9 @@ describe("F12-05 offline recovery", () => {
         (
           await destination.container.exec([
             "sh",
-            "-c",
-            'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -h postgres -U maildock -d maildock --no-owner --no-acl --exit-on-error --single-transaction /tmp/current.dump',
+            "/helper.sh",
+            "--fresh-destination-writers-stopped",
+            "/tmp/current.dump",
           ])
         ).exitCode,
       ).toBe(0);

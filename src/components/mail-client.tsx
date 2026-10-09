@@ -423,7 +423,8 @@ export function MailClient({
     );
     return Boolean(
       account?.enabled &&
-      account.mailboxDiscovery.capabilities.includes("MOVE") &&
+      (account.capabilities?.moveMessages ??
+        account.mailboxDiscovery.capabilities.includes("MOVE")) &&
       mapping?.available &&
       mapping.mailboxId !== target.mailboxId,
     );

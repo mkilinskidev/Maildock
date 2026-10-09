@@ -1,3 +1,5 @@
+import { reseedNativeAccountFixture } from "./native-account-fixture";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import {
   mkdtemp,
   mkdir,
@@ -205,7 +207,19 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
     );
     await database.client`INSERT INTO mail_accounts (id, display_name, email, auth_method, oauth_cache, oauth_home_account_id, oauth_status, imap_host, imap_port, imap_security, imap_username, smtp_host, smtp_port, smtp_security) VALUES (${legacyId}, 'Legacy', 'owner@example.com', 'oauth2', ${JSON.stringify(legacyCache)}::jsonb, 'home-1', 'connected', 'outlook.office365.com', 993, 'tls', 'owner@example.com', 'smtp.office365.com', 587, 'starttls')`;
     await database.client`INSERT INTO oauth_authorization_states (state_hash, session_id, code_verifier, expires_at) VALUES ('legacy-pending', 'owner-session', ${JSON.stringify(encryption.encrypt("legacy-verifier", "maildock:microsoft-oauth-state:v1"))}::jsonb, now() + interval '10 minutes')`;
-    await migrate(database.db, { migrationsFolder: "db/migrations" });
+    const allMigrations = readMigrationFiles({
+      migrationsFolder: "db/migrations",
+    });
+    for (const migration of allMigrations.slice(26, -1))
+      await database.client.begin(async (tx) => {
+        for (const statement of migration.sql) await tx.unsafe(statement);
+      });
+    await reseedNativeAccountFixture(database, allMigrations.at(-1)!);
+    // Record exact release history for the reseeded synthetic fixture.
+    await database.client`delete from drizzle.__drizzle_migrations`;
+    for (const migration of allMigrations)
+      await database.client`insert into drizzle.__drizzle_migrations(hash,created_at) values(${migration.hash},${migration.folderMillis})`;
+
     configurations = new OAuthProviderConfigs(
       database.db,
       encryption,
@@ -303,7 +317,7 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
     });
   });
 
-  it("resolves a test-only provider through unchanged IMAP/SMTP account infrastructure", async () => {
+  it("keeps registry isolation and rejects unsupported persisted receive providers", async () => {
     const id = randomUUID();
     const provider: OAuthMailProvider = {
       id: "test-provider",
@@ -319,34 +333,23 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
     expect(registry.get("test-provider")).toBe(provider);
     expect(() => registry.get("unknown")).toThrow("unavailable");
     expect(() => registry.get(null)).toThrow("unavailable");
-    await database.db.insert(mailAccounts).values({
-      id,
-      displayName: "Test",
-      email: "fake@example.com",
-      authMethod: "oauth2",
-      oauthProviderId: provider.id,
-      oauthStatus: "connected",
-      oauthCache: encryption.encrypt(
-        "test-private-cache",
-        accountCredentialContext(id, "oauth-cache"),
-      ),
-      ...provider.getMailDefaults(),
-      imapUsername: "fake@example.com",
-    });
-    const service = new AccountsService(
-      database.db,
-      encryption,
-      new ImapSmtpMailProvider(),
-      undefined,
-      registry,
-    );
-    expect(
-      (await service.getProviderSmtpAccountForWork(id)).smtp.credential,
-    ).toEqual({
-      kind: "oauth2",
-      accessToken: "test-access",
-    });
-    expect(provider.accessToken).toHaveBeenCalledWith(id);
+    await expect(
+      database.db.insert(mailAccounts).values({
+        id,
+        displayName: "Test",
+        email: "fake@example.com",
+        authMethod: "oauth2",
+        oauthProviderId: provider.id,
+        oauthStatus: "connected",
+        oauthCache: encryption.encrypt(
+          "test-private-cache",
+          accountCredentialContext(id, "oauth-cache"),
+        ),
+        ...provider.getMailDefaults(),
+        imapUsername: "fake@example.com",
+      }),
+    ).rejects.toThrow();
+    expect(provider.accessToken).not.toHaveBeenCalled();
     await expect(oauth.begin("session-1", id)).rejects.toThrow("not found");
     const callback = new URL(await oauth.begin("session-1"));
     await database.db
@@ -413,9 +416,11 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
     expect(row.authMethod).toBe("oauth2");
     expect(row.imapPassword).toBeNull();
     expect(row.oauthCache).toBeTruthy();
-    expect(JSON.stringify(row)).not.toMatch(
-      /refresh-secret|access-secret|code-secret|client-secret/,
-    );
+    expect(
+      JSON.stringify(row, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toMatch(/refresh-secret|access-secret|code-secret|client-secret/);
     const view = await accounts.get(accountId);
     expect(JSON.stringify(view)).not.toMatch(
       /refresh-secret|access-secret|code-secret|client-secret/,

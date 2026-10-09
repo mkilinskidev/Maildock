@@ -1,3 +1,8 @@
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
+import {
+  MailTransportRouter,
+  StaleAccountWorkError,
+} from "../../accounts/domain/receive-transport";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -46,6 +51,7 @@ export class MessageCommandService {
         .from(mailAccounts)
         .where(eq(mailAccounts.id, accountId))
         .limit(1);
+      if (account) new MailTransportRouter().requireImap(account);
       const [mailbox] = await tx
         .select()
         .from(mailboxes)
@@ -137,11 +143,30 @@ export class MessageCommandService {
         : add
           ? [...new Set([...originalFlags, flag])]
           : originalFlags.filter((value) => value !== flag);
+      await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .for("update");
+      const [lastIntent] = await tx
+        .select({
+          sequence: sql<string>`coalesce(max(${messageCommands.intentSequence}), 0)::text`,
+        })
+        .from(messageCommands)
+        .where(
+          and(
+            eq(messageCommands.accountId, accountId),
+            eq(messageCommands.messageId, messageId),
+          ),
+        );
+      const intentSequence = BigInt(lastIntent.sequence) + 1n;
       const id = randomUUID();
       const now = new Date();
       await tx.insert(messageCommands).values({
         id,
         accountId,
+        accountRevision: account.workRevision,
+        intentSequence,
         mailboxId,
         placementId: placement.mailbox_messages.id,
         messageId,
@@ -228,10 +253,15 @@ export class MessageCommandService {
       return;
     }
     const [accountRow] = await this.database
-      .select({ enabled: mailAccounts.enabled })
+      .select()
       .from(mailAccounts)
       .where(eq(mailAccounts.id, initial.accountId))
       .limit(1);
+    if (accountRow)
+      new MailTransportRouter().requireImap(
+        accountRow,
+        initial.accountRevision.toString(),
+      );
     const [mailbox] = await this.database
       .select()
       .from(mailboxes)
@@ -317,11 +347,12 @@ export class MessageCommandService {
     try {
       const account = await this.accounts.getProviderImapAccountForWork(
         initial.accountId,
+        initial.accountRevision.toString(),
       );
       const result = await this.provider.mutateMessage(account, {
-        sourcePath: initial.sourcePath,
-        uidValidity: initial.sourceUidValidity.toString(),
-        uid: initial.sourceUid.toString(),
+        sourcePath: initial.sourcePath!,
+        uidValidity: initial.sourceUidValidity!.toString(),
+        uid: initial.sourceUid!.toString(),
         action: initial.action as MessageAction,
         ...(initial.destinationPath
           ? { destinationPath: initial.destinationPath }
@@ -338,6 +369,11 @@ export class MessageCommandService {
         return;
       }
       await this.database.transaction(async (tx) => {
+        await assertImapPublication(
+          tx,
+          initial.accountId,
+          initial.accountRevision.toString(),
+        );
         await tx
           .update(messageCommands)
           .set({
@@ -367,6 +403,7 @@ export class MessageCommandService {
           initial.destinationMailboxId,
         ).catch(() => undefined);
     } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
       const [current] = await this.database
         .select({ status: messageCommands.status })
         .from(messageCommands)

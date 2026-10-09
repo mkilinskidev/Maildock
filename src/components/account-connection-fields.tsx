@@ -18,7 +18,11 @@ export function AccountConnectionFields({
         <div className="form-grid">
           <label>
             Host
-            <input name="imapHost" required defaultValue={account?.imap.host} />
+            <input
+              name="imapHost"
+              required
+              defaultValue={account?.imap.host ?? undefined}
+            />
           </label>
           <label>
             Port
@@ -46,7 +50,7 @@ export function AccountConnectionFields({
             <input
               name="imapUsername"
               required
-              defaultValue={account?.imap.username}
+              defaultValue={account?.imap.username ?? undefined}
               autoComplete="off"
             />
           </label>

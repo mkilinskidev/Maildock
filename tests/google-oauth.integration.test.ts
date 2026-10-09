@@ -34,7 +34,6 @@ import { accountCredentialContext } from "@/modules/accounts/domain/account";
 import { AccountsService } from "@/modules/accounts/application/accounts-service";
 import {
   ImapSmtpMailProvider,
-  imapOptions,
   smtpOptions,
 } from "@/modules/accounts/infrastructure/imap-smtp-mail-provider";
 import { OAuthAuthorizationError } from "@/modules/accounts/domain/oauth-mail-provider";
@@ -290,21 +289,29 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
       expect(await database.db.select().from(mailAccounts)).toHaveLength(0);
     },
   );
-  it("creates an encrypted Google account with Gmail defaults and generic IMAP/SMTP credentials", async () => {
+  it("creates an encrypted native Gmail account and independent SMTP OAuth credentials", async () => {
     const id = await connect();
     const account = await row(id);
     expect(account).toMatchObject({
       email: "owner@gmail.com",
-      imapUsername: "owner@gmail.com",
+      providerType: "gmail_smtp",
+      imapHost: null,
+      imapPort: null,
+      imapSecurity: null,
+      imapUsername: null,
       authMethod: "oauth2",
       oauthProviderId: "google",
-      oauthHomeAccountId: null,
+      oauthHomeAccountId: identity.sub,
       oauthStatus: "connected",
-      ...google.getMailDefaults(),
+      smtpHost: "smtp.gmail.com",
+      smtpPort: 465,
+      smtpSecurity: "tls",
     });
-    expect(JSON.stringify(account)).not.toMatch(
-      /refresh-private|access-private|code-private|client-private/,
-    );
+    expect(
+      JSON.stringify(account, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toMatch(/refresh-private|access-private|code-private|client-private/);
     expect(await authorization(id)).toEqual({
       version: 1,
       subject: identity.sub,
@@ -319,20 +326,15 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
       composition.registry,
     );
     await service.requestMailboxDiscovery(id);
-    expect(scheduler.schedule).toHaveBeenCalledWith(id);
-    expect((await row(id)).mailboxDiscoveryStatus).toBe("pending");
-    const imap = await service.getProviderImapAccountForWork(id);
+    expect(scheduler.schedule).not.toHaveBeenCalled();
+    expect((await row(id)).mailboxDiscoveryStatus).toBe("failed");
+    await expect(service.getProviderImapAccountForWork(id)).rejects.toThrow(
+      "Native Gmail receiving",
+    );
     const smtp = await service.getProviderSmtpAccountForWork(id);
-    expect(imap.imap.credential).toEqual({
+    expect(smtp.smtp.credential).toEqual({
       kind: "oauth2",
       accessToken: "access-private",
-    });
-    expect(smtp.smtp.credential).toEqual(imap.imap.credential);
-    expect(imapOptions(imap.imap)).toMatchObject({
-      host: "imap.gmail.com",
-      port: 993,
-      secure: true,
-      auth: { user: "owner@gmail.com", accessToken: "access-private" },
     });
     expect(smtpOptions(smtp.smtp)).toMatchObject({
       host: "smtp.gmail.com",
@@ -374,7 +376,11 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     expect(await authorization(id)).toMatchObject({
       refreshToken: "rotated-refresh",
     });
-    expect(JSON.stringify(await row(id))).not.toContain("rotated-refresh");
+    expect(
+      JSON.stringify(await row(id), (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toContain("rotated-refresh");
     fetcher.mockResolvedValue(
       Response.json({
         access_token: "after-expiry",
@@ -474,6 +480,8 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     await database.db.insert(mailboxes).values({
       id: "00000000-0000-4000-8000-000000000001",
       accountId: id,
+      receiveTransport: "gmail",
+      providerMailboxId: "INBOX",
       remotePath: "INBOX",
       name: "Inbox",
       selectable: true,
@@ -567,10 +575,19 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
   });
   it("rejects reconnect targets belonging to a different provider", async () => {
     const id = await connect();
-    await database.db
-      .update(mailAccounts)
-      .set({ oauthProviderId: "microsoft" })
-      .where(eq(mailAccounts.id, id));
+    const fixture = await row(id);
+    const { receiveTransport, ...values } = fixture;
+    void receiveTransport;
+    await database.db.delete(mailAccounts).where(eq(mailAccounts.id, id));
+    await database.db.insert(mailAccounts).values({
+      ...values,
+      providerType: "imap_smtp",
+      oauthProviderId: "microsoft",
+      imapHost: "outlook.office365.com",
+      imapPort: 993,
+      imapSecurity: "tls",
+      imapUsername: fixture.email,
+    });
     await expect(begin(id)).rejects.toThrow("not found");
   });
 });

@@ -231,16 +231,32 @@ describe("F11 every registered Maildock job handler", () => {
     async (register) => {
       let handler!: (batch: unknown[]) => Promise<unknown>;
       const boss = {
+        getDb: () => ({
+          executeSql: async () => ({
+            rows: [
+              {
+                provider_type: "imap_smtp",
+                auth_method: "password",
+                oauth_provider_id: null,
+                oauth_status: null,
+                enabled: true,
+                work_revision: "1",
+              },
+            ],
+          }),
+        }),
         createQueue: vi.fn(),
         findJobs: vi.fn(async () => []),
         work: vi.fn(async (_queue, _options, work) => {
           handler = work;
         }),
       } as unknown as PgBoss;
+      const dependencyInvoked = vi.fn();
       const service = new Proxy(
         {},
         {
           get: () => async () => {
+            dependencyInvoked();
             throw raw();
           },
         },
@@ -280,26 +296,46 @@ describe("F11 every registered Maildock job handler", () => {
       const id = "00000000-0000-4000-8000-000000000011";
       const data =
         register === registerAttachmentWorker
-          ? { attachmentId: id }
+          ? { attachmentId: id, accountId: id, accountRevision: "1" }
           : register === registerMessageCommandWorker
             ? { commandId: id }
             : register === registerOutgoingWorker ||
                 register === registerSentCopyWorker
               ? { outgoingMessageId: id }
               : register === registerMailboxDiscoveryWorker
-                ? { version: 1, accountId: id }
+                ? { version: 1, accountId: id, accountRevision: "1" }
                 : register === registerContentWorker
-                  ? { version: 1, accountId: id, mailboxId: id, messageId: id }
+                  ? {
+                      version: 1,
+                      accountId: id,
+                      mailboxId: id,
+                      messageId: id,
+                      accountRevision: "1",
+                    }
                   : register === registerDeltaWorker
                     ? {
                         version: 1,
                         accountId: id,
                         mailboxId: id,
                         reason: "poll",
+                        accountRevision: "1",
                       }
-                    : { version: 1, accountId: id, mailboxId: id };
+                    : {
+                        version: 1,
+                        accountId: id,
+                        mailboxId: id,
+                        accountRevision: "1",
+                      };
       try {
-        await handler([{ data }]);
+        await handler([
+          {
+            data,
+            retryCount: 0,
+            startedOn: new Date(),
+            startAfter: new Date(),
+            createdOn: new Date(),
+          },
+        ]);
         throw new Error("Expected underlying failure");
       } catch (error) {
         expect(error).toMatchObject({
@@ -308,6 +344,7 @@ describe("F11 every registered Maildock job handler", () => {
         });
         expect(inspect(error)).not.toContain(marker);
       }
+      expect(dependencyInvoked).toHaveBeenCalledOnce();
     },
   );
 });

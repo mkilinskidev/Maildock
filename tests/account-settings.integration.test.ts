@@ -1,3 +1,4 @@
+import { reseedNativeAccountFixture } from "./native-account-fixture";
 import { randomUUID } from "node:crypto";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import {
@@ -48,10 +49,11 @@ beforeAll(async () => {
     for (const statement of migration.sql)
       await database.client.unsafe(statement);
   await database.client`INSERT INTO mail_accounts (id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) VALUES (${legacyId},'Legacy Sender','legacy@example.com','imap.example.com',993,'tls','legacy','{}','smtp.example.com',465,'tls')`;
-  for (const migration of migrations.slice(22))
+  for (const migration of migrations.slice(22, -1))
     await database.client.begin(async (tx) => {
       for (const statement of migration.sql) await tx.unsafe(statement);
     });
+  await reseedNativeAccountFixture(database, migrations.at(-1)!);
   const encryption = new AesGcmSecretEncryption("v1", {
     v1: Buffer.alloc(32, 9).toString("base64"),
   });
@@ -119,7 +121,13 @@ it("migrates existing sender behavior and preserves independent names on legacy 
     email: account.email,
     enabled: true,
     providerType: "imap_smtp",
-    imap: account.imap,
+    imap: {
+      ...account.imap,
+      host: account.imap.host!,
+      port: account.imap.port!,
+      security: account.imap.security!,
+      username: account.imap.username!,
+    },
     smtp: account.smtp,
   });
   expect(await accounts.get(account.id)).toMatchObject({

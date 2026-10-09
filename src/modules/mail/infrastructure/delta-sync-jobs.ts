@@ -1,10 +1,11 @@
+import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -20,6 +21,7 @@ import type {
 export const MAILBOX_DELTA_SYNC_QUEUE = "mailbox-delta-sync-v1";
 const payloadSchema = z
   .object({
+    accountRevision: z.string().regex(/^[1-9][0-9]*$/),
     version: z.literal(1),
     accountId: z.uuid(),
     mailboxId: z.uuid(),
@@ -47,7 +49,13 @@ export async function enqueueDelta(
   return enqueueCoalescedSync(
     boss,
     MAILBOX_DELTA_SYNC_QUEUE,
-    { version: 1, accountId, mailboxId, reason },
+    {
+      version: 1,
+      accountId,
+      mailboxId,
+      reason,
+      accountRevision: await imapJobRevision(boss, accountId),
+    },
     { singletonKey: mailboxId, priority: 10 },
   );
 }
@@ -98,8 +106,14 @@ export async function registerDeltaWorker(
       const job = batch[0];
       if (!job) throw new Error("Delta sync received an empty batch.");
       const payload = payloadSchema.parse(job.data);
+      await assertImapJob(boss, payload);
       await withLock(payload.mailboxId, () =>
-        service.run(payload.accountId, payload.mailboxId, payload.reason),
+        service.run(
+          payload.accountId,
+          payload.mailboxId,
+          payload.reason,
+          payload.accountRevision,
+        ),
       );
     }),
   );
@@ -138,6 +152,11 @@ export class DeltaPoller {
         .where(
           and(
             eq(mailAccounts.enabled, true),
+            eq(mailAccounts.providerType, "imap_smtp"),
+            or(
+              eq(mailAccounts.authMethod, "password"),
+              eq(mailAccounts.oauthStatus, "connected"),
+            ),
             eq(mailboxes.selectable, true),
             eq(mailboxes.lifecycleStatus, "active"),
             eq(mailboxes.recentSyncStatus, "success"),

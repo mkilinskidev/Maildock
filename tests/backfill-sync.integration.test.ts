@@ -228,7 +228,7 @@ describe("Phase 1G persisted backfill", () => {
   async function uids() {
     return (await db.select().from(mailboxMessages))
       .map((row) => row.uid)
-      .sort((a, b) => Number(a - b));
+      .sort((a, b) => Number(a! - b!));
   }
   async function run() {
     return service.run(accountId, (await mailbox()).id);

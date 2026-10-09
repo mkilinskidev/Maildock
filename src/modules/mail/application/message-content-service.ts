@@ -1,3 +1,5 @@
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
+import { MailTransportRouter } from "../../accounts/domain/receive-transport";
 import { randomUUID } from "node:crypto";
 import {
   withPerformance,
@@ -148,14 +150,16 @@ export class MessageContentService {
       mailboxId,
       messageId,
     );
-    await persistAttachmentMetadata(
-      this.database,
-      messageId,
-      mailboxId,
-      placement.uidValidity,
-      placement.uid,
-      message.mimeStructure,
-    );
+    if (placement.receiveTransport === "imap")
+      await persistAttachmentMetadata(
+        this.database,
+        messageId,
+        accountId,
+        mailboxId,
+        placement.uidValidity!,
+        placement.uid!,
+        message.mimeStructure,
+      );
     let status = content?.status ?? "not_fetched";
     if (
       content?.status === "ready" &&
@@ -216,6 +220,7 @@ export class MessageContentService {
 
   async request(accountId: string, mailboxId: string, messageId: string) {
     const row = await this.placement(accountId, mailboxId, messageId);
+    new MailTransportRouter().requireImap(row.account);
     if (!row.account.enabled)
       throw new MessageContentUnavailableError("This account is disabled.");
     if (!row.mailbox.selectable || row.mailbox.lifecycleStatus !== "active")
@@ -310,10 +315,11 @@ export class MessageContentService {
     mailboxId: string,
     messageId: string,
     attempt?: number,
+    expectedRevision?: string,
   ) {
     return withPerformance(
       "content",
-      () => this.runImpl(accountId, mailboxId, messageId),
+      () => this.runImpl(accountId, mailboxId, messageId, expectedRevision),
       attempt,
     );
   }
@@ -321,6 +327,7 @@ export class MessageContentService {
     accountId: string,
     mailboxId: string,
     messageId: string,
+    expectedRevision?: string,
   ) {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Content worker dependencies are unavailable.");
@@ -389,6 +396,10 @@ export class MessageContentService {
         throw new MessageContentUnavailableError(
           "Mailbox UIDVALIDITY changed. Synchronize metadata again.",
         );
+      if (row.placement.uid === null || row.placement.uidValidity === null)
+        throw new MessageContentUnavailableError(
+          "Native Gmail content is not implemented in P1.",
+        );
       const finishMime = beginStage("mime_discovery");
       const parts = selectDisplayParts(row.message.mimeStructure);
       finishMime();
@@ -397,7 +408,10 @@ export class MessageContentService {
           "No display text part is available.",
         );
       const account = await measureStage("credentials", () =>
-        this.accounts!.getProviderImapAccountForWork(accountId),
+        this.accounts!.getProviderImapAccountForWork(
+          accountId,
+          expectedRevision ?? row.account.workRevision.toString(),
+        ),
       );
       const result = await this.provider.fetchMessageContent(account, {
         remotePath: row.mailbox.remotePath,
@@ -439,33 +453,40 @@ export class MessageContentService {
       }
       finishSanitize();
       await measureStage("persistence", () =>
-        this.database
-          .update(messageContents)
-          .set({
-            status: "ready",
-            plainText: result.plainText,
-            searchText: searchBodyText(result.plainText, html),
-            sanitizedHtml: html,
-            remoteContentBlocked: blocked,
-            policyVersion: EMAIL_HTML_POLICY,
-            error: null,
-            fetchedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(messageContents.messageId, messageId),
-              eq(messageContents.requestGeneration, generation!),
-              eq(messageContents.fetchAttempt, attempt),
-              or(
-                ne(messageContents.status, "ready"),
-                and(
-                  isNotNull(messageContents.sanitizedHtml),
-                  sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
+        this.database.transaction(async (tx) => {
+          await assertImapPublication(
+            tx,
+            accountId,
+            row.account.workRevision.toString(),
+          );
+          return tx
+            .update(messageContents)
+            .set({
+              status: "ready",
+              plainText: result.plainText,
+              searchText: searchBodyText(result.plainText, html),
+              sanitizedHtml: html,
+              remoteContentBlocked: blocked,
+              policyVersion: EMAIL_HTML_POLICY,
+              error: null,
+              fetchedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(messageContents.messageId, messageId),
+                eq(messageContents.requestGeneration, generation!),
+                eq(messageContents.fetchAttempt, attempt),
+                or(
+                  ne(messageContents.status, "ready"),
+                  and(
+                    isNotNull(messageContents.sanitizedHtml),
+                    sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+        }),
       );
     } catch (error) {
       const reason =

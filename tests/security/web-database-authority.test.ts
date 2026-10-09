@@ -45,6 +45,9 @@ beforeEach(() => {
         schemas_ok: true,
         objects_ok: true,
         system_ok: true,
+        ready: true,
+        migrations: true,
+        verified: true,
       },
     ];
   });
@@ -57,7 +60,7 @@ afterEach(() => {
 it("checks ordinary web authority once and closes its startup connection", async () => {
   const { register } = await import("@/instrumentation");
   await register();
-  expect(state.query).toHaveBeenCalledTimes(1);
+  expect(state.query).toHaveBeenCalledTimes(3);
   expect(state.end).toHaveBeenCalledTimes(1);
   expect(state.bootstrap).toHaveBeenCalledWith(
     state.database,

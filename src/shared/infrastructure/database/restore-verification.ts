@@ -1,3 +1,4 @@
+import { verifyNativeSchema } from "./native-schema-verification";
 import { createHash } from "node:crypto";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { sql, is } from "drizzle-orm";
@@ -121,6 +122,7 @@ export async function verifyRecoverySchema(db: Database) {
           and i.indkey::text=a.attnum::text and a.attgenerated='s') as ok`,
     );
     if (!index[0]?.ok) throw new Error();
+    await verifyNativeSchema(db);
   } catch {
     throw new RecoveryError("recovery_schema");
   }

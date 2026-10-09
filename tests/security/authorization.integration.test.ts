@@ -462,6 +462,7 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
       mimeStructure: structure,
     });
     await database.db.insert(mailboxMessages).values({
+      accountId,
       id: randomUUID(),
       mailboxId,
       messageId,

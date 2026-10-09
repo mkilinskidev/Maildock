@@ -59,6 +59,9 @@ describe("Phase 2I PostgreSQL global search", () => {
   }
   async function placement(id: string, box: string) {
     await database.db.insert(mailboxMessages).values({
+      accountId: (
+        await database.db.select().from(messages).where(eq(messages.id, id))
+      )[0].accountId,
       id: randomUUID(),
       messageId: id,
       mailboxId: box,
@@ -85,17 +88,17 @@ describe("Phase 2I PostgreSQL global search", () => {
       databaseUrl: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/search`,
       databasePoolSize: 5,
     });
-    // Genuine pre-2I data, then forward-only SQL and local HTML initialization.
+    // Fresh native schema with synthetic cached historical HTML for local-body initialization.
     const migrations = readMigrationFiles({
       migrationsFolder: "db/migrations",
     });
-    for (const migration of migrations.slice(0, -1))
+    for (const migration of migrations)
       await database.db.transaction(async (tx) => {
         for (const statement of migration.sql)
           await tx.execute(sql.raw(statement));
       });
     for (let i = 0; i < 2; i++) {
-      // Use legacy columns while the final forward migration is pending.
+      // Seed the existing IMAP projection in the fresh schema.
       await database.client`INSERT INTO mail_accounts (id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) VALUES (${accounts[i]},${i ? "DPoczta" : "Hotmail"},${`owner${i}@example.com`},'imap.test',993,'tls','owner','{}','smtp.test',465,'tls')`;
       await database.db.insert(mailboxes).values({
         id: boxes[i],
@@ -132,10 +135,6 @@ describe("Phase 2I PostgreSQL global search", () => {
       sql`INSERT INTO message_contents(message_id, status, plain_text) VALUES(${historicalPlain}, 'ready', 'historicalplainneedle')`,
     );
     await placement(historicalPlain, boxes[1]);
-    await database.db.transaction(async (tx) => {
-      for (const statement of migrations.at(-1)!.sql)
-        await tx.execute(sql.raw(statement));
-    });
     await initializeLocalSearchBodies(database.db);
     service = new SearchService(database.db);
   });
@@ -311,8 +310,8 @@ describe("Phase 2I PostgreSQL global search", () => {
       );
     }
     await database.db
-      .execute(sql`INSERT INTO mailbox_messages(id, mailbox_id, message_id, uid_validity, uid, first_synchronized_at, last_synchronized_at)
-      SELECT gen_random_uuid(), ${boxes[0]}::uuid, id, 2, row_number() OVER (), now(), now() FROM messages WHERE subject LIKE 'synthetic common %'`);
+      .execute(sql`INSERT INTO mailbox_messages(id, account_id, mailbox_id, message_id, uid_validity, uid, first_synchronized_at, last_synchronized_at)
+      SELECT gen_random_uuid(), account_id, ${boxes[0]}::uuid, id, 2, row_number() OVER (), now(), now() FROM messages WHERE subject LIKE 'synthetic common %'`);
     await database.db.execute(sql`VACUUM ANALYZE messages`);
     await database.db.execute(sql`ANALYZE mailbox_messages`);
     const plan = await database.db.execute(

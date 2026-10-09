@@ -1,3 +1,4 @@
+import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
@@ -10,10 +11,13 @@ import type { AppConfig } from "../../../shared/infrastructure/config/config";
 
 export const MAILBOX_DISCOVERY_QUEUE = "mailbox-discovery-v1";
 
-const payloadSchema = z.object({
-  version: z.literal(1),
-  accountId: z.uuid(),
-});
+const payloadSchema = z
+  .object({
+    accountRevision: z.string().regex(/^[1-9][0-9]*$/),
+    version: z.literal(1),
+    accountId: z.uuid(),
+  })
+  .strict();
 
 async function ensureQueue(boss: PgBoss): Promise<void> {
   await boss.createQueue(MAILBOX_DISCOVERY_QUEUE, {
@@ -52,7 +56,11 @@ export class PgBossMailboxDiscoveryScheduler implements MailboxDiscoverySchedule
     await this.start();
     const id = await this.boss.send(
       MAILBOX_DISCOVERY_QUEUE,
-      { version: 1, accountId },
+      {
+        version: 1,
+        accountId,
+        accountRevision: await imapJobRevision(this.boss, accountId),
+      },
       { singletonKey: accountId },
     );
     return id !== null;
@@ -79,7 +87,8 @@ export async function registerMailboxDiscoveryWorker(
       const job = batch[0];
       if (!job) throw new Error("Mailbox discovery received an empty batch.");
       const payload = payloadSchema.parse(job.data);
-      await service.run(payload.accountId);
+      await assertImapJob(boss, payload);
+      await service.run(payload.accountId, payload.accountRevision);
     }),
   );
 }

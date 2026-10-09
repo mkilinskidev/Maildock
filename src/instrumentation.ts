@@ -15,6 +15,9 @@ export async function register() {
       const database = createDatabase(getConfig());
       try {
         await validateDatabaseAuthority(database.client);
+        const { assertNativeReleaseCompatible } =
+          await import("./shared/infrastructure/database/native-release-guard");
+        await assertNativeReleaseCompatible(database.client);
         await startBootstrapLifecycle(
           database.db,
           (error) =>

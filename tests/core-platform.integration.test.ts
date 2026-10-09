@@ -334,8 +334,16 @@ describe("Phase 0 PostgreSQL foundations", () => {
     expect(JSON.stringify(created)).not.toContain("plain-smtp-password");
     const [stored] = await db.select().from(mailAccounts);
     expect(stored).toBeDefined();
-    expect(JSON.stringify(stored)).not.toContain("plain-imap-password");
-    expect(JSON.stringify(stored)).not.toContain("plain-smtp-password");
+    expect(
+      JSON.stringify(stored, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toContain("plain-imap-password");
+    expect(
+      JSON.stringify(stored, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toContain("plain-smtp-password");
     expect(stored?.imapPassword).toMatchObject({
       version: 1,
       algorithm: "AES-256-GCM",
@@ -519,7 +527,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
         id,
         displayName: email,
         email,
-        enabled: false,
+        enabled: true,
         providerType: "imap_smtp",
         imap: {
           host: "imap.example.test",
@@ -848,6 +856,7 @@ describe("Phase 0 PostgreSQL foundations", () => {
     const scheduler = new PgBossMailboxDiscoveryScheduler(config);
     try {
       const id = "00000000-0000-4000-8000-000000000024";
+      await database.client`INSERT INTO mail_accounts (id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) VALUES (${id}, 'Queue fixture', 'owner@example.test', 'imap.test', 993, 'tls', 'owner', '{}', 'smtp.test', 465, 'tls')`;
       expect(await scheduler.schedule(id)).toBe(true);
       expect(await scheduler.schedule(id)).toBe(false);
     } finally {

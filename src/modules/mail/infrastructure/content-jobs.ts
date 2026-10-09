@@ -1,3 +1,4 @@
+import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { withPerformance } from "../../../shared/infrastructure/logging/performance";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
@@ -11,6 +12,7 @@ import type { MessageContentService } from "../application/message-content-servi
 export const MESSAGE_CONTENT_QUEUE = "message-content-fetch-v1";
 const payload = z
   .object({
+    accountRevision: z.string().regex(/^[1-9][0-9]*$/),
     version: z.literal(1),
     accountId: z.uuid(),
     mailboxId: z.uuid(),
@@ -36,6 +38,7 @@ export async function enqueueContent(
   mailboxId: string,
   messageId: string,
 ) {
+  const accountRevision = await imapJobRevision(boss, accountId);
   const database = boss.getDb();
   if (!database.beginTransaction)
     throw new Error("Content enqueue requires transactions.");
@@ -62,7 +65,7 @@ export async function enqueueContent(
       ? null
       : await boss.send(
           MESSAGE_CONTENT_QUEUE,
-          { version: 1, accountId, mailboxId, messageId },
+          { version: 1, accountId, mailboxId, messageId, accountRevision },
           { singletonKey: key, db: transaction.db },
         );
     await transaction.commit();
@@ -134,6 +137,7 @@ export async function registerContentWorker(
       const job = batch[0];
       if (!job) throw new Error("Content fetch received an empty batch.");
       const request = payload.parse(job.data);
+      await assertImapJob(boss, request);
       const metadata = job as JobWithMetadata;
       await withPerformance(
         "content",
@@ -143,6 +147,7 @@ export async function registerContentWorker(
             request.mailboxId,
             request.messageId,
             metadata.retryCount + 1,
+            request.accountRevision,
           ),
         metadata.retryCount + 1,
         {

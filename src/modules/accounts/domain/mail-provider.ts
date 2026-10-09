@@ -16,7 +16,10 @@ export type ProviderAccount = Readonly<{
   smtp: ProviderConnection;
 }>;
 
-export type ProviderImapAccount = Pick<ProviderAccount, "accountId" | "imap">;
+export type ProviderImapAccount = Pick<
+  ProviderAccount,
+  "accountId" | "imap"
+> & { revision?: string };
 
 export type ConnectionFailureCategory =
   | "dns_or_host_unreachable"
@@ -259,6 +262,9 @@ export interface MailProvider {
     envelope: Readonly<{ from: string; to: string[] }>,
     mime: Buffer,
   ): Promise<SmtpDeliveryResult>;
+  testSmtpConnection?(
+    account: Pick<ProviderAccount, "accountId" | "smtp">,
+  ): Promise<ProtocolConnectionResult>;
   testConnection(account: ProviderAccount): Promise<ConnectionReport>;
   listMailboxes(account: ProviderImapAccount): Promise<MailboxDiscoveryResult>;
   synchronizeRecentMailbox(

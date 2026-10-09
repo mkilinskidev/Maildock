@@ -4,7 +4,7 @@ import {
 } from "../domain/oauth-mail-provider";
 import { OAuthProviderConfigs } from "./oauth-provider-configs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, lte } from "drizzle-orm";
+import { and, eq, gt, lte, sql } from "drizzle-orm";
 import {
   ConfidentialClientApplication,
   CryptoProvider,
@@ -258,6 +258,7 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
         .update(mailAccounts)
         .set({
           email,
+          workRevision: sql`${mailAccounts.workRevision} + 1`,
           imapUsername: email,
           oauthCache: encrypted,
           oauthHomeAccountId: result.account.homeAccountId,
@@ -391,7 +392,11 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
       ) {
         await this.database
           .update(mailAccounts)
-          .set({ oauthStatus: "reconnect_required", updatedAt: new Date() })
+          .set({
+            oauthStatus: "reconnect_required",
+            workRevision: sql`${mailAccounts.workRevision} + 1`,
+            updatedAt: new Date(),
+          })
           .where(
             and(
               eq(mailAccounts.id, accountId),

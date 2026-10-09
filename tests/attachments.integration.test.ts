@@ -261,6 +261,7 @@ describe("durable attachment and MIME lifecycle", () => {
       }),
     });
     await database.db.insert(mailboxMessages).values({
+      accountId,
       id: randomUUID(),
       mailboxId,
       messageId,
@@ -455,6 +456,8 @@ describe("durable attachment and MIME lifecycle", () => {
   it("rejects duplicate generic CID before preparation", async () => {
     const renderer = await genericCid();
     await database.db.insert(messageAttachments).values({
+      accountId,
+      sourceAccountId: accountId,
       id: randomUUID(),
       messageId,
       sourceMailboxId: mailboxId,
@@ -694,6 +697,7 @@ describe("durable attachment and MIME lifecycle", () => {
         from: [{ name: "Microsoft Support", address }],
       });
       await database.db.insert(mailboxMessages).values({
+        accountId,
         id: randomUUID(),
         messageId: id,
         mailboxId,
@@ -1786,6 +1790,7 @@ describe("durable attachment and MIME lifecycle", () => {
         .from(stagedAttachments)
         .where(eq(stagedAttachments.id, foreign.id));
       await database.db.insert(messageAttachments).values({
+        accountId: otherAccountId,
         id: otherAttachmentId,
         messageId: otherMessageId,
         sourceUidValidity: 7n,

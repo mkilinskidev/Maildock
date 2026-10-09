@@ -240,7 +240,7 @@ describe("Phase 1E persisted delta state", () => {
   }
   async function placements() {
     return (await db.select().from(mailboxMessages)).sort((a, b) =>
-      Number(a.uid - b.uid),
+      Number(a.uid! - b.uid!),
     );
   }
   async function seed(
@@ -1171,6 +1171,9 @@ describe("Phase 1E persisted delta state", () => {
     const sent: string[] = [];
     const boss = {
       getDb: () => ({
+        executeSql: async (query: string, values: unknown[]) => ({
+          rows: await database.client.unsafe(query, values as string[]),
+        }),
         beginTransaction: async () => ({
           db: { executeSql: async () => ({ rows: [] }) },
           commit: async () => {},

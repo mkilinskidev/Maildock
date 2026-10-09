@@ -1,3 +1,4 @@
+import { NativeReleaseGuardError } from "../database/native-release-guard";
 import type { Logger } from "pino";
 import type { Job } from "pg-boss";
 import { ConfigurationError } from "../config/config";
@@ -37,7 +38,15 @@ export function failureDiagnostic(
         ? "configuration"
         : error instanceof DatabaseAuthorityError
           ? error.category
-          : "internal_error",
+          : error instanceof NativeReleaseGuardError
+            ? "native_release_incompatible"
+            : "internal_error",
+    ...(error instanceof NativeReleaseGuardError
+      ? {
+          action:
+            "Keep this legacy database unchanged. Use its matched legacy binary or provision a separate empty database and blob namespace for the native release.",
+        }
+      : {}),
     ...(error instanceof ConfigurationError
       ? {
           configurationField: error.problems.some((problem) =>

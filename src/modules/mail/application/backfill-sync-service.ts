@@ -1,3 +1,5 @@
+import { StaleAccountWorkError } from "../../accounts/domain/receive-transport";
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
 import { and, eq } from "drizzle-orm";
 
 import type { AccountsService } from "../../accounts/application/accounts-service";
@@ -22,7 +24,11 @@ export class BackfillSyncService {
     private readonly chunkSize: number,
   ) {}
 
-  async run(accountId: string, mailboxId: string): Promise<string | null> {
+  async run(
+    accountId: string,
+    mailboxId: string,
+    expectedRevision?: string,
+  ): Promise<string | null> {
     const [row] = await this.database
       .select({ mailbox: mailboxes, enabled: mailAccounts.enabled })
       .from(mailboxes)
@@ -51,8 +57,10 @@ export class BackfillSyncService {
     let frontier: bigint | undefined;
     const epoch = mailbox.recentSyncUidValidity!;
     try {
-      const account =
-        await this.accounts.getProviderImapAccountForWork(accountId);
+      const account = await this.accounts.getProviderImapAccountForWork(
+        accountId,
+        expectedRevision,
+      );
       await this.provider.synchronizeBackfillMailbox(
         account,
         {
@@ -68,21 +76,24 @@ export class BackfillSyncService {
             if (BigInt(observed) !== epoch)
               throw new MailboxEpochChangedError();
             frontier = BigInt(initialFrontier);
-            await this.database
-              .update(mailboxes)
-              .set({
-                backfillUidValidity: epoch,
-                backfillFrontierUid: frontier,
-                backfillStatus: "running",
-                backfillError: null,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(mailboxes.id, mailboxId),
-                  eq(mailboxes.recentSyncUidValidity, epoch),
-                ),
-              );
+            await this.database.transaction(async (tx) => {
+              await assertImapPublication(tx, accountId, account.revision);
+              await tx
+                .update(mailboxes)
+                .set({
+                  backfillUidValidity: epoch,
+                  backfillFrontierUid: frontier,
+                  backfillStatus: "running",
+                  backfillError: null,
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(mailboxes.id, mailboxId),
+                    eq(mailboxes.recentSyncUidValidity, epoch),
+                  ),
+                );
+            });
           },
           chunk: async (batch, nextFrontier) => {
             if (frontier === undefined)
@@ -97,6 +108,8 @@ export class BackfillSyncService {
                 frontier,
                 nextFrontier: BigInt(nextFrontier),
               },
+              false,
+              account.revision,
             );
             frontier = BigInt(nextFrontier);
           },
@@ -104,6 +117,7 @@ export class BackfillSyncService {
       );
       return frontier === 0n ? null : (frontier?.toString() ?? null);
     } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
       if (error instanceof MailboxEpochChangedError) {
         await this.database
           .update(mailboxes)

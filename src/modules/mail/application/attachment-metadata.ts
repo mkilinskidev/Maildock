@@ -12,6 +12,7 @@ type Db = Pick<Database, "insert">;
 export async function persistAttachmentMetadata(
   db: Db,
   messageId: string,
+  accountId: string,
   mailboxId: string,
   uidValidity: bigint,
   uid: bigint,
@@ -27,6 +28,8 @@ export async function persistAttachmentMetadata(
         ...part,
         id: randomUUID(),
         messageId,
+        accountId,
+        sourceAccountId: accountId,
         sourceMailboxId: mailboxId,
         sourceUidValidity: uidValidity,
         sourceUid: uid,

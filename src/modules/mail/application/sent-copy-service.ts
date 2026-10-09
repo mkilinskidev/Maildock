@@ -1,3 +1,7 @@
+import {
+  resolveReceiveTransport,
+  GmailReceiveUnsupportedError,
+} from "../../accounts/domain/receive-transport";
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { BlobStorage } from "../../../shared/application/blob-storage";
 import { DEFAULT_ATTACHMENT_LIMITS } from "../domain/attachments";
@@ -70,6 +74,22 @@ export class SentCopyService {
       !["pending", "saving", "saved"].includes(candidate.sentCopyStatus)
     )
       return;
+    const [owner] = await this.db
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, candidate.accountId));
+    if (owner && resolveReceiveTransport(owner) === "gmail") {
+      await this.db
+        .update(outgoingMessages)
+        .set({
+          sentCopyStatus: "failed",
+          sentCopyError: new GmailReceiveUnsupportedError().message,
+          sentCopySyncPending: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(outgoingMessages.id, id));
+      return;
+    }
     // Account/OAuth resolution must not consume another connection while the
     // outgoing session lock holds a reserved pool connection.
     let account: ProviderImapAccount | undefined;

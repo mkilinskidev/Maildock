@@ -32,6 +32,7 @@ describe("F10 actual Drizzle migration against pre-F10 PostgreSQL databases", ()
   let container: StartedTestContainer;
   let database: ReturnType<typeof createDatabase>;
   let legacyFolder: string;
+  let matchedLegacyFolder: string;
   let passwordHash: string;
   let auth: ReturnType<typeof createAuth>;
   const origin = "http://localhost:3000";
@@ -73,6 +74,23 @@ describe("F10 actual Drizzle migration against pre-F10 PostgreSQL databases", ()
       (entry: { tag: string }) => entry.tag === "0028_owner_binding",
     );
     expect(ownerIndex).toBe(28);
+    matchedLegacyFolder = await mkdtemp(
+      path.join(tmpdir(), "maildock-f10-matched-legacy-"),
+    );
+    await mkdir(path.join(matchedLegacyFolder, "meta"));
+    const matchedJournal = {
+      ...journal,
+      entries: journal.entries.slice(0, 36),
+    };
+    await writeFile(
+      path.join(matchedLegacyFolder, "meta/_journal.json"),
+      JSON.stringify(matchedJournal),
+    );
+    for (const entry of matchedJournal.entries)
+      await copyFile(
+        `db/migrations/${entry.tag}.sql`,
+        path.join(matchedLegacyFolder, `${entry.tag}.sql`),
+      );
     journal.entries = journal.entries.slice(0, ownerIndex);
     await mkdir(path.join(legacyFolder, "meta"));
     await writeFile(
@@ -96,6 +114,8 @@ describe("F10 actual Drizzle migration against pre-F10 PostgreSQL databases", ()
   afterAll(async () => {
     await database?.client.end();
     await container?.stop();
+    if (matchedLegacyFolder)
+      await rm(matchedLegacyFolder, { recursive: true, force: true });
     if (legacyFolder) await rm(legacyFolder, { recursive: true, force: true });
   });
 
@@ -114,7 +134,8 @@ describe("F10 actual Drizzle migration against pre-F10 PostgreSQL databases", ()
     return owner;
   }
   function upgrade() {
-    return migrate(database.db, { migrationsFolder: "db/migrations" });
+    // Historical owner binding is tested with its matched pre-native release.
+    return migrate(database.db, { migrationsFolder: matchedLegacyFolder });
   }
   async function ownerCookie() {
     const response = await auth.handler(

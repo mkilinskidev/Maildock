@@ -1,3 +1,4 @@
+import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
@@ -12,6 +13,7 @@ export const MAILBOX_RECENT_SYNC_QUEUE = "mailbox-recent-sync-v1";
 
 export const recentSyncPayloadSchema = z
   .object({
+    accountRevision: z.string().regex(/^[1-9][0-9]*$/),
     version: z.literal(1),
     accountId: z.uuid(),
     mailboxId: z.uuid(),
@@ -55,7 +57,12 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
     await this.start();
     const id = await this.boss.send(
       MAILBOX_RECENT_SYNC_QUEUE,
-      { version: 1, accountId, mailboxId },
+      {
+        version: 1,
+        accountId,
+        mailboxId,
+        accountRevision: await imapJobRevision(this.boss, accountId),
+      },
       { singletonKey: mailboxId, priority: 10 },
     );
     return id !== null;
@@ -79,8 +86,13 @@ export async function registerRecentSyncWorker(
       const job = batch[0];
       if (!job) throw new Error("Recent sync received an empty batch.");
       const payload = recentSyncPayloadSchema.parse(job.data);
+      await assertImapJob(boss, payload);
       await withLock(payload.mailboxId, () =>
-        service.runRecentSync(payload.accountId, payload.mailboxId),
+        service.runRecentSync(
+          payload.accountId,
+          payload.mailboxId,
+          payload.accountRevision,
+        ),
       );
     }),
   );

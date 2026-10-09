@@ -872,6 +872,12 @@ export class ImapSmtpMailProvider implements MailProvider {
     }
   }
 
+  async testSmtpConnection(
+    account: Pick<ProviderAccount, "accountId" | "smtp">,
+  ) {
+    return this.testSmtp(account.smtp);
+  }
+
   async testConnection(account: ProviderAccount): Promise<ConnectionReport> {
     return {
       imap: await this.testImap(account.imap),

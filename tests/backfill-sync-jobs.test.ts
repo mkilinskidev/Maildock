@@ -20,6 +20,18 @@ describe("Phase 1G job priority", () => {
     }[] = [];
     const boss = {
       getDb: () => ({
+        executeSql: async () => ({
+          rows: [
+            {
+              provider_type: "imap_smtp",
+              auth_method: "password",
+              oauth_provider_id: null,
+              oauth_status: null,
+              enabled: true,
+              work_revision: "1",
+            },
+          ],
+        }),
         beginTransaction: async () => ({
           db: { executeSql: async () => ({ rows: [] }) },
           commit: async () => {},
@@ -67,6 +79,20 @@ describe("Phase 1G job priority", () => {
     let queued = MAILBOX_RECENT_SYNC_QUEUE;
     let entered = false;
     const boss = {
+      getDb: () => ({
+        executeSql: async () => ({
+          rows: [
+            {
+              provider_type: "imap_smtp",
+              auth_method: "password",
+              oauth_provider_id: null,
+              oauth_status: null,
+              enabled: true,
+              work_revision: "1",
+            },
+          ],
+        }),
+      }),
       createQueue: async () => undefined,
       work: async (
         _name: string,
@@ -88,7 +114,9 @@ describe("Phase 1G job priority", () => {
       entered = true;
       await work();
     });
-    const job = [{ data: { version: 1, accountId, mailboxId } }];
+    const job = [
+      { data: { version: 1, accountRevision: "1", accountId, mailboxId } },
+    ];
     await handler(job);
     expect(entered).toBe(false);
     queued = MAILBOX_DELTA_SYNC_QUEUE;

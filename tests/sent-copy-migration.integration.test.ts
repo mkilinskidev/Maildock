@@ -63,8 +63,17 @@ it("forward migration preserves old accounts and outgoing mail as server / not_r
       sentCopySyncPending: false,
     });
     await apply(migrations[14].sql);
-    for (const migration of migrations.slice(15)) await apply(migration.sql);
-    const [upgraded] = await db.db.select().from(outgoingMessages);
+    for (const migration of migrations.slice(15, -1))
+      await apply(migration.sql);
+    const [upgraded] = await db.db
+      .select({
+        inReplyTo: outgoingMessages.inReplyTo,
+        references: outgoingMessages.references,
+        status: outgoingMessages.status,
+        mimeBase64: outgoingMessages.mimeBase64,
+        messageId: outgoingMessages.messageId,
+      })
+      .from(outgoingMessages);
     expect(upgraded).toMatchObject({
       inReplyTo: null,
       references: [],

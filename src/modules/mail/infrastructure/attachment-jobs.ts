@@ -1,3 +1,5 @@
+import { imapJobRevision, assertImapJob } from "./receive-job-policy";
+import { StaleAccountWorkError } from "../../accounts/domain/receive-transport";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
@@ -7,7 +9,13 @@ import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { AttachmentService } from "../application/attachment-service";
 
 export const ATTACHMENT_QUEUE = "attachment-fetch-v1";
-export const attachmentJob = z.object({ attachmentId: z.uuid() }).strict();
+export const attachmentJob = z
+  .object({
+    attachmentId: z.uuid(),
+    accountId: z.uuid(),
+    accountRevision: z.string().regex(/^[1-9][0-9]*$/),
+  })
+  .strict();
 export async function ensureAttachmentQueue(boss: PgBoss) {
   await boss.createQueue(ATTACHMENT_QUEUE, {
     retryLimit: 0,
@@ -15,7 +23,20 @@ export async function ensureAttachmentQueue(boss: PgBoss) {
   });
 }
 export async function enqueueAttachment(boss: PgBoss, id: string) {
-  await boss.send(ATTACHMENT_QUEUE, { attachmentId: id }, { singletonKey: id });
+  const result = await boss
+    .getDb()
+    .executeSql(
+      "select account_id from public.message_attachments where id = $1",
+      [id],
+    );
+  const accountId = result.rows[0]?.account_id;
+  if (!accountId) throw new StaleAccountWorkError();
+  const accountRevision = await imapJobRevision(boss, accountId);
+  await boss.send(
+    ATTACHMENT_QUEUE,
+    { attachmentId: id, accountId, accountRevision },
+    { singletonKey: id },
+  );
 }
 export class PgBossAttachmentScheduler {
   private readonly boss: PgBoss;
@@ -50,8 +71,13 @@ export async function registerAttachmentWorker(
     ATTACHMENT_QUEUE,
     { localConcurrency: 2 },
     safeJobHandler("attachment", async (batch) => {
-      const { attachmentId } = attachmentJob.parse(batch[0]?.data);
-      await service.run(attachmentId);
+      const payload = attachmentJob.parse(batch[0]?.data);
+      await assertImapJob(boss, payload);
+      await service.run(
+        payload.attachmentId,
+        payload.accountRevision,
+        payload.accountId,
+      );
     }),
   );
 }

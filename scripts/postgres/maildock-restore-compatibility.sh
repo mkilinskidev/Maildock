@@ -34,19 +34,23 @@ grep -Eq '^[0-9]+; [0-9]+ [0-9]+ FUNCTION public maildock_search_addresses\(json
 grep -Eq '^[0-9]+; [0-9]+ [0-9]+ FUNCTION public maildock_search_vector\(text, jsonb, jsonb, jsonb, jsonb, text\) [^ ]+$' "$tmp/functions" || fail
 awk '/^[^;].* TABLE public / { print $6 }' "$tmp/toc" | sort > "$tmp/tables"
 stage=archive_tables
-cmp -s "$tmp/tables" "$resources/legacy-tables.txt" || fail
+archive_family=legacy
+if ! cmp -s "$tmp/tables" "$resources/legacy-tables.txt"; then
+  cmp -s "$tmp/tables" "$resources/native-tables.txt" || fail
+  archive_family=native
+fi
 pg_restore --no-owner --no-acl --schema-only --use-list="$tmp/functions" --file="$tmp/functions.sql" "$2" 2> "$tmp/error" || fail
 # Match the reviewed entire function definitions, including bodies/properties.
 stage=function_definitions
 awk '/^CREATE FUNCTION / { active=1 } active { sub(/\r$/, ""); print } active && /^\$\$;/ { active=0 }' "$tmp/functions.sql" > "$tmp/definitions"
-cmp -s "$tmp/definitions" "$resources/legacy-functions.sql" || fail
+cmp -s "$tmp/definitions" "$resources/$archive_family-functions.sql" || fail
 pg_restore --data-only --table=__drizzle_migrations --file="$tmp/migrations.sql" "$2" 2> "$tmp/error" || fail
 stage=archive_migrations
 awk '/^COPY drizzle.__drizzle_migrations / { active=1; next } active && /^\\\.$/ {active=0; next} active { if(NF != 3) exit 1; print $2 "\t" $3 }' "$tmp/migrations.sql" > "$tmp/migrations" || fail
 # Exact complete baseline histories from the deployed image and the LF checkout.
 # Never accept per-row alternatives, normalize hashes, or edit archive contents.
-if ! cmp -s "$tmp/migrations" "$resources/legacy-migrations.txt"; then
-  cmp -s "$tmp/migrations" "$resources/legacy-migrations-lf.txt" || fail
+if ! cmp -s "$tmp/migrations" "$resources/$archive_family-migrations.txt"; then
+  cmp -s "$tmp/migrations" "$resources/$archive_family-migrations-lf.txt" || fail
 fi
 # The preflight checks actual ordinary authority and rejects any destination
 # application storage. A failed import leaves the two predefinitions behind.

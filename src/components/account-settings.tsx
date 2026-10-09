@@ -634,15 +634,19 @@ export function AccountSettings({
           </dl>
           <p className="muted">
             Synchronization confirms receiving mail only. Manual connection
-            tests check IMAP and SMTP separately; successful synchronization
-            does not verify sending.
+            tests check receiving and SMTP separately; successful
+            synchronization does not verify sending.
           </p>
           <details>
             <summary>Technical connection details</summary>
             <dl className="settings-facts">
               <dt>Connection test state</dt>
               <dd>{account.connectionStatus}</dd>
-              <dt>IMAP test</dt>
+              <dt>
+                {account.receiveTransport === "gmail"
+                  ? "Gmail API test"
+                  : "IMAP test"}
+              </dt>
               <dd>{friendlyStatus(account.imapResult.status)}</dd>
               <dt>SMTP test</dt>
               <dd>{friendlyStatus(account.smtpResult.status)}</dd>

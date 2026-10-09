@@ -110,11 +110,11 @@ describe("attachment MIME foundations", () => {
       }).rejects.toThrow();
     }
   });
-  it("accepts only an attachment ID in durable jobs", () => {
+  it("accepts only owning IDs and a revision in durable jobs", () => {
     const id = "00000000-0000-4000-8000-000000000001";
-    expect(attachmentJob.parse({ attachmentId: id })).toEqual({
-      attachmentId: id,
-    });
+    const payload = { attachmentId: id, accountId: id, accountRevision: "1" };
+    expect(attachmentJob.parse(payload)).toEqual(payload);
+    expect(() => attachmentJob.parse({ attachmentId: id })).toThrow();
     for (const field of [
       "uid",
       "mailbox",
@@ -123,7 +123,7 @@ describe("attachment MIME foundations", () => {
       "storageKey",
     ])
       expect(() =>
-        attachmentJob.parse({ attachmentId: id, [field]: "secret" }),
+        attachmentJob.parse({ ...payload, [field]: "secret" }),
       ).toThrow();
   });
   const message = {

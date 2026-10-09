@@ -1,11 +1,15 @@
 import {
+  MailTransportRouter,
+  StaleAccountWorkError,
+} from "../../accounts/domain/receive-transport";
+import {
   SAFE_INLINE_IMAGE_TYPES,
   isSafeRaster,
   inlineRasterType,
 } from "../infrastructure/render-email-document";
 import { normalizeContentId } from "../infrastructure/sanitize-email-html";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   draftAttachments,
@@ -132,6 +136,7 @@ export class AttachmentService {
         /* Missing/corrupt cache is repairable from the authoritative placement. */
       }
     }
+    new MailTransportRouter().requireImap(row.account);
     if (
       !row.placement ||
       !row.mailbox?.selectable ||
@@ -312,7 +317,7 @@ export class AttachmentService {
       .limit(100);
     for (const row of rows) await this.enqueue(row.id).catch(() => undefined);
   }
-  async run(id: string) {
+  async run(id: string, expectedRevision?: string, expectedAccountId?: string) {
     if (!this.lock || !this.accounts || !this.provider?.fetchAttachment)
       throw Error("Attachment worker dependencies are required.");
     // Resolve OAuth before reserving a connection, including one-connection pools.
@@ -322,12 +327,23 @@ export class AttachmentService {
       !["pending", "fetching"].includes(candidate.attachment.status)
     )
       return;
+    if (
+      expectedAccountId !== undefined &&
+      candidate.account.id !== expectedAccountId
+    )
+      throw new StaleAccountWorkError();
+    if (expectedRevision !== undefined)
+      new MailTransportRouter().requireImap(
+        candidate.account,
+        expectedRevision,
+      );
     let account:
       | Awaited<ReturnType<AccountsService["getProviderImapAccountForWork"]>>
       | undefined;
     try {
       account = await this.accounts.getProviderImapAccountForWork(
         candidate.account.id,
+        expectedRevision ?? candidate.account.workRevision.toString(),
       );
     } catch {
       /* Persist safe failure inside lock. */
@@ -342,6 +358,8 @@ export class AttachmentService {
         return;
       try {
         if (
+          row.attachment.sourceUid === null ||
+          row.attachment.sourceUidValidity === null ||
           !account ||
           !row.account.enabled ||
           !row.placement ||
@@ -378,28 +396,47 @@ export class AttachmentService {
           account,
           {
             remotePath: row.mailbox.remotePath,
-            uid: row.attachment.sourceUid.toString(),
-            expectedUidValidity: row.attachment.sourceUidValidity.toString(),
+            uid: row.attachment.sourceUid!.toString(),
+            expectedUidValidity: row.attachment.sourceUidValidity!.toString(),
             partId: row.attachment.partId,
             maxBytes: this.limits.maxAttachmentBytes,
           },
           (stream) => this.storage.put(stream, this.limits.maxAttachmentBytes),
         );
-        // The lock owns a reserved session, whose postgres-js client has no
-        // transaction API. Publish metadata first, then the authoritative ready
-        // transition using autocommit on that same session. Failure leaves an
-        // unreferenced complete blob, never a partially written attachment.
-        const blobId = await registerBlob(db, blob);
-        await db
-          .update(messageAttachments)
-          .set({ status: "ready", blobId, error: null, updatedAt: new Date() })
-          .where(eq(messageAttachments.id, id));
-        await db
-          .update(draftAttachments)
-          .set({ blobId })
-          .where(
-            and(eq(draftAttachments.id, id), isNull(draftAttachments.blobId)),
+        // Publish on the lock's reserved session, without a second pool checkout.
+        // The shared account lock fences disable/reconnect until commit.
+        await db.execute(sql`begin`);
+        try {
+          const [currentAccount] = await db
+            .select()
+            .from(mailAccounts)
+            .where(eq(mailAccounts.id, row.account.id))
+            .for("share");
+          new MailTransportRouter().requireImap(
+            currentAccount,
+            candidate.account.workRevision.toString(),
           );
+          const blobId = await registerBlob(db, blob);
+          await db
+            .update(messageAttachments)
+            .set({
+              status: "ready",
+              blobId,
+              error: null,
+              updatedAt: new Date(),
+            })
+            .where(eq(messageAttachments.id, id));
+          await db
+            .update(draftAttachments)
+            .set({ blobId })
+            .where(
+              and(eq(draftAttachments.id, id), isNull(draftAttachments.blobId)),
+            );
+          await db.execute(sql`commit`);
+        } catch (error) {
+          await db.execute(sql`rollback`);
+          throw error;
+        }
       } catch (error) {
         if (error instanceof MailboxEpochChangedError) stale = true;
         const reason =

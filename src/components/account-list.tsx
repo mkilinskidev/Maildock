@@ -206,7 +206,10 @@ export function AccountList({
               {mailboxesByAccount[account.id]?.length ?? 0} mailboxes
             </div>
             {account.imapResult.error ? (
-              <p className="error">IMAP: {account.imapResult.error}</p>
+              <p className="error">
+                {account.receiveTransport === "gmail" ? "Gmail API" : "IMAP"}:{" "}
+                {account.imapResult.error}
+              </p>
             ) : null}
             {account.smtpResult.error ? (
               <p className="error">SMTP: {account.smtpResult.error}</p>

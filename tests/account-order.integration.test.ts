@@ -1,3 +1,4 @@
+import { reseedNativeAccountFixture } from "./native-account-fixture";
 import { randomUUID } from "node:crypto";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import {
@@ -49,10 +50,11 @@ beforeAll(async () => {
     await database.client`INSERT INTO mail_accounts (id, display_name, email, imap_host, imap_port, imap_security, imap_username, imap_password, smtp_host, smtp_port, smtp_security, created_at)
       VALUES (${legacy[index]}, 'Existing', 'owner@example.com', 'imap.test', 993, 'tls', 'owner', '{}', 'smtp.test', 465, 'tls', ${created})`;
   }
-  for (const migration of migrations.slice(27))
+  for (const migration of migrations.slice(27, -1))
     await database.client.begin(async (tx) => {
       for (const statement of migration.sql) await tx.unsafe(statement);
     });
+  await reseedNativeAccountFixture(database, migrations.at(-1)!);
   service = new AccountsService(
     database.db,
     new AesGcmSecretEncryption("v1", {
@@ -128,7 +130,7 @@ it("appends simultaneous new manual and OAuth accounts after reordered existing 
         smtpPort: 465,
         smtpSecurity: "tls",
         authMethod: oauth ? "oauth2" : "password",
-        oauthProviderId: oauth ? "google" : null,
+        oauthProviderId: oauth ? "microsoft" : null,
         oauthCache: oauth
           ? {
               version: 1,

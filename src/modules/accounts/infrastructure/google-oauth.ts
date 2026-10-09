@@ -4,7 +4,7 @@ import {
   beginStage,
 } from "../../../shared/infrastructure/logging/performance";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, lte } from "drizzle-orm";
+import { and, eq, gt, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   OAuthAuthorizationError,
@@ -328,7 +328,8 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
           .update(mailAccounts)
           .set({
             email,
-            imapUsername: email,
+            smtpUsername: email,
+            workRevision: sql`${mailAccounts.workRevision} + 1`,
             oauthCache: this.encryptAuthorization(
               id,
               identity.sub,
@@ -355,7 +356,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         senderDisplayName: email,
         email,
         enabled: true,
-        providerType: "imap_smtp",
+        providerType: "gmail_smtp",
         authMethod: "oauth2",
         oauthProviderId: this.id,
         oauthCache: this.encryptAuthorization(
@@ -365,10 +366,14 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         ),
         oauthStatus: "connected",
         ...this.getMailDefaults(),
-        imapUsername: email,
+        imapHost: null,
+        imapPort: null,
+        imapSecurity: null,
+        imapUsername: null,
+        oauthHomeAccountId: identity.sub,
         imapPassword: null,
-        smtpUsesImapCredentials: true,
-        smtpUsername: null,
+        smtpUsesImapCredentials: false,
+        smtpUsername: email,
         smtpPassword: null,
       });
     }
@@ -434,6 +439,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
             .update(mailAccounts)
             .set({
               oauthStatus: "reconnect_required",
+              workRevision: sql`${mailAccounts.workRevision} + 1`,
               updatedAt: new Date(),
             })
             .where(

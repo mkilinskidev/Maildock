@@ -81,6 +81,12 @@ export class NotificationService {
         .limit(50);
       const events = [];
       for (const row of rows) {
+        if (
+          row.receiveTransport !== "imap" ||
+          row.uid === null ||
+          row.uidValidity === null
+        )
+          continue;
         const [context] = await tx
           .select({
             enabled: mailAccounts.enabled,

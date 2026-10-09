@@ -1,3 +1,5 @@
+import { StaleAccountWorkError } from "../../accounts/domain/receive-transport";
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
 import {
   withPerformance,
   measureStage,
@@ -39,15 +41,17 @@ export class DeltaSyncService {
     accountId: string,
     mailboxId: string,
     reason: DeltaReason,
+    expectedRevision?: string,
   ): Promise<void> {
     return withPerformance("delta", () =>
-      this.runImpl(accountId, mailboxId, reason),
+      this.runImpl(accountId, mailboxId, reason, expectedRevision),
     );
   }
   private async runImpl(
     accountId: string,
     mailboxId: string,
     reason: DeltaReason,
+    expectedRevision?: string,
   ): Promise<void> {
     const [mailbox] = await this.database
       .select()
@@ -93,7 +97,10 @@ export class DeltaSyncService {
     let emptyBootstrap = false;
     try {
       const account = await measureStage("credentials", () =>
-        this.accounts.getProviderImapAccountForWork(accountId),
+        this.accounts.getProviderImapAccountForWork(
+          accountId,
+          expectedRevision,
+        ),
       );
       if (!this.provider.synchronizeDeltaMailbox)
         throw new Error("Delta provider is unavailable.");
@@ -116,6 +123,7 @@ export class DeltaSyncService {
                 current.deltaUidValidity !== epoch)
             ) {
               await this.database.transaction(async (tx) => {
+                await assertImapPublication(tx, accountId, account.revision);
                 await tx
                   .delete(mailboxMessages)
                   .where(eq(mailboxMessages.mailboxId, mailboxId));
@@ -152,7 +160,8 @@ export class DeltaSyncService {
                   eq(mailboxMessages.mailboxId, mailboxId),
                   eq(mailboxMessages.uidValidity, selectedEpoch),
                 ),
-              );
+              )
+              .orderBy(mailboxMessages.uid);
             emptyBootstrap =
               current.deltaUidValidity === null &&
               current.recentSyncMessageCount === 0;
@@ -160,7 +169,11 @@ export class DeltaSyncService {
               throw new Error("Recent-window cutoff is unavailable.");
             lastSeen =
               current.deltaLastSeenUid ??
-              local.reduce((max, row) => (row.uid > max ? row.uid : max), 0n);
+              local.reduce(
+                (max, row) =>
+                  row.uid !== null && row.uid > max ? row.uid : max,
+                0n,
+              );
             if (current.deltaUidValidity === null && !emptyBootstrap) {
               await this.database
                 .update(mailboxes)
@@ -178,7 +191,7 @@ export class DeltaSyncService {
                 current.deltaUidValidity === epoch
                   ? (current.deltaHighestModseq?.toString() ?? null)
                   : null,
-              localUids: local.map((row) => row.uid.toString()),
+              localUids: local.map((row) => row.uid!.toString()),
               ...(emptyBootstrap
                 ? { emptyBootstrapCutoff: current.recentSyncCutoff! }
                 : {}),
@@ -213,6 +226,7 @@ export class DeltaSyncService {
               emptyBootstrap ? undefined : next,
               undefined,
               !emptyBootstrap,
+              account.revision,
             );
             lastSeen = next;
             newCount += batch.length;
@@ -222,6 +236,7 @@ export class DeltaSyncService {
               throw new Error("Mailbox epoch was not selected.");
             const currentEpoch = epoch;
             await this.database.transaction(async (tx) => {
+              await assertImapPublication(tx, accountId, account.revision);
               for (const change of changes) {
                 const [existing] = await tx
                   .select({
@@ -262,6 +277,7 @@ export class DeltaSyncService {
             // Confirmed absence is irreversible within an epoch: UIDs cannot
             // be reused. Commit bounded batches; retries keep the old MODSEQ.
             const gone = await this.database.transaction(async (tx) => {
+              await assertImapPublication(tx, accountId, account.revision);
               const [current] = await tx
                 .select({ epoch: mailboxes.recentSyncUidValidity })
                 .from(mailboxes)
@@ -284,37 +300,40 @@ export class DeltaSyncService {
           },
           completed: async (observation) => {
             const completedAt = new Date();
-            const completed = await this.database
-              .update(mailboxes)
-              .set({
-                uidNext: BigInt(observation.uidNext),
-                reportedMessageCount: BigInt(observation.messageCount),
-                reportedUnseenCount:
-                  observation.unseenCount === null
-                    ? null
-                    : BigInt(observation.unseenCount),
-                highestModseq:
-                  observation.highestModseq === null
-                    ? null
-                    : BigInt(observation.highestModseq),
-                deltaHighestModseq:
-                  observation.highestModseq === null
-                    ? null
-                    : BigInt(observation.highestModseq),
-                deltaSyncStatus: "success",
-                deltaSyncError: null,
-                deltaSyncCompletedAt: completedAt,
-                lastSuccessfulDeltaSyncAt: completedAt,
-                updatedAt: completedAt,
-              })
-              .where(
-                and(
-                  eq(mailboxes.id, mailboxId),
-                  eq(mailboxes.deltaUidValidity, epoch!),
-                  eq(mailboxes.recentSyncUidValidity, epoch!),
-                ),
-              )
-              .returning({ id: mailboxes.id });
+            const completed = await this.database.transaction(async (tx) => {
+              await assertImapPublication(tx, accountId, account.revision);
+              return tx
+                .update(mailboxes)
+                .set({
+                  uidNext: BigInt(observation.uidNext),
+                  reportedMessageCount: BigInt(observation.messageCount),
+                  reportedUnseenCount:
+                    observation.unseenCount === null
+                      ? null
+                      : BigInt(observation.unseenCount),
+                  highestModseq:
+                    observation.highestModseq === null
+                      ? null
+                      : BigInt(observation.highestModseq),
+                  deltaHighestModseq:
+                    observation.highestModseq === null
+                      ? null
+                      : BigInt(observation.highestModseq),
+                  deltaSyncStatus: "success",
+                  deltaSyncError: null,
+                  deltaSyncCompletedAt: completedAt,
+                  lastSuccessfulDeltaSyncAt: completedAt,
+                  updatedAt: completedAt,
+                })
+                .where(
+                  and(
+                    eq(mailboxes.id, mailboxId),
+                    eq(mailboxes.deltaUidValidity, epoch!),
+                    eq(mailboxes.recentSyncUidValidity, epoch!),
+                  ),
+                )
+                .returning({ id: mailboxes.id });
+            });
             if (!completed.length) throw new MailboxEpochChangedError();
           },
         },
@@ -334,6 +353,7 @@ export class DeltaSyncService {
       );
       return;
     } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
       if (error instanceof MailboxEpochChangedError) {
         await this.events?.record("mail.epoch_reset", {
           accountId,

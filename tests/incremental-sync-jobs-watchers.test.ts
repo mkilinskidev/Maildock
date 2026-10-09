@@ -41,6 +41,18 @@ function boss() {
   const sent: { queue: string; data: unknown; options: unknown }[] = [];
   const value = {
     getDb: () => ({
+      executeSql: async () => ({
+        rows: [
+          {
+            provider_type: "imap_smtp",
+            auth_method: "password",
+            oauth_provider_id: null,
+            oauth_status: null,
+            enabled: true,
+            work_revision: "1",
+          },
+        ],
+      }),
       beginTransaction: async () => ({
         db: { executeSql: async () => ({ rows: [] }) },
         commit: async () => {},
@@ -173,7 +185,13 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     expect(jobs.sent).toEqual([
       {
         queue: MAILBOX_DELTA_SYNC_QUEUE,
-        data: { version: 1, accountId, mailboxId, reason: "poll" },
+        data: {
+          version: 1,
+          accountRevision: "1",
+          accountId,
+          mailboxId,
+          reason: "poll",
+        },
         options: {
           singletonKey: mailboxId,
           priority: 10,
@@ -210,6 +228,20 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       (jobs: { data: unknown }[]) => Promise<void>
     >();
     const jobs = {
+      getDb: () => ({
+        executeSql: async () => ({
+          rows: [
+            {
+              provider_type: "imap_smtp",
+              auth_method: "password",
+              oauth_provider_id: null,
+              oauth_status: null,
+              enabled: true,
+              work_revision: "1",
+            },
+          ],
+        }),
+      }),
       createQueue: async () => undefined,
       work: async (
         name: string,
@@ -234,12 +266,18 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     await registerDeltaWorker(jobs, delta, 1, withLock);
     await handlers.get(MAILBOX_RECENT_SYNC_QUEUE)!([
       {
-        data: { version: 1, accountId, mailboxId },
+        data: { version: 1, accountRevision: "1", accountId, mailboxId },
       },
     ]);
     await handlers.get(MAILBOX_DELTA_SYNC_QUEUE)!([
       {
-        data: { version: 1, accountId, mailboxId, reason: "poll" },
+        data: {
+          version: 1,
+          accountRevision: "1",
+          accountId,
+          mailboxId,
+          reason: "poll",
+        },
       },
     ]);
     expect(locked).toEqual([mailboxId, mailboxId]);

@@ -1,3 +1,5 @@
+import { imapJobRevision } from "../modules/mail/infrastructure/receive-job-policy";
+import { MailTransportRouter } from "../modules/accounts/domain/receive-transport";
 import { createOAuthComposition } from "../modules/accounts/infrastructure/oauth-composition";
 import { ApplicationEventService } from "../modules/diagnostics/application/application-event-service";
 import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
@@ -47,6 +49,7 @@ import {
 } from "../modules/mail/infrastructure/message-command-jobs.js";
 
 export function createWorkerComposition() {
+  const transportRouter = new MailTransportRouter();
   const config = getConfig();
   const logger = createLogger(config);
   const database = createWorkerDatabase(config);
@@ -63,6 +66,7 @@ export function createWorkerComposition() {
     undefined,
     createOAuthComposition(database.db, encryption, config).registry,
     events,
+    transportRouter,
   );
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
@@ -70,7 +74,12 @@ export function createWorkerComposition() {
     schedule: async (accountId: string, mailboxId: string) =>
       (await jobs.boss.send(
         MAILBOX_RECENT_SYNC_QUEUE,
-        { version: 1, accountId, mailboxId },
+        {
+          version: 1,
+          accountId,
+          mailboxId,
+          accountRevision: await imapJobRevision(jobs.boss, accountId),
+        },
         { singletonKey: mailboxId, priority: 10 },
       )) !== null,
   };
@@ -137,6 +146,7 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    transportRouter,
     events,
     attachments,
     attachmentPoller: new AttachmentPoller(attachments),

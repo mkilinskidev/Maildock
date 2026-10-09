@@ -1,3 +1,5 @@
+import { StaleAccountWorkError } from "../../accounts/domain/receive-transport";
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
 import { eq } from "drizzle-orm";
 
 import {
@@ -30,7 +32,7 @@ export class MailboxDiscoveryService {
     private readonly messages?: MessageService,
   ) {}
 
-  async run(accountId: string): Promise<void> {
+  async run(accountId: string, expectedRevision?: string): Promise<void> {
     const startedAt = new Date();
     await this.database
       .update(mailAccounts)
@@ -43,21 +45,31 @@ export class MailboxDiscoveryService {
       .where(eq(mailAccounts.id, accountId));
 
     try {
-      const account =
-        await this.accounts.getProviderImapAccountForWork(accountId);
+      const account = await this.accounts.getProviderImapAccountForWork(
+        accountId,
+        expectedRevision,
+      );
       const result = await this.provider.listMailboxes(account);
       const observedAt = new Date();
-      await this.mailboxes.reconcile(accountId, result.mailboxes, observedAt);
-      await this.database
-        .update(mailAccounts)
-        .set({
-          mailboxDiscoveryStatus: "success",
-          mailboxDiscoveryError: null,
-          lastSuccessfulMailboxDiscoveryAt: observedAt,
-          imapCapabilities: [...result.capabilities],
-          updatedAt: observedAt,
-        })
-        .where(eq(mailAccounts.id, accountId));
+      await this.mailboxes.reconcile(
+        accountId,
+        result.mailboxes,
+        observedAt,
+        account.revision,
+      );
+      await this.database.transaction(async (tx) => {
+        await assertImapPublication(tx, accountId, account.revision);
+        await tx
+          .update(mailAccounts)
+          .set({
+            mailboxDiscoveryStatus: "success",
+            mailboxDiscoveryError: null,
+            lastSuccessfulMailboxDiscoveryAt: observedAt,
+            imapCapabilities: [...result.capabilities],
+            updatedAt: observedAt,
+          })
+          .where(eq(mailAccounts.id, accountId));
+      });
       if (this.messages) {
         const selectable = await this.mailboxes.listForAccount(accountId);
         await Promise.allSettled(
@@ -69,6 +81,7 @@ export class MailboxDiscoveryService {
         );
       }
     } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
       const failedAt = new Date();
       await this.database
         .update(mailAccounts)

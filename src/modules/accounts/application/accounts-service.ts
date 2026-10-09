@@ -1,3 +1,10 @@
+import { GmailSyncRepository } from "../../mail/infrastructure/gmail-sync-repository";
+import {
+  MailTransportRouter,
+  GmailReceiveUnsupportedError,
+  type ProviderCapabilities,
+  type ReceiveDiagnostic,
+} from "../domain/receive-transport";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -48,17 +55,20 @@ export type MailAccountView = Readonly<{
   email: string;
   enabled: boolean;
   sentCopyPolicy: SentCopyPolicy;
-  providerType: "imap_smtp";
+  providerType: "imap_smtp" | "gmail_smtp";
+  receiveTransport: "imap" | "gmail";
+  capabilities: ProviderCapabilities;
+  receiveDiagnostic: ReceiveDiagnostic;
   authMethod: "password" | "oauth2";
   oauthProviderId?: string | null;
   oauthProviderName?: string | null;
   oauthAuthorizationPath?: string | null;
   oauthStatus: "connected" | "reconnect_required" | null;
   imap: Readonly<{
-    host: string;
-    port: number;
-    security: "tls" | "starttls";
-    username: string;
+    host: string | null;
+    port: number | null;
+    security: "tls" | "starttls" | null;
+    username: string | null;
     hasStoredPassword: boolean;
   }>;
   smtp: Readonly<{
@@ -107,7 +117,20 @@ function toView(
     email: row.email,
     enabled: row.enabled,
     sentCopyPolicy: row.sentCopyPolicy as SentCopyPolicy,
-    providerType: "imap_smtp",
+    providerType: row.providerType as MailAccountView["providerType"],
+    receiveTransport: new MailTransportRouter().resolve(row),
+    capabilities: new MailTransportRouter().capabilities(
+      row,
+      row.imapCapabilities,
+    ),
+    receiveDiagnostic:
+      row.providerType === "gmail_smtp"
+        ? new MailTransportRouter().gmail.diagnostic()
+        : {
+            transport: "imap",
+            status: row.imapStatus as ReceiveDiagnostic["status"],
+            ...(row.imapError ? { error: row.imapError } : {}),
+          },
     authMethod: row.authMethod as "password" | "oauth2",
     oauthProviderId: row.oauthProviderId,
     oauthProviderName: definition?.name ?? row.oauthProviderId,
@@ -163,6 +186,7 @@ export class AccountsService {
     private readonly discoveryScheduler?: MailboxDiscoveryScheduler,
     private readonly oauth?: OAuthProviderRegistry,
     private readonly events?: ApplicationEventService,
+    readonly transportRouter = new MailTransportRouter(),
   ) {}
 
   async list(): Promise<MailAccountView[]> {
@@ -326,6 +350,7 @@ export class AccountsService {
           ? null
           : parsed.smtp.username,
         smtpPassword,
+        workRevision: sql`${mailAccounts.workRevision} + 1`,
         connectionStatus: "unverified",
         imapStatus: "untested",
         imapError: null,
@@ -377,7 +402,11 @@ export class AccountsService {
   async setEnabled(id: string, enabled: boolean): Promise<MailAccountView> {
     const [updated] = await this.database
       .update(mailAccounts)
-      .set({ enabled, updatedAt: new Date() })
+      .set({
+        enabled,
+        workRevision: sql`${mailAccounts.workRevision} + 1`,
+        updatedAt: new Date(),
+      })
       .where(eq(mailAccounts.id, id))
       .returning();
     if (!updated) throw new MailAccountNotFoundError();
@@ -407,6 +436,39 @@ export class AccountsService {
     const row = await this.getRow(id);
     if (input && row.authMethod !== "password")
       throw new MailAccountNotFoundError();
+    if (this.transportRouter.resolve(row) === "gmail") {
+      const diagnostic = this.transportRouter.gmail.diagnostic();
+      const smtp = await this.getProviderSmtpAccountForWork(id);
+      const smtpResult = (await this.provider.testSmtpConnection?.(smtp)) ?? {
+        success: false as const,
+        category: "internal_error" as const,
+        message: "SMTP verification is unavailable.",
+      };
+      const report: ConnectionReport = {
+        imap: {
+          success: false,
+          category: "verification_failed",
+          message: diagnostic.error!,
+        },
+        smtp: smtpResult,
+      };
+      await this.database
+        .update(mailAccounts)
+        .set({
+          connectionStatus: "error",
+          imapStatus: "error",
+          imapError: diagnostic.error,
+          smtpStatus: smtpResult.success ? "success" : "error",
+          smtpError: smtpResult.success ? null : smtpResult.message,
+        })
+        .where(
+          and(
+            eq(mailAccounts.id, id),
+            eq(mailAccounts.workRevision, row.workRevision),
+          ),
+        );
+      return report;
+    }
     const providerInput = input
       ? this.providerInputFromEdit(row, updateAccountInputSchema.parse(input))
       : await this.providerInputFromRow(row);
@@ -451,17 +513,22 @@ export class AccountsService {
 
   async getProviderImapAccountForWork(
     id: string,
+    expectedRevision?: string,
   ): Promise<ProviderImapAccount> {
     const row = await this.getRow(id);
     if (!row.enabled) throw new DisabledMailAccountError();
+    this.transportRouter.requireImap(row, expectedRevision);
+    const credential = await this.resolveCredential(row);
+    await this.assertWorkRevision(id, row.workRevision.toString());
     return {
       accountId: row.id,
+      revision: row.workRevision.toString(),
       imap: {
-        host: row.imapHost,
-        port: row.imapPort,
+        host: row.imapHost!,
+        port: row.imapPort!,
         security: row.imapSecurity as "tls" | "starttls",
-        username: row.imapUsername,
-        credential: await this.resolveCredential(row),
+        username: row.imapUsername!,
+        credential,
       },
     };
   }
@@ -474,8 +541,42 @@ export class AccountsService {
       (row.authMethod === "oauth2" && row.oauthStatus !== "connected")
     )
       throw new Error("The sending account is not configured.");
-    const account = await this.providerInputFromRow(row);
-    return { accountId: account.accountId, smtp: account.smtp };
+    this.transportRouter.forWork(row);
+    return {
+      accountId: row.id,
+      smtp: {
+        host: row.smtpHost,
+        port: row.smtpPort,
+        security: row.smtpSecurity as "tls" | "starttls",
+        username: row.smtpUsesImapCredentials
+          ? row.imapUsername!
+          : row.smtpUsername!,
+        credential:
+          row.authMethod === "oauth2" || row.smtpUsesImapCredentials
+            ? await this.resolveCredential(row)
+            : {
+                kind: "password" as const,
+                password: this.encryption.decrypt(
+                  row.smtpPassword,
+                  accountCredentialContext(row.id, "smtp"),
+                ),
+              },
+      },
+    };
+  }
+
+  async receiveWorkIdentity(id: string, expectedRevision?: string) {
+    const row = await this.getRow(id);
+    const transport = this.transportRouter.forWork(row, expectedRevision);
+    return {
+      accountId: row.id,
+      transport,
+      revision: row.workRevision.toString(),
+    };
+  }
+
+  async assertWorkRevision(id: string, revision: string) {
+    return this.receiveWorkIdentity(id, revision);
   }
 
   private async getRow(id: string): Promise<AccountRow> {
@@ -518,6 +619,29 @@ export class AccountsService {
   }
 
   private async scheduleDiscovery(id: string): Promise<void> {
+    const row = await this.getRow(id);
+    this.transportRouter.forWork(row);
+    if (this.transportRouter.resolve(row) === "gmail") {
+      await new GmailSyncRepository(this.database).blockUnsupported(
+        id,
+        row.workRevision,
+      );
+      await this.database
+        .update(mailAccounts)
+        .set({
+          mailboxDiscoveryStatus: "failed",
+          mailboxDiscoveryError: new GmailReceiveUnsupportedError().message,
+          imapStatus: "error",
+          imapError: new GmailReceiveUnsupportedError().message,
+        })
+        .where(
+          and(
+            eq(mailAccounts.id, id),
+            eq(mailAccounts.workRevision, row.workRevision),
+          ),
+        );
+      return;
+    }
     if (!this.discoveryScheduler) return;
     const now = new Date();
     try {
@@ -585,14 +709,15 @@ export class AccountsService {
   private async providerInputFromRow(
     row: AccountRow,
   ): Promise<ProviderAccount> {
+    this.transportRouter.requireImap(row);
     const imapCredential = await this.resolveCredential(row);
     return {
       accountId: row.id,
       imap: {
-        host: row.imapHost,
-        port: row.imapPort,
+        host: row.imapHost!,
+        port: row.imapPort!,
         security: row.imapSecurity as "tls" | "starttls",
-        username: row.imapUsername,
+        username: row.imapUsername!,
         credential: imapCredential,
       },
       smtp: {
@@ -600,7 +725,7 @@ export class AccountsService {
         port: row.smtpPort,
         security: row.smtpSecurity as "tls" | "starttls",
         username: row.smtpUsesImapCredentials
-          ? row.imapUsername
+          ? row.imapUsername!
           : row.smtpUsername!,
         credential: row.smtpUsesImapCredentials
           ? imapCredential

@@ -1,3 +1,4 @@
+import { assertNativeReleaseCompatible } from "../shared/infrastructure/database/native-release-guard.js";
 import { logFailure } from "../shared/infrastructure/logging/diagnostics";
 import { createLogger } from "../shared/infrastructure/logging/logger";
 import { registerAttachmentWorker } from "../modules/mail/infrastructure/attachment-jobs";
@@ -22,6 +23,7 @@ async function main() {
   const worker = createWorkerComposition();
   try {
     await validateDatabaseAuthority(worker.database.client);
+    await assertNativeReleaseCompatible(worker.database.client);
   } catch (error) {
     await worker.database.client.end();
     throw error;

@@ -50,6 +50,7 @@ export const outgoingMessages = pgTable(
       () => mailboxes.id,
       { onDelete: "set null" },
     ),
+    sentCopyMessageId: uuid("sent_copy_message_id"),
     sentCopyPath: text("sent_copy_path"),
     sentCopyUidValidity: bigint("sent_copy_uid_validity", { mode: "bigint" }),
     sentCopyUid: bigint("sent_copy_uid", { mode: "bigint" }),
@@ -77,6 +78,12 @@ export const outgoingMessages = pgTable(
       .notNull(),
   },
   (table) => [
+    foreignKey({
+      name: "outgoing_messages_native_sent_fk",
+      columns: [table.accountId, table.sentCopyMessageId],
+      foreignColumns: [messages.accountId, messages.id],
+    }).onDelete("restrict"),
+
     check(
       "outgoing_messages_mime_source",
       sql`(${table.mimeBlobId} is not null and ${table.mimeBase64} is null) or (${table.mimeBlobId} is null and ${table.mimeBase64} is not null)`,
@@ -144,17 +151,22 @@ export const blobs = pgTable(
 export const messageAttachments = pgTable(
   "message_attachments",
   {
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .default("imap")
+      .notNull(),
+    accountId: uuid("account_id").notNull(),
+    sourceAccountId: uuid("source_account_id"),
+    gmailAttachmentId: text("gmail_attachment_id"),
     id: uuid("id").primaryKey(),
     messageId: uuid("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
-    sourceMailboxId: uuid("source_mailbox_id").references(() => mailboxes.id, {
-      onDelete: "set null",
-    }),
+    sourceMailboxId: uuid("source_mailbox_id"),
     sourceUidValidity: bigint("source_uid_validity", {
       mode: "bigint",
-    }).notNull(),
-    sourceUid: bigint("source_uid", { mode: "bigint" }).notNull(),
+    }),
+    sourceUid: bigint("source_uid", { mode: "bigint" }),
     partId: text("part_id").notNull(),
     filename: text("filename"),
     contentType: text("content_type").notNull(),
@@ -176,6 +188,33 @@ export const messageAttachments = pgTable(
       .notNull(),
   },
   (table) => [
+    foreignKey({
+      name: "message_attachments_message_transport_fk",
+      columns: [table.accountId, table.messageId, table.receiveTransport],
+      foreignColumns: [
+        messages.accountId,
+        messages.id,
+        messages.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "message_attachments_source_transport_fk",
+      columns: [
+        table.sourceAccountId,
+        table.sourceMailboxId,
+        table.receiveTransport,
+      ],
+      foreignColumns: [
+        mailboxes.accountId,
+        mailboxes.id,
+        mailboxes.receiveTransport,
+      ],
+    }).onDelete("set null"),
+    check(
+      "message_attachments_locator",
+      sql`(${table.receiveTransport} = 'imap' and ${table.sourceUid} is not null and ${table.sourceUid} > 0 and ${table.sourceUidValidity} is not null and ${table.sourceUidValidity} > 0 and ${table.gmailAttachmentId} is null and ((${table.sourceMailboxId} is null and ${table.sourceAccountId} is null) or (${table.sourceMailboxId} is not null and ${table.sourceAccountId} is not null and ${table.sourceAccountId} = ${table.accountId}))) or (${table.receiveTransport} = 'gmail' and ${table.sourceMailboxId} is null and ${table.sourceAccountId} is null and ${table.sourceUid} is null and ${table.sourceUidValidity} is null and (${table.gmailAttachmentId} is null or length(${table.gmailAttachmentId}) > 0))`,
+    ),
+
     uniqueIndex("message_attachments_part_unique").on(
       table.messageId,
       table.partId,
@@ -556,10 +595,19 @@ export const mailAccounts = pgTable(
     enabled: boolean("enabled").default(true).notNull(),
     sentCopyPolicy: text("sent_copy_policy").default("server").notNull(),
     providerType: text("provider_type").default("imap_smtp").notNull(),
-    imapHost: text("imap_host").notNull(),
-    imapPort: integer("imap_port").notNull(),
-    imapSecurity: text("imap_security").notNull(),
-    imapUsername: text("imap_username").notNull(),
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .generatedAlwaysAs(
+        sql`case when provider_type = 'gmail_smtp' then 'gmail' else 'imap' end`,
+      )
+      .notNull(),
+    workRevision: bigint("work_revision", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
+    imapHost: text("imap_host"),
+    imapPort: integer("imap_port"),
+    imapSecurity: text("imap_security"),
+    imapUsername: text("imap_username"),
     imapPassword: jsonb("imap_password").$type<EncryptedEnvelope>(),
     authMethod: text("auth_method").default("password").notNull(),
     oauthProviderId: text("oauth_provider_id"),
@@ -606,10 +654,20 @@ export const mailAccounts = pgTable(
       .notNull(),
   },
   (table) => [
+    uniqueIndex("mail_accounts_transport_unique").on(
+      table.id,
+      table.receiveTransport,
+    ),
+    check("mail_accounts_work_revision", sql`${table.workRevision} > 0`),
+    check(
+      "mail_accounts_receive_identity",
+      sql`(${table.providerType} = 'imap_smtp' and (${table.authMethod} = 'password' or (${table.authMethod} = 'oauth2' and ${table.oauthProviderId} is not null and ${table.oauthProviderId} = 'microsoft')) and ${table.imapHost} is not null and length(${table.imapHost}) > 0 and ${table.imapPort} is not null and ${table.imapSecurity} is not null and ${table.imapUsername} is not null and length(${table.imapUsername}) > 0) or (${table.providerType} = 'gmail_smtp' and ${table.authMethod} = 'oauth2' and ${table.oauthProviderId} is not null and ${table.oauthProviderId} = 'google' and ${table.oauthHomeAccountId} is not null and length(${table.oauthHomeAccountId}) > 0 and ${table.imapHost} is null and ${table.imapPort} is null and ${table.imapSecurity} is null and ${table.imapUsername} is null and cardinality(${table.imapCapabilities}) = 0 and not ${table.smtpUsesImapCredentials})`,
+    ),
+
     check("mail_accounts_sort_order", sql`${table.sortOrder} > 0`),
     check(
       "mail_accounts_provider_type",
-      sql`${table.providerType} = 'imap_smtp'`,
+      sql`${table.providerType} in ('imap_smtp', 'gmail_smtp')`,
     ),
     check(
       "mail_accounts_sent_copy_policy",
@@ -649,11 +707,11 @@ export const mailAccounts = pgTable(
     ),
     check(
       "mail_accounts_smtp_credentials",
-      sql`(${table.smtpUsesImapCredentials} and ${table.smtpUsername} is null and ${table.smtpPassword} is null) or (not ${table.smtpUsesImapCredentials} and ${table.smtpUsername} is not null and ${table.smtpPassword} is not null)`,
+      sql`(${table.smtpUsesImapCredentials} and ${table.smtpUsername} is null and ${table.smtpPassword} is null) or (not ${table.smtpUsesImapCredentials} and ${table.smtpUsername} is not null and ((${table.authMethod} = 'password' and ${table.smtpPassword} is not null) or (${table.authMethod} = 'oauth2' and ${table.smtpPassword} is null)))`,
     ),
     check(
       "mail_accounts_auth_credential",
-      sql`(${table.authMethod} = 'password' and ${table.oauthProviderId} is null and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.oauthProviderId} is not null and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
+      sql`(${table.authMethod} = 'password' and ${table.oauthProviderId} is null and ${table.imapPassword} is not null and ${table.oauthCache} is null and ${table.oauthHomeAccountId} is null and ${table.oauthStatus} is null) or (${table.authMethod} = 'oauth2' and ${table.oauthProviderId} is not null and ${table.imapPassword} is null and ${table.smtpPassword} is null and ${table.oauthCache} is not null and ${table.oauthStatus} is not null and ${table.oauthStatus} in ('connected', 'reconnect_required'))`,
     ),
     index("mail_accounts_enabled_idx").on(table.enabled),
     index("mail_accounts_email_idx").on(table.email),
@@ -691,10 +749,15 @@ export const oauthAuthorizationStates = pgTable("oauth_authorization_states", {
 export const mailboxes = pgTable(
   "mailboxes",
   {
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .default("imap")
+      .notNull(),
     id: uuid("id").primaryKey(),
     accountId: uuid("account_id")
       .notNull()
       .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    viewKind: text("view_kind").default("remote").notNull(),
     remotePath: text("remote_path").notNull(),
     name: text("name").notNull(),
     delimiter: text("delimiter"),
@@ -775,6 +838,32 @@ export const mailboxes = pgTable(
   },
   (table) => [
     check(
+      "mailboxes_transport_locator",
+      sql`(${table.receiveTransport} = 'imap' and ${table.viewKind} = 'remote') or (${table.receiveTransport} = 'gmail' and ${table.uidValidity} is null and ${table.uidNext} is null and ${table.highestModseq} is null and ${table.recentSyncUidValidity} is null and ${table.backfillUidValidity} is null and ${table.backfillFrontierUid} is null and ${table.deltaUidValidity} is null and ${table.deltaLastSeenUid} is null and ${table.deltaHighestModseq} is null and ((${table.viewKind} = 'remote' and ${table.providerMailboxId} is not null and length(${table.providerMailboxId}) > 0) or (${table.viewKind} = 'all_mail' and ${table.providerMailboxId} is null)))`,
+    ),
+    uniqueIndex("mailboxes_gmail_label_unique")
+      .on(table.accountId, table.providerMailboxId)
+      .where(
+        sql`${table.receiveTransport} = 'gmail' and ${table.viewKind} = 'remote'`,
+      ),
+    uniqueIndex("mailboxes_gmail_virtual_unique")
+      .on(table.accountId, table.viewKind)
+      .where(
+        sql`${table.receiveTransport} = 'gmail' and ${table.viewKind} = 'all_mail'`,
+      ),
+
+    uniqueIndex("mailboxes_account_transport_unique").on(
+      table.accountId,
+      table.id,
+      table.receiveTransport,
+    ),
+    foreignKey({
+      name: "mailboxes_account_transport_fk",
+      columns: [table.accountId, table.receiveTransport],
+      foreignColumns: [mailAccounts.id, mailAccounts.receiveTransport],
+    }).onDelete("cascade"),
+
+    check(
       "mailboxes_lifecycle_status",
       sql`${table.lifecycleStatus} in ('active', 'missing')`,
     ),
@@ -852,11 +941,19 @@ export type MimePart = Readonly<{
 export const messages = pgTable(
   "messages",
   {
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .default("imap")
+      .notNull(),
     id: uuid("id").primaryKey(),
     accountId: uuid("account_id")
       .notNull()
       .references(() => mailAccounts.id, { onDelete: "cascade" }),
     providerMessageId: text("provider_message_id"),
+    providerThreadId: text("provider_thread_id"),
+    providerHistoryId: text("provider_history_id"),
+    remoteMissingAt: timestamp("remote_missing_at", { withTimezone: true }),
+    inventoryGeneration: bigint("inventory_generation", { mode: "bigint" }),
     rfcMessageId: text("rfc_message_id"),
     subject: text("subject"),
     searchBody: text("search_body").default("").notNull(),
@@ -892,6 +989,25 @@ export const messages = pgTable(
       .notNull(),
   },
   (table) => [
+    check(
+      "messages_native_identity",
+      sql`(${table.receiveTransport} = 'imap' and ${table.providerThreadId} is null and ${table.providerHistoryId} is null and ${table.inventoryGeneration} is null and ${table.remoteMissingAt} is null) or (${table.receiveTransport} = 'gmail' and ${table.providerMessageId} is not null and length(${table.providerMessageId}) > 0 and (${table.providerThreadId} is null or length(${table.providerThreadId}) > 0) and (${table.providerHistoryId} is null or ${table.providerHistoryId} ~ '^[0-9]+$') and (${table.inventoryGeneration} is null or ${table.inventoryGeneration} > 0))`,
+    ),
+    uniqueIndex("messages_gmail_identity_unique")
+      .on(table.accountId, table.providerMessageId)
+      .where(sql`${table.receiveTransport} = 'gmail'`),
+
+    uniqueIndex("messages_account_transport_unique").on(
+      table.accountId,
+      table.id,
+      table.receiveTransport,
+    ),
+    foreignKey({
+      name: "messages_account_transport_fk",
+      columns: [table.accountId, table.receiveTransport],
+      foreignColumns: [mailAccounts.id, mailAccounts.receiveTransport],
+    }).onDelete("cascade"),
+
     index("messages_search_gin_idx").using("gin", table.searchVector),
     index("messages_account_internal_date_idx").on(
       table.accountId,
@@ -977,6 +1093,11 @@ export const conversationReferences = pgTable(
 export const mailboxMessages = pgTable(
   "mailbox_messages",
   {
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .default("imap")
+      .notNull(),
+    accountId: uuid("account_id").notNull(),
     id: uuid("id").primaryKey(),
     mailboxId: uuid("mailbox_id")
       .notNull()
@@ -984,8 +1105,8 @@ export const mailboxMessages = pgTable(
     messageId: uuid("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
-    uidValidity: bigint("uid_validity", { mode: "bigint" }).notNull(),
-    uid: bigint("uid", { mode: "bigint" }).notNull(),
+    uidValidity: bigint("uid_validity", { mode: "bigint" }),
+    uid: bigint("uid", { mode: "bigint" }),
     modseq: bigint("modseq", { mode: "bigint" }),
     flags: text("flags").array().default([]).notNull(),
     actionHidden: boolean("action_hidden").default(false).notNull(),
@@ -1003,11 +1124,42 @@ export const mailboxMessages = pgTable(
       .notNull(),
   },
   (table) => [
-    uniqueIndex("mailbox_messages_remote_identity_unique").on(
+    uniqueIndex("mailbox_messages_placement_transport_unique").on(
+      table.accountId,
+      table.id,
+      table.messageId,
       table.mailboxId,
-      table.uidValidity,
-      table.uid,
+      table.receiveTransport,
     ),
+    foreignKey({
+      name: "mailbox_messages_mailbox_transport_fk",
+      columns: [table.accountId, table.mailboxId, table.receiveTransport],
+      foreignColumns: [
+        mailboxes.accountId,
+        mailboxes.id,
+        mailboxes.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "mailbox_messages_message_transport_fk",
+      columns: [table.accountId, table.messageId, table.receiveTransport],
+      foreignColumns: [
+        messages.accountId,
+        messages.id,
+        messages.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "mailbox_messages_locator",
+      sql`(${table.receiveTransport} = 'imap' and ${table.uid} is not null and ${table.uid} > 0 and ${table.uidValidity} is not null and ${table.uidValidity} > 0 and (${table.modseq} is null or ${table.modseq} > 0)) or (${table.receiveTransport} = 'gmail' and ${table.uid} is null and ${table.uidValidity} is null and ${table.modseq} is null)`,
+    ),
+    uniqueIndex("mailbox_messages_gmail_membership_unique")
+      .on(table.mailboxId, table.messageId)
+      .where(sql`${table.receiveTransport} = 'gmail'`),
+
+    uniqueIndex("mailbox_messages_remote_identity_unique")
+      .on(table.mailboxId, table.uidValidity, table.uid)
+      .where(sql`${table.receiveTransport} = 'imap'`),
     index("mailbox_messages_mailbox_idx").on(table.mailboxId),
     index("mailbox_messages_message_idx").on(table.messageId),
   ],
@@ -1016,6 +1168,10 @@ export const mailboxMessages = pgTable(
 export const notificationEvents = pgTable(
   "notification_events",
   {
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .default("imap")
+      .notNull(),
     sequence: bigint("sequence", { mode: "bigint" }).primaryKey(),
     accountId: uuid("account_id")
       .notNull()
@@ -1026,21 +1182,45 @@ export const notificationEvents = pgTable(
     messageId: uuid("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
-    uidValidity: bigint("uid_validity", { mode: "bigint" }).notNull(),
-    uid: bigint("uid", { mode: "bigint" }).notNull(),
+    uidValidity: bigint("uid_validity", { mode: "bigint" }),
+    uid: bigint("uid", { mode: "bigint" }),
     sender: text("sender").notNull(),
     subject: text("subject").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [
-    uniqueIndex("notification_events_remote_identity").on(
-      t.mailboxId,
-      t.uidValidity,
-      t.uid,
+  (table) => [
+    foreignKey({
+      name: "notification_events_message_transport_fk",
+      columns: [table.accountId, table.messageId, table.receiveTransport],
+      foreignColumns: [
+        messages.accountId,
+        messages.id,
+        messages.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "notification_events_mailbox_transport_fk",
+      columns: [table.accountId, table.mailboxId, table.receiveTransport],
+      foreignColumns: [
+        mailboxes.accountId,
+        mailboxes.id,
+        mailboxes.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "notification_events_locator",
+      sql`(${table.receiveTransport} = 'imap' and ${table.uid} is not null and ${table.uid} > 0 and ${table.uidValidity} is not null and ${table.uidValidity} > 0) or (${table.receiveTransport} = 'gmail' and ${table.uid} is null and ${table.uidValidity} is null)`,
     ),
-    index("notification_events_created_idx").on(t.createdAt),
+    uniqueIndex("notification_events_gmail_identity_unique")
+      .on(table.accountId, table.messageId)
+      .where(sql`${table.receiveTransport} = 'gmail'`),
+
+    uniqueIndex("notification_events_remote_identity")
+      .on(table.mailboxId, table.uidValidity, table.uid)
+      .where(sql`${table.receiveTransport} = 'imap'`),
+    index("notification_events_created_idx").on(table.createdAt),
   ],
 );
 
@@ -1080,6 +1260,10 @@ export const messageContents = pgTable(
 export const messageCommands = pgTable(
   "message_commands",
   {
+    receiveTransport: text("receive_transport")
+      .$type<"imap" | "gmail">()
+      .default("imap")
+      .notNull(),
     id: uuid("id").primaryKey(),
     accountId: uuid("account_id")
       .notNull()
@@ -1093,13 +1277,19 @@ export const messageCommands = pgTable(
     messageId: uuid("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
+    accountRevision: bigint("account_revision", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
+    intentSequence: bigint("intent_sequence", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
     action: text("action").notNull(),
     status: text("status").default("pending").notNull(),
-    sourcePath: text("source_path").notNull(),
+    sourcePath: text("source_path"),
     sourceUidValidity: bigint("source_uid_validity", {
       mode: "bigint",
-    }).notNull(),
-    sourceUid: bigint("source_uid", { mode: "bigint" }).notNull(),
+    }),
+    sourceUid: bigint("source_uid", { mode: "bigint" }),
     destinationMailboxId: uuid("destination_mailbox_id").references(
       () => mailboxes.id,
       { onDelete: "set null" },
@@ -1122,6 +1312,68 @@ export const messageCommands = pgTable(
       .notNull(),
   },
   (table) => [
+    foreignKey({
+      name: "message_commands_destination_transport_fk",
+      columns: [
+        table.accountId,
+        table.destinationMailboxId,
+        table.receiveTransport,
+      ],
+      foreignColumns: [
+        mailboxes.accountId,
+        mailboxes.id,
+        mailboxes.receiveTransport,
+      ],
+    }).onDelete("set null"),
+    foreignKey({
+      name: "message_commands_placement_transport_fk",
+      columns: [
+        table.accountId,
+        table.placementId,
+        table.messageId,
+        table.mailboxId,
+        table.receiveTransport,
+      ],
+      foreignColumns: [
+        mailboxMessages.accountId,
+        mailboxMessages.id,
+        mailboxMessages.messageId,
+        mailboxMessages.mailboxId,
+        mailboxMessages.receiveTransport,
+      ],
+    }).onDelete("set null"),
+    foreignKey({
+      name: "message_commands_message_transport_fk",
+      columns: [table.accountId, table.messageId, table.receiveTransport],
+      foreignColumns: [
+        messages.accountId,
+        messages.id,
+        messages.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "message_commands_mailbox_transport_fk",
+      columns: [table.accountId, table.mailboxId, table.receiveTransport],
+      foreignColumns: [
+        mailboxes.accountId,
+        mailboxes.id,
+        mailboxes.receiveTransport,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "message_commands_revision_sequence",
+      sql`${table.accountRevision} > 0 and ${table.intentSequence} > 0`,
+    ),
+    check(
+      "message_commands_locator",
+      sql`(${table.receiveTransport} = 'imap' and ${table.sourcePath} is not null and length(${table.sourcePath}) > 0 and ${table.sourceUid} is not null and ${table.sourceUid} > 0 and ${table.sourceUidValidity} is not null and ${table.sourceUidValidity} > 0) or (${table.receiveTransport} = 'gmail' and ${table.sourcePath} is null and ${table.sourceUid} is null and ${table.sourceUidValidity} is null and ${table.destinationPath} is null and ${table.destinationUid} is null and ${table.destinationUidValidity} is null)`,
+    ),
+    index("message_commands_intent_idx").on(
+      table.accountId,
+      table.messageId,
+      table.intentSequence,
+    ),
+
     check(
       "message_commands_action",
       sql`${table.action} in ('mark_read', 'mark_unread', 'flag', 'unflag', 'archive', 'trash')`,
@@ -1137,6 +1389,141 @@ export const messageCommands = pgTable(
     index("message_commands_account_created_idx").on(
       table.accountId,
       table.createdAt,
+    ),
+  ],
+);
+
+export const gmailAccountSyncState = pgTable(
+  "gmail_account_sync_state",
+  {
+    accountId: uuid("account_id").primaryKey(),
+    receiveTransport: text("receive_transport").default("gmail").notNull(),
+    accountRevision: bigint("account_revision", { mode: "bigint" }).notNull(),
+    status: text("status").default("not_started").notNull(),
+    recentReady: boolean("recent_ready").default(false).notNull(),
+    inventoryComplete: boolean("inventory_complete").default(false).notNull(),
+    historyId: text("history_id"),
+    baselineHistoryId: text("baseline_history_id"),
+    inventoryGeneration: bigint("inventory_generation", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
+    inventoryRunId: uuid("inventory_run_id"),
+    inventoryPhase: text("inventory_phase"),
+    recentCutoff: timestamp("recent_cutoff", { withTimezone: true }),
+    historicalBefore: timestamp("historical_before", { withTimezone: true }),
+    inventoryNextPageToken: text("inventory_next_page_token"),
+    inventoryPagesComplete: boolean("inventory_pages_complete")
+      .default(false)
+      .notNull(),
+    historyRunId: uuid("history_run_id"),
+    historyStartId: text("history_start_id"),
+    historyNextPageToken: text("history_next_page_token"),
+    historyCandidateId: text("history_candidate_id"),
+    historyPagesComplete: boolean("history_pages_complete")
+      .default(false)
+      .notNull(),
+    needsWork: boolean("needs_work").default(true).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    errorCategory: text("error_category"),
+    processedCount: bigint("processed_count", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    quotaMinute: bigint("quota_minute", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    quotaCurrentUnits: bigint("quota_current_units", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    quotaPreviousUnits: bigint("quota_previous_units", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    foreignKey({
+      name: "gmail_sync_account_transport_fk",
+      columns: [t.accountId, t.receiveTransport],
+      foreignColumns: [mailAccounts.id, mailAccounts.receiveTransport],
+    }).onDelete("cascade"),
+    check("gmail_sync_transport", sql`${t.receiveTransport} = 'gmail'`),
+    check(
+      "gmail_sync_status",
+      sql`${t.status} in ('not_started', 'initializing', 'ready', 'reconcile_required', 'reconciling', 'blocked')`,
+    ),
+    check(
+      "gmail_sync_counters",
+      sql`${t.accountRevision} > 0 and ${t.inventoryGeneration} > 0 and ${t.processedCount} >= 0 and ${t.quotaMinute} >= 0 and ${t.quotaCurrentUnits} >= 0 and ${t.quotaPreviousUnits} >= 0`,
+    ),
+    check(
+      "gmail_sync_history_ids",
+      sql`(${t.historyId} is null or ${t.historyId} ~ '^[0-9]+$') and (${t.baselineHistoryId} is null or ${t.baselineHistoryId} ~ '^[0-9]+$') and (${t.historyStartId} is null or ${t.historyStartId} ~ '^[0-9]+$') and (${t.historyCandidateId} is null or ${t.historyCandidateId} ~ '^[0-9]+$')`,
+    ),
+    check(
+      "gmail_sync_history_run",
+      sql`(${t.historyRunId} is null and ${t.historyStartId} is null and ${t.historyNextPageToken} is null and ${t.historyCandidateId} is null and not ${t.historyPagesComplete}) or (${t.historyRunId} is not null and ${t.historyStartId} is not null and (not ${t.historyPagesComplete} or (${t.historyCandidateId} is not null and ${t.historyNextPageToken} is null)))`,
+    ),
+    check(
+      "gmail_sync_inventory_run",
+      sql`(${t.inventoryRunId} is null and ${t.inventoryPhase} is null and ${t.inventoryNextPageToken} is null and not ${t.inventoryPagesComplete}) or (${t.inventoryRunId} is not null and ${t.baselineHistoryId} is not null and ${t.inventoryPhase} is not null and ${t.inventoryPhase} in ('recent', 'historical', 'reconcile') and ${t.recentCutoff} is not null and (not ${t.inventoryPagesComplete} or ${t.inventoryNextPageToken} is null))`,
+    ),
+    check(
+      "gmail_sync_error_category",
+      sql`${t.errorCategory} is null or ${t.errorCategory} in ('unsupported', 'authentication', 'api_disabled', 'quota', 'network', 'history_expired', 'invalid_response')`,
+    ),
+    index("gmail_sync_due_idx").on(t.needsWork, t.nextAttemptAt),
+  ],
+);
+
+export const gmailSyncWork = pgTable(
+  "gmail_sync_work",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => gmailAccountSyncState.accountId, {
+        onDelete: "cascade",
+      }),
+    runId: uuid("run_id").notNull(),
+    purpose: text("purpose").notNull(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    accountRevision: bigint("account_revision", { mode: "bigint" }).notNull(),
+    status: text("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    errorCategory: text("error_category"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.accountId, t.runId, t.purpose, t.gmailMessageId],
+    }),
+    check(
+      "gmail_work_identity",
+      sql`length(${t.gmailMessageId}) > 0 and ${t.accountRevision} > 0`,
+    ),
+    check("gmail_work_purpose", sql`${t.purpose} in ('inventory', 'history')`),
+    check(
+      "gmail_work_status",
+      sql`${t.status} in ('pending', 'retry', 'complete') and ${t.attempts} between 0 and 100`,
+    ),
+    check(
+      "gmail_work_error",
+      sql`${t.errorCategory} is null or ${t.errorCategory} in ('authentication', 'api_disabled', 'quota', 'network', 'invalid_response')`,
+    ),
+    index("gmail_work_due_idx").on(
+      t.accountId,
+      t.runId,
+      t.status,
+      t.nextAttemptAt,
     ),
   ],
 );

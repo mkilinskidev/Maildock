@@ -1,3 +1,5 @@
+import { createDatabase } from "@/shared/infrastructure/database/database";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import {
   enqueueContent,
   ensureContentQueue,
@@ -28,6 +30,7 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
   let container: StartedTestContainer;
   let boss: PgBoss;
   let producer: PgBoss;
+  let database: ReturnType<typeof createDatabase>;
   beforeAll(async () => {
     container = await new GenericContainer("postgres:18.6-bookworm")
       .withEnvironment({
@@ -41,6 +44,12 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
       )
       .start();
     const connectionString = `postgresql://test:test@${container.getHost()}:${container.getMappedPort(5432)}/reliability`;
+    database = createDatabase({
+      databaseUrl: connectionString,
+      databasePoolSize: 2,
+    });
+    await migrate(database.db, { migrationsFolder: "db/migrations" });
+    await database.client`insert into mail_accounts(id,display_name,email,imap_host,imap_port,imap_security,imap_username,imap_password,smtp_host,smtp_port,smtp_security) values(${account},'Queue fixture','owner@test.invalid','imap.test',993,'tls','owner','{}','smtp.test',465,'tls')`;
     boss = new PgBoss({ connectionString });
     producer = new PgBoss({ connectionString });
     await boss.start();
@@ -52,6 +61,7 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
   afterAll(async () => {
     await producer?.stop();
     await boss?.stop();
+    await database?.client.end();
     await container?.stop();
   });
   const account = randomUUID();

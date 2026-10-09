@@ -1,3 +1,8 @@
+import { assertImapPublication } from "../infrastructure/receive-publication-fence";
+import {
+  MailTransportRouter,
+  StaleAccountWorkError,
+} from "../../accounts/domain/receive-transport";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { randomUUID } from "node:crypto";
 import { ConversationService } from "./conversation-service";
@@ -160,7 +165,7 @@ export class MessageService {
     if (!mailbox.selectable || mailbox.lifecycleStatus !== "active")
       throw new MailboxNotSynchronizableError();
     const [account] = await this.database
-      .select({ enabled: mailAccounts.enabled })
+      .select()
       .from(mailAccounts)
       .where(eq(mailAccounts.id, accountId))
       .limit(1);
@@ -168,6 +173,7 @@ export class MessageService {
       throw new MailboxNotSynchronizableError(
         "Disabled mail accounts cannot synchronize messages.",
       );
+    if (account) new MailTransportRouter().requireImap(account);
     if (!this.deltaScheduler)
       throw new Error("Delta sync scheduler is unavailable.");
     return this.deltaScheduler.schedule(accountId, mailboxId, "manual");
@@ -181,7 +187,7 @@ export class MessageService {
     if (!mailbox.selectable || mailbox.lifecycleStatus !== "active")
       throw new MailboxNotSynchronizableError();
     const [account] = await this.database
-      .select({ enabled: mailAccounts.enabled })
+      .select()
       .from(mailAccounts)
       .where(eq(mailAccounts.id, accountId))
       .limit(1);
@@ -189,6 +195,7 @@ export class MessageService {
       throw new MailboxNotSynchronizableError(
         "Disabled mail accounts cannot synchronize messages.",
       );
+    if (account) new MailTransportRouter().requireImap(account);
     if (!this.scheduler)
       throw new Error("Recent sync scheduler is unavailable.");
     const now = new Date();
@@ -205,6 +212,7 @@ export class MessageService {
         .where(eq(mailboxes.id, mailboxId));
       return scheduled;
     } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
       await this.database
         .update(mailboxes)
         .set({
@@ -218,7 +226,11 @@ export class MessageService {
     }
   }
 
-  async runRecentSync(accountId: string, mailboxId: string): Promise<void> {
+  async runRecentSync(
+    accountId: string,
+    mailboxId: string,
+    expectedRevision?: string,
+  ): Promise<void> {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Recent sync worker dependencies are unavailable.");
     const startedAt = new Date();
@@ -235,8 +247,10 @@ export class MessageService {
           updatedAt: startedAt,
         })
         .where(eq(mailboxes.id, mailboxId));
-      const account =
-        await this.accounts.getProviderImapAccountForWork(accountId);
+      const account = await this.accounts.getProviderImapAccountForWork(
+        accountId,
+        expectedRevision,
+      );
       const cutoff = cutoffDate(this.config.initialSyncDays, startedAt);
       let selectedUidValidity: bigint | undefined;
       const result = await this.provider.synchronizeRecentMailbox(
@@ -250,6 +264,7 @@ export class MessageService {
           selected: async (value) => {
             const observed = BigInt(value);
             await this.database.transaction(async (tx) => {
+              await assertImapPublication(tx, accountId, account.revision);
               const [current] = await tx
                 .select()
                 .from(mailboxes)
@@ -308,28 +323,35 @@ export class MessageService {
               mailboxId,
               selectedUidValidity,
               batch,
+              undefined,
+              undefined,
+              false,
+              account.revision,
             );
           },
         },
       );
       const completedAt = new Date();
-      await this.database
-        .update(mailboxes)
-        .set({
-          recentSyncStatus: "success",
-          recentSyncError: null,
-          recentSyncCutoff: cutoff,
-          recentSyncMessageCount: result.messageCount,
-          recentSyncCompletedAt: completedAt,
-          lastSuccessfulRecentSyncAt: completedAt,
-          backfillStatus:
-            mailbox.backfillUidValidity === BigInt(result.uidValidity) &&
-            mailbox.backfillStatus === "complete"
-              ? "complete"
-              : "pending",
-          updatedAt: completedAt,
-        })
-        .where(eq(mailboxes.id, mailboxId));
+      await this.database.transaction(async (tx) => {
+        await assertImapPublication(tx, accountId, account.revision);
+        await tx
+          .update(mailboxes)
+          .set({
+            recentSyncStatus: "success",
+            recentSyncError: null,
+            recentSyncCutoff: cutoff,
+            recentSyncMessageCount: result.messageCount,
+            recentSyncCompletedAt: completedAt,
+            lastSuccessfulRecentSyncAt: completedAt,
+            backfillStatus:
+              mailbox.backfillUidValidity === BigInt(result.uidValidity) &&
+              mailbox.backfillStatus === "complete"
+                ? "complete"
+                : "pending",
+            updatedAt: completedAt,
+          })
+          .where(eq(mailboxes.id, mailboxId));
+      });
       await this.events?.record("mail.recent_sync_completed", {
         accountId,
         mailboxId,
@@ -338,6 +360,7 @@ export class MessageService {
       if (this.backfillScheduler)
         await this.backfillScheduler.schedule(accountId, mailboxId);
     } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
       const failedAt = new Date();
       await this.database
         .update(mailboxes)
@@ -372,9 +395,14 @@ export class MessageService {
     throughUid?: bigint,
     backfillProgress?: { frontier: bigint; nextFrontier: bigint },
     deltaArrival = false,
+    revision?: string,
   ): Promise<void> {
     if (batch.length === 0 && !backfillProgress) return;
     await this.database.transaction(async (tx) => {
+      // Offline metadata projection is also used by local maintenance. Receive
+      // workers always pass their captured account revision.
+      if (revision !== undefined)
+        await assertImapPublication(tx, accountId, revision);
       const [mailbox] = await tx
         .select()
         .from(mailboxes)
@@ -428,6 +456,7 @@ export class MessageService {
           await persistAttachmentMetadata(
             tx,
             placement.messageId,
+            accountId,
             mailboxId,
             uidValidity,
             uid,
@@ -444,12 +473,14 @@ export class MessageService {
         await persistAttachmentMetadata(
           tx,
           messageId,
+          accountId,
           mailboxId,
           uidValidity,
           uid,
           remote.mimeStructure,
         );
         await tx.insert(mailboxMessages).values({
+          accountId,
           id: randomUUID(),
           mailboxId,
           messageId,

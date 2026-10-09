@@ -185,6 +185,7 @@ describe("durable message commands", () => {
       .insert(messages)
       .values({ id: messageId, accountId, internalDate: now, size: 1n });
     await db.insert(mailboxMessages).values({
+      accountId,
       id: randomUUID(),
       mailboxId: sourceId,
       messageId,
