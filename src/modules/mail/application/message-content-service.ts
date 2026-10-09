@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   withPerformance,
   measureStage,
@@ -59,6 +60,8 @@ export class MessageContentService {
       .select({
         messageId: messageContents.messageId,
         updatedAt: messageContents.updatedAt,
+        generation: messageContents.requestGeneration,
+        attempt: messageContents.fetchAttempt,
         accountId: mailboxes.accountId,
         mailboxId: mailboxes.id,
       })
@@ -100,7 +103,8 @@ export class MessageContentService {
           .where(
             and(
               eq(messageContents.messageId, row.messageId),
-              eq(messageContents.updatedAt, row.updatedAt),
+              eq(messageContents.requestGeneration, row.generation),
+              sql`${messageContents.fetchAttempt} IS NOT DISTINCT FROM ${row.attempt}::uuid`,
               inArray(messageContents.status, ["pending", "fetching"]),
             ),
           );
@@ -235,21 +239,49 @@ export class MessageContentService {
       row.content?.status === "fetching"
     )
       return false;
+    const generation = randomUUID();
     const now = sql<Date>`clock_timestamp()`;
-    await this.database
+    const written = await this.database
       .insert(messageContents)
-      .values({ messageId, status: "pending", updatedAt: now })
+      .values({
+        messageId,
+        status: "pending",
+        requestGeneration: generation,
+        updatedAt: now,
+      })
       .onConflictDoUpdate({
         target: messageContents.messageId,
-        set: { status: "pending", error: null, updatedAt: now },
-        setWhere: or(
-          ne(messageContents.status, "ready"),
-          and(
-            isNotNull(messageContents.sanitizedHtml),
-            sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
+        set: {
+          status: "pending",
+          error: null,
+          requestGeneration: generation,
+          fetchAttempt: null,
+          updatedAt: now,
+        },
+        setWhere: and(
+          row.content
+            ? eq(
+                messageContents.requestGeneration,
+                row.content.requestGeneration,
+              )
+            : sql`false`,
+          row.content
+            ? eq(messageContents.status, row.content.status)
+            : undefined,
+          row.content
+            ? sql`${messageContents.fetchAttempt} IS NOT DISTINCT FROM ${row.content.fetchAttempt}::uuid`
+            : undefined,
+          or(
+            ne(messageContents.status, "ready"),
+            and(
+              isNotNull(messageContents.sanitizedHtml),
+              sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
+            ),
           ),
         ),
-      });
+      })
+      .returning({ id: messageContents.messageId });
+    if (!written.length) return false;
     try {
       return await this.scheduler.schedule(accountId, mailboxId, messageId);
     } catch {
@@ -264,6 +296,7 @@ export class MessageContentService {
           and(
             eq(messageContents.messageId, messageId),
             eq(messageContents.status, "pending"),
+            eq(messageContents.requestGeneration, generation),
           ),
         );
       throw new MessageContentUnavailableError(
@@ -291,6 +324,9 @@ export class MessageContentService {
   ) {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Content worker dependencies are unavailable.");
+    const attempt = randomUUID();
+    let generation: string | undefined;
+    let claimed = false;
     try {
       const row = await this.placement(accountId, mailboxId, messageId);
       if (
@@ -299,6 +335,48 @@ export class MessageContentService {
           row.content.policyVersion === EMAIL_HTML_POLICY)
       )
         return;
+      if (!row.content) return;
+      // The durable queue coalesces requests; each delivery/retry claims the
+      // current generation. A fresh attempt token fences expired workers.
+      generation = row.content.requestGeneration;
+      const claim = await this.database
+        .update(messageContents)
+        .set({
+          status: "fetching",
+          error: null,
+          fetchAttempt: attempt,
+          updatedAt: sql`clock_timestamp()`,
+        })
+        .where(
+          and(
+            eq(messageContents.messageId, messageId),
+            eq(messageContents.requestGeneration, generation),
+            sql`${messageContents.fetchAttempt} IS NOT DISTINCT FROM ${row.content.fetchAttempt}::uuid`,
+            or(
+              ne(messageContents.status, "ready"),
+              and(
+                isNotNull(messageContents.sanitizedHtml),
+                sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
+              ),
+            ),
+          ),
+        )
+        .returning({ id: messageContents.messageId });
+      if (!claim.length) {
+        // A stately job may be shared with the newer request. Do not complete
+        // that job without a cache: let pg-boss retry and claim the fresh row.
+        const fresh = await this.placement(accountId, mailboxId, messageId);
+        if (
+          fresh.content?.status === "ready" &&
+          (fresh.content.sanitizedHtml === null ||
+            fresh.content.policyVersion === EMAIL_HTML_POLICY)
+        )
+          return;
+        throw new MessageContentUnavailableError(
+          "Content request changed. Retry the fetch.",
+        );
+      }
+      claimed = true;
       if (
         !row.account.enabled ||
         !row.mailbox.selectable ||
@@ -318,34 +396,6 @@ export class MessageContentService {
         throw new MessageContentUnavailableError(
           "No display text part is available.",
         );
-      await this.database
-        .update(messageContents)
-        .set({
-          status: "fetching",
-          error: null,
-          updatedAt: sql`clock_timestamp()`,
-        })
-        .where(
-          and(
-            eq(messageContents.messageId, messageId),
-            or(
-              ne(messageContents.status, "ready"),
-              and(
-                isNotNull(messageContents.sanitizedHtml),
-                sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
-              ),
-            ),
-          ),
-        )
-        .returning({ id: messageContents.messageId });
-      // Another attempt may have filled the cache after our placement read.
-      const fresh = await this.placement(accountId, mailboxId, messageId);
-      if (
-        fresh.content?.status === "ready" &&
-        (fresh.content.sanitizedHtml === null ||
-          fresh.content.policyVersion === EMAIL_HTML_POLICY)
-      )
-        return;
       const account = await measureStage("credentials", () =>
         this.accounts!.getProviderImapAccountForWork(accountId),
       );
@@ -405,6 +455,8 @@ export class MessageContentService {
           .where(
             and(
               eq(messageContents.messageId, messageId),
+              eq(messageContents.requestGeneration, generation!),
+              eq(messageContents.fetchAttempt, attempt),
               or(
                 ne(messageContents.status, "ready"),
                 and(
@@ -421,14 +473,22 @@ export class MessageContentService {
         error instanceof MailProviderOperationError
           ? error.message
           : "Message content could not be fetched.";
-      await this.database
-        .insert(messageContents)
-        .values({ messageId, status: "failed", error: reason })
-        .onConflictDoUpdate({
-          target: messageContents.messageId,
-          set: { status: "failed", error: reason, updatedAt: new Date() },
-          setWhere: ne(messageContents.status, "ready"),
-        });
+      if (claimed && generation)
+        await this.database
+          .update(messageContents)
+          .set({
+            status: "failed",
+            error: reason,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(messageContents.messageId, messageId),
+              eq(messageContents.requestGeneration, generation),
+              eq(messageContents.fetchAttempt, attempt),
+              eq(messageContents.status, "fetching"),
+            ),
+          );
       if (error instanceof MailProviderOperationError) throw error;
       throw new Error(reason);
     }

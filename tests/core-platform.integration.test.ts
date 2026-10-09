@@ -20,7 +20,15 @@ import {
   Wait,
   type StartedTestContainer,
 } from "testcontainers";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   InstanceAlreadyInitializedError,
@@ -1466,6 +1474,301 @@ describe("Phase 0 PostgreSQL foundations", () => {
         (await durableService.detail(accountId, mailbox.id, third.messageId))
           .content.status,
       ).toBe("ready");
+
+      // Controlled producer interleaving: A writes pending and blocks on enqueue;
+      // B writes a newer generation and schedules, then A's enqueue fails.
+      await db
+        .update(messageContents)
+        .set({ status: "failed" })
+        .where(eq(messageContents.messageId, third.messageId));
+      const deferred = <T>() => {
+        let resolve!: (value: T) => void;
+        let reject!: (error: Error) => void;
+        const promise = new Promise<T>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        });
+        return { promise, resolve, reject };
+      };
+      const enqueueEntered = deferred<void>();
+      const enqueueResult = deferred<boolean>();
+      const missingScheduler = {
+        state: async () => "missing" as const,
+        schedule: async () => true,
+      };
+      const requestService = new MessageContentService(
+        db,
+        missingScheduler,
+        accounts,
+        provider,
+        config,
+      );
+      const blockedProducer = new MessageContentService(db, {
+        ...missingScheduler,
+        schedule: async () => {
+          enqueueEntered.resolve();
+          return enqueueResult.promise;
+        },
+      });
+      const firstRequest = blockedProducer.request(
+        accountId,
+        mailbox.id,
+        third.messageId,
+      );
+      const firstRejected = expect(firstRequest).rejects.toThrow(
+        "could not be scheduled",
+      );
+      await enqueueEntered.promise;
+      await requestService.request(accountId, mailbox.id, third.messageId);
+      const [newPending] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      enqueueResult.reject(new Error("enqueue failure"));
+      await firstRejected;
+      const [afterFailure] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      expect(afterFailure.status).toBe("pending");
+      expect(afterFailure.requestGeneration).toBe(newPending.requestGeneration);
+
+      // Both stale success and stale failure must preserve a newer pending or
+      // fetching attempt, including attempts sharing one pg-boss job generation.
+      for (const scenario of ["new-generation", "same-generation"] as const) {
+        for (const outcome of ["success", "failure"] as const) {
+          await db
+            .update(messageContents)
+            .set({ status: "failed" })
+            .where(eq(messageContents.messageId, third.messageId));
+          await requestService.request(accountId, mailbox.id, third.messageId);
+          const oldEntered = deferred<void>();
+          const oldResult =
+            deferred<
+              Awaited<ReturnType<typeof provider.fetchMessageContent>>
+            >();
+          const oldService = new MessageContentService(
+            db,
+            missingScheduler,
+            accounts,
+            {
+              ...provider,
+              fetchMessageContent: async () => {
+                oldEntered.resolve();
+                return oldResult.promise;
+              },
+            },
+            config,
+          );
+          const oldRun = oldService.run(accountId, mailbox.id, third.messageId);
+          const settled =
+            outcome === "failure"
+              ? expect(oldRun).rejects.toThrow("could not be fetched")
+              : oldRun;
+          await oldEntered.promise;
+          if (scenario === "new-generation")
+            await requestService.request(
+              accountId,
+              mailbox.id,
+              third.messageId,
+            );
+          const [pending] = await db
+            .select()
+            .from(messageContents)
+            .where(eq(messageContents.messageId, third.messageId));
+          expect(pending.status).toBe(
+            scenario === "new-generation" ? "pending" : "fetching",
+          );
+          const newEntered = deferred<void>();
+          const newResult =
+            deferred<
+              Awaited<ReturnType<typeof provider.fetchMessageContent>>
+            >();
+          const newerService = new MessageContentService(
+            db,
+            missingScheduler,
+            accounts,
+            {
+              ...provider,
+              fetchMessageContent: async () => {
+                newEntered.resolve();
+                return newResult.promise;
+              },
+            },
+            config,
+          );
+          const newerRun = newerService.run(
+            accountId,
+            mailbox.id,
+            third.messageId,
+          );
+          await newEntered.promise;
+          const [fetching] = await db
+            .select()
+            .from(messageContents)
+            .where(eq(messageContents.messageId, third.messageId));
+          if (outcome === "failure")
+            oldResult.reject(new Error("stale failure"));
+          else oldResult.resolve({ plainText: "stale content", html: null });
+          await settled;
+          const [preserved] = await db
+            .select()
+            .from(messageContents)
+            .where(eq(messageContents.messageId, third.messageId));
+          expect(preserved.status).toBe("fetching");
+          expect(preserved.fetchAttempt).toBe(fetching.fetchAttempt);
+          expect(preserved.requestGeneration).toBe(pending.requestGeneration);
+          newResult.resolve({ plainText: "current content", html: null });
+          await newerRun;
+          const [cached] = await db
+            .select()
+            .from(messageContents)
+            .where(eq(messageContents.messageId, third.messageId));
+          expect(cached.plainText).toBe("current content");
+          expect(cached.status).toBe("ready");
+        }
+      }
+      // A worker paused after reading a row must not claim a newer generation.
+      await db
+        .update(messageContents)
+        .set({ status: "failed" })
+        .where(eq(messageContents.messageId, third.messageId));
+      await requestService.request(accountId, mailbox.id, third.messageId);
+      const readEntered = deferred<void>();
+      const resumeRead = deferred<void>();
+      const pausedWorker = new MessageContentService(
+        db,
+        missingScheduler,
+        accounts,
+        provider,
+        config,
+      );
+      const internalWorker = pausedWorker as unknown as {
+        placement: MessageContentService["placement"];
+      };
+      const readPlacement = internalWorker.placement.bind(pausedWorker);
+      const readSpy = vi
+        .spyOn(internalWorker, "placement")
+        .mockImplementationOnce(async (...args) => {
+          const row = await readPlacement(...args);
+          readEntered.resolve();
+          await resumeRead.promise;
+          return row;
+        });
+      const paused = pausedWorker.run(accountId, mailbox.id, third.messageId);
+      const pausedRejected = expect(paused).rejects.toThrow(
+        "Content request changed",
+      );
+      await readEntered.promise;
+      await requestService.request(accountId, mailbox.id, third.messageId);
+      const [currentPending] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      const beforePaused = downloads;
+      resumeRead.resolve();
+      await pausedRejected;
+      readSpy.mockRestore();
+      const [afterPaused] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      expect(afterPaused.requestGeneration).toBe(
+        currentPending.requestGeneration,
+      );
+      expect(afterPaused.status).toBe("pending");
+      expect(downloads).toBe(beforePaused);
+
+      // A producer's old snapshot cannot reset a worker that claimed meanwhile.
+      const requestRead = deferred<void>();
+      const requestResume = deferred<void>();
+      const pausedProducer = new MessageContentService(db, missingScheduler);
+      const producerInternals = pausedProducer as unknown as {
+        placement: MessageContentService["placement"];
+      };
+      const producerPlacement =
+        producerInternals.placement.bind(pausedProducer);
+      const producerSpy = vi
+        .spyOn(producerInternals, "placement")
+        .mockImplementationOnce(async (...args) => {
+          const row = await producerPlacement(...args);
+          requestRead.resolve();
+          await requestResume.promise;
+          return row;
+        });
+      const pausedRequest = pausedProducer.request(
+        accountId,
+        mailbox.id,
+        third.messageId,
+      );
+      await requestRead.promise;
+      const claimEntered = deferred<void>();
+      const claimResult =
+        deferred<Awaited<ReturnType<typeof provider.fetchMessageContent>>>();
+      const claimingWorker = new MessageContentService(
+        db,
+        missingScheduler,
+        accounts,
+        {
+          ...provider,
+          fetchMessageContent: async () => {
+            claimEntered.resolve();
+            return claimResult.promise;
+          },
+        },
+        config,
+      );
+      const claimedRun = claimingWorker.run(
+        accountId,
+        mailbox.id,
+        third.messageId,
+      );
+      await claimEntered.promise;
+      requestResume.resolve();
+      expect(await pausedRequest).toBe(false);
+      producerSpy.mockRestore();
+      const [stillFetching] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      expect(stillFetching.status).toBe("fetching");
+      claimResult.resolve({ plainText: "claimed content", html: null });
+      await claimedRun;
+
+      // Recovery's terminal observation belongs to its snapshot generation.
+      await db
+        .update(messageContents)
+        .set({ status: "failed" })
+        .where(eq(messageContents.messageId, third.messageId));
+      await requestService.request(accountId, mailbox.id, third.messageId);
+      const recoveryEntered = deferred<void>();
+      const recoveryState = deferred<"terminal">();
+      const recoveryService = new MessageContentService(db);
+      const recovery = recoveryService.recoverPending({
+        ...missingScheduler,
+        state: async () => {
+          recoveryEntered.resolve();
+          return recoveryState.promise;
+        },
+      });
+      await recoveryEntered.promise;
+      await requestService.request(accountId, mailbox.id, third.messageId);
+      recoveryState.resolve("terminal");
+      await recovery;
+      const [recovered] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      expect(recovered.status).toBe("pending");
+      await recoveryService.recoverPending({
+        ...missingScheduler,
+        state: async () => "terminal" as const,
+      });
+      const [terminal] = await db
+        .select()
+        .from(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      expect(terminal.status).toBe("failed");
       // Restore the original epoch-error assertion's uncached fixture.
       await db
         .delete(messageContents)
