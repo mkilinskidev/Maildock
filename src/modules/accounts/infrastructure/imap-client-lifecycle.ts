@@ -53,7 +53,7 @@ export function guardImapClient<T extends EventClient>(client: T): T {
                 check();
                 const next = await iterator.next();
                 check();
-                if (next.done) return;
+                if (next.done) return next.value;
                 yield next.value;
               }
             } finally {

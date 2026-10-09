@@ -1,3 +1,4 @@
+import { presenceBatches, missingUids } from "./uid-presence";
 import {
   ImapFlow,
   type FetchMessageObject,
@@ -118,7 +119,7 @@ type ImapClient = {
     range: string,
     query: Readonly<{
       uid: true;
-      flags: true;
+      flags?: true;
       envelope?: true;
       headers?: string[];
       bodyStructure?: true;
@@ -1211,23 +1212,42 @@ export class ImapSmtpMailProvider implements MailProvider {
           if (changes.length) await sink.flagsBatch(changes);
         }
       }
-      // SEARCH over known local UIDs is complete evidence for their absence. It never imports history.
-      for (
-        let offset = 0;
-        offset < snapshot.localUids.length;
-        offset += batchSize
-      ) {
-        const group = snapshot.localUids.slice(offset, offset + batchSize);
+      // No deletions until every bounded SEARCH and STATUS has succeeded.
+      const missing: string[] = [];
+      for (const group of presenceBatches(snapshot.localUids)) {
         const found = await uidSearch.call(
           client,
           { uid: group.join(",") },
           { uid: true },
         );
-        if (found === false || found === undefined)
-          throw new Error("Known UID reconciliation failed.");
-        const present = new Set(found);
-        const missing = group.filter((uid) => !present.has(Number(uid)));
-        if (missing.length) await sink.removed(missing);
+        missing.push(...missingUids(group, found));
+        reconciliationMetrics(
+          snapshot.localUids.length,
+          returnedUids,
+          condstore,
+        );
+      }
+      // ImapFlow can discard malformed SEARCH entries. Independently confirm
+      // absence before deletion; contradictory FETCH evidence fails closed.
+      for (const group of presenceBatches(missing)) {
+        const iterator = client.fetch(
+          group.join(","),
+          { uid: true },
+          { uid: true },
+        );
+        try {
+          for (;;) {
+            const next = await iterator.next();
+            if (next.done) {
+              if (next.value === false)
+                throw new Error("UID absence confirmation failed.");
+              break;
+            }
+            throw new Error("UID presence listing was incomplete.");
+          }
+        } finally {
+          await iterator.return(undefined);
+        }
       }
       const status = await client.status?.(remotePath, {
         messages: true,
@@ -1237,7 +1257,11 @@ export class ImapSmtpMailProvider implements MailProvider {
       });
       if (status === false)
         throw new Error("Mailbox status observation failed.");
+      assertImapHealthy(client);
+      for (let offset = 0; offset < missing.length; offset += batchSize)
+        await sink.removed(missing.slice(offset, offset + batchSize));
       const observed = status ?? {};
+      assertImapHealthy(client);
       await sink.completed({
         uidNext: (observed.uidNext ?? mailbox.uidNext ?? 1).toString(),
         messageCount: (observed.messages ?? mailbox.exists ?? 0).toString(),

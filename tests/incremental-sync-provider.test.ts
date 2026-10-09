@@ -36,6 +36,8 @@ type Script = {
   condstore?: boolean;
   failFetch?: string;
   failSearch?: string;
+  failStatus?: boolean;
+  presence?: (query: string) => Promise<number[] | false | undefined>;
 };
 
 function harness(script: Script = {}) {
@@ -63,12 +65,15 @@ function harness(script: Script = {}) {
           : { highestModseq: script.selectModseq }),
       }),
       mailboxClose: async () => true,
-      status: async () => ({
-        messages: remote.length,
-        unseen: 0,
-        uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
-        highestModseq: script.statusModseq ?? script.selectModseq,
-      }),
+      status: async () =>
+        script.failStatus
+          ? false
+          : {
+              messages: remote.length,
+              unseen: 0,
+              uidNext: script.uidNext ?? Math.max(1, ...remote) + 1,
+              highestModseq: script.statusModseq ?? script.selectModseq,
+            },
       search: async (query) => {
         calls.searches.push(query);
         if ("since" in query) return script.recent ?? [];
@@ -78,6 +83,7 @@ function harness(script: Script = {}) {
           const start = Number(uid.slice(0, -2));
           return remote.filter((item) => item >= start);
         }
+        if (script.presence) return script.presence(uid);
         const requested = uid.split(",").map(Number);
         return remote.filter((item) => requested.includes(item));
       },
@@ -176,6 +182,156 @@ async function run(
 }
 
 describe("Phase 1E IMAP delta provider", () => {
+  it("reduces 41,246 unchanged CONDSTORE placements from 275 presence commands to 42", async () => {
+    const remote = Array.from({ length: 41246 }, (_, i) => i + 1);
+    const result = await run(
+      { remote, condstore: true, selectModseq: 20n },
+      {
+        lastSeenUid: "41246",
+        highestModseq: "20",
+        localUids: remote.map(String),
+      },
+      150,
+    );
+    expect(result.calls.searches).toHaveLength(43); // new UID detection + 42 presence
+    expect(result.calls.fetches).toHaveLength(1); // changedSince
+    expect(result.state.removed).toEqual([]);
+    expect(result.state.messages.size).toBe(0);
+    expect(result.state.completed?.highestModseq).toBe("20");
+  });
+  it("does not delete earlier missing UIDs when a later presence command fails", async () => {
+    const localUids = Array.from({ length: 1001 }, (_, i) => String(i + 1));
+    const fake = harness({
+      remote: [],
+      condstore: true,
+      selectModseq: 20n,
+      failSearch: "1001",
+    });
+    const target = sink({
+      lastSeenUid: "1001",
+      highestModseq: "10",
+      localUids,
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+    expect(target.state.checkpoint).toBe("1001");
+  });
+
+  it.each([false as const, undefined, [0], [1, 1], [999]])(
+    "fails closed for interrupted/malformed presence response %j",
+    async (response) => {
+      const fake = harness({
+        remote: [1],
+        condstore: true,
+        selectModseq: 20n,
+        presence: async () => response,
+      });
+      const target = sink({
+        lastSeenUid: "1",
+        highestModseq: "10",
+        localUids: ["1"],
+      });
+      await expect(
+        fake.provider.synchronizeDeltaMailbox(
+          account,
+          "INBOX",
+          150,
+          target.callbacks,
+        ),
+      ).rejects.toThrow();
+      expect(target.state.removed).toEqual([]);
+      expect(target.state.completed).toBeNull();
+    },
+  );
+  it("preserves arrival boundaries and detects an expunge during presence reconciliation", async () => {
+    const remote = [1, 2];
+    const result = await run(
+      {
+        remote,
+        presence: async () => {
+          remote.push(3);
+          remote.splice(0, 1);
+          return [2, 3].filter((uid) => uid <= 2);
+        },
+      },
+      { lastSeenUid: "2", highestModseq: null, localUids: ["1", "2"] },
+    );
+    expect(result.state.removed).toEqual(["1"]);
+    expect(result.state.messages.size).toBe(0);
+    expect(result.state.checkpoint).toBe("2");
+    const next = await run(
+      { remote: [2, 3] },
+      { lastSeenUid: "2", highestModseq: null, localUids: ["2"] },
+    );
+    expect([...next.state.messages.keys()]).toEqual(["3"]);
+  });
+  it("rejects a successful partial SEARCH when FETCH still finds the missing placement", async () => {
+    const fake = harness({ remote: [1, 2], presence: async () => [1] });
+    const target = sink({
+      lastSeenUid: "2",
+      highestModseq: "10",
+      localUids: ["1", "2"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+  });
+  it("does not delete confirmed absences when STATUS fails", async () => {
+    const fake = harness({ remote: [], failStatus: true });
+    const target = sink({
+      lastSeenUid: "1",
+      highestModseq: "10",
+      localUids: ["1"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+  });
+  it("does not delete when the independent absence FETCH fails", async () => {
+    const fake = harness({
+      remote: [],
+      condstore: true,
+      selectModseq: 20n,
+      failFetch: "1",
+    });
+    const target = sink({
+      lastSeenUid: "1",
+      highestModseq: "10",
+      localUids: ["1"],
+    });
+    await expect(
+      fake.provider.synchronizeDeltaMailbox(
+        account,
+        "INBOX",
+        150,
+        target.callbacks,
+      ),
+    ).rejects.toThrow();
+    expect(target.state.removed).toEqual([]);
+    expect(target.state.completed).toBeNull();
+  });
   it("handles no new messages and leaves the UID checkpoint alone", async () => {
     const { state } = await run(
       { remote: [1, 2] },
