@@ -1,3 +1,10 @@
+import { PgBoss } from "pg-boss";
+import {
+  enqueueContent,
+  ensureContentQueue,
+  contentJobState,
+  MESSAGE_CONTENT_QUEUE as contentQueue,
+} from "@/modules/mail/infrastructure/content-jobs";
 import { initializeOwnerFixture } from "./security/mfa-fixture";
 import { setReadyFixture } from "./security/mfa-fixture";
 import { ApplicationEventService } from "@/modules/diagnostics/application/application-event-service";
@@ -1340,6 +1347,123 @@ describe("Phase 0 PostgreSQL foundations", () => {
     const third = (await db.select().from(mailboxMessages)).find(
       (item) => item.uid === 44n,
     )!;
+    const boss = new PgBoss({ connectionString: config.databaseUrl });
+    await boss.start();
+    try {
+      await ensureContentQueue(boss);
+      const scheduler = {
+        schedule: (a: string, m: string, id: string) =>
+          enqueueContent(boss, a, m, id),
+        state: (m: string, id: string, pendingSince?: Date) =>
+          contentJobState(boss, m, id, pendingSince),
+      };
+      const durableService = new MessageContentService(
+        db,
+        scheduler,
+        accounts,
+        provider,
+        config,
+      );
+      // Interrupted producer: content write committed, enqueue never happened.
+      await db
+        .insert(messageContents)
+        .values({ messageId: third.messageId, status: "pending" });
+      await durableService.recoverPending(scheduler);
+      const [first] = await boss.fetch(contentQueue, { includeMetadata: true });
+      expect(first).toBeDefined();
+      fail = true;
+      await expect(
+        durableService.run(accountId, mailbox.id, third.messageId),
+      ).rejects.toThrow();
+      // Even before pg-boss settles failure, durable active state keeps polling alive.
+      expect(
+        (await durableService.detail(accountId, mailbox.id, third.messageId))
+          .content.status,
+      ).toBe("fetching");
+      await boss.fail(contentQueue, first.id);
+      const waiting = (
+        await durableService.detail(accountId, mailbox.id, third.messageId)
+      ).content;
+      expect(waiting).toMatchObject({
+        status: "pending",
+        retrying: true,
+        error: null,
+      });
+      expect(
+        await durableService.request(accountId, mailbox.id, third.messageId),
+      ).toBe(false);
+      await durableService.recoverPending(scheduler);
+      expect(
+        (
+          await boss.findJobs(contentQueue, {
+            key: `${mailbox.id}:${third.messageId}`,
+          })
+        ).filter((job) => ["active", "created", "retry"].includes(job.state)),
+      ).toHaveLength(1);
+      const [retry] = await boss.fetch(contentQueue, {
+        includeMetadata: true,
+        ignoreStartAfter: true,
+      });
+      fail = false;
+      await durableService.run(accountId, mailbox.id, third.messageId);
+      await boss.complete(contentQueue, retry.id);
+      expect(
+        (await durableService.detail(accountId, mailbox.id, third.messageId))
+          .content.status,
+      ).toBe("ready");
+      fail = true;
+      await durableService.run(accountId, mailbox.id, third.messageId);
+      expect(
+        (await durableService.detail(accountId, mailbox.id, third.messageId))
+          .content.status,
+      ).toBe("ready");
+      // Expiration can leave an older in-process attempt alive. A late failure
+      // must never replace content successfully cached by a subsequent attempt.
+      await db
+        .update(messageContents)
+        .set({ status: "pending" })
+        .where(eq(messageContents.messageId, third.messageId));
+      let entered!: () => void;
+      let failStale!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const staleService = new MessageContentService(
+        db,
+        scheduler,
+        accounts,
+        {
+          ...provider,
+          fetchMessageContent: async () => {
+            entered();
+            return new Promise<never>((_resolve, reject) => {
+              failStale = () => reject(new Error("provider secret"));
+            });
+          },
+        },
+        config,
+      );
+      const stale = staleService.run(accountId, mailbox.id, third.messageId);
+      const rejected = expect(stale).rejects.toThrow(
+        "Message content could not be fetched.",
+      );
+      await Promise.race([started, stale]);
+      fail = false;
+      await durableService.run(accountId, mailbox.id, third.messageId);
+      failStale();
+      await rejected;
+      expect(
+        (await durableService.detail(accountId, mailbox.id, third.messageId))
+          .content.status,
+      ).toBe("ready");
+      // Restore the original epoch-error assertion's uncached fixture.
+      await db
+        .delete(messageContents)
+        .where(eq(messageContents.messageId, third.messageId));
+      fail = false;
+    } finally {
+      await boss.stop();
+    }
     await db
       .update(mailboxes)
       .set({ recentSyncUidValidity: 6n })

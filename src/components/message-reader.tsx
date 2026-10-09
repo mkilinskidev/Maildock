@@ -19,6 +19,7 @@ export type MessageDetail = {
   replyTo: Address[];
   attachments: AttachmentView[];
   content: {
+    retrying?: boolean;
     status: string;
     plainText: string | null;
     sanitizedHtml: string | null;
@@ -187,7 +188,11 @@ export function MessageReader({
             ) : (
               <div className="pane-empty">
                 <div className="skeleton" style={{ width: 180, height: 11 }} />
-                <p>Downloading message content…</p>
+                <p>
+                  {detail.content.retrying
+                    ? "Download interrupted. Automatic retry is scheduled..."
+                    : "Downloading message content..."}
+                </p>
               </div>
             )}
           </div>

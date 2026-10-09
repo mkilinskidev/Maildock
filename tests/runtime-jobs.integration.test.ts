@@ -1,3 +1,9 @@
+import {
+  enqueueContent,
+  ensureContentQueue,
+  contentJobState,
+  MESSAGE_CONTENT_QUEUE as content,
+} from "@/modules/mail/infrastructure/content-jobs";
 import { randomUUID } from "node:crypto";
 import {
   GenericContainer,
@@ -40,6 +46,7 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
     await boss.start();
     await ensureDeltaQueue(boss);
     await ensureBackfillQueue(boss);
+    await ensureContentQueue(boss);
     await producer.start();
   });
   afterAll(async () => {
@@ -62,6 +69,108 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
     });
     return (await boss.getDb().executeSql(query.text, query.values)).rows;
   }
+
+  it("coalesces content producers across active and delayed retries, and preserves expiry recovery", async () => {
+    const mailboxId = randomUUID(),
+      messageId = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        enqueueContent(i % 2 ? producer : boss, account, mailboxId, messageId),
+      ),
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
+    const [first] = await boss.fetch(content, { includeMetadata: true });
+    expect(first).toBeDefined();
+    expect(await contentJobState(boss, mailboxId, messageId)).toBe("fetching");
+    expect(await enqueueContent(producer, account, mailboxId, messageId)).toBe(
+      false,
+    );
+    await boss.fail(content, first.id);
+    const [retry] = await jobs(content, `${mailboxId}:${messageId}`);
+    expect(retry.state).toBe("retry");
+    expect(retry.startAfter.valueOf()).toBeGreaterThan(Date.now());
+    expect(await contentJobState(boss, mailboxId, messageId)).toBe("retrying");
+    expect(await enqueueContent(producer, account, mailboxId, messageId)).toBe(
+      false,
+    );
+    expect(await boss.fetch(content)).toHaveLength(0);
+    const [attempt] = await boss.fetch(content, {
+      includeMetadata: true,
+      ignoreStartAfter: true,
+    });
+    expect(attempt.retryCount).toBe(1);
+    // Simulate process loss using pg-boss's own expiration supervisor.
+    await boss
+      .getDb()
+      .executeSql(
+        "UPDATE pgboss.job SET started_on=now()-interval '16 minutes' WHERE id=$1",
+        [attempt.id],
+      );
+    await boss.supervise(content);
+    expect(await contentJobState(boss, mailboxId, messageId)).toBe("retrying");
+    const [recovered] = await boss.fetch(content, {
+      includeMetadata: true,
+      ignoreStartAfter: true,
+    });
+    await boss.complete(content, recovered.id);
+    expect(await contentJobState(boss, mailboxId, messageId)).toBe("terminal");
+    // A newer pending write after an older completed request is a missing enqueue.
+    expect(
+      await contentJobState(
+        boss,
+        mailboxId,
+        messageId,
+        new Date(Date.now() + 1000),
+      ),
+    ).toBe("missing");
+    expect(await enqueueContent(boss, account, mailboxId, messageId)).toBe(
+      true,
+    );
+    const [manual] = await boss.fetch(content, { includeMetadata: true });
+    await boss
+      .getDb()
+      .executeSql("UPDATE pgboss.job SET retry_limit=0 WHERE id=$1", [
+        manual.id,
+      ]);
+    await boss.fail(content, manual.id);
+    expect(await contentJobState(boss, mailboxId, messageId)).toBe("terminal");
+  });
+  it("documents why snapshot-based groupConcurrency is not a hard distributed account gate", async () => {
+    const queue = "hotfix-group-admission-evaluation";
+    await boss.createQueue(queue, { policy: "stately" });
+    const group = randomUUID();
+    for (let i = 0; i < 2; i++)
+      await boss.send(
+        queue,
+        { accountId: group },
+        { singletonKey: randomUUID(), group: { id: group } },
+      );
+    const query = fetchNextJob({
+      schema: "pgboss",
+      table: "job_common",
+      name: queue,
+      policy: "stately",
+      limit: 1,
+      ignoreSingletons: [],
+      groupConcurrency: 1,
+    });
+    const tx1 = await boss.getDb().beginTransaction!();
+    const tx2 = await producer.getDb().beginTransaction!();
+    try {
+      const first = (await tx1.db.executeSql(query.text, query.values)).rows;
+      // tx1's active row is invisible to tx2's group count until commit.
+      const second = (await tx2.db.executeSql(query.text, query.values)).rows;
+      expect(first).toHaveLength(1);
+      expect(second).toHaveLength(1);
+      await tx1.commit();
+      await tx2.commit();
+      await boss.complete(queue, [first[0].id, second[0].id]);
+    } catch (error) {
+      await tx1.rollback();
+      await tx2.rollback();
+      throw error;
+    }
+  });
   it("skips live active keys despite stale cache, runs unrelated work, then runs the durable successor", async () => {
     const key = randomUUID();
     await enqueueDelta(boss, account, key, "poll");
