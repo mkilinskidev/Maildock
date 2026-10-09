@@ -2,6 +2,8 @@
 
 Audit date: 2026-10-09. Status: proposal; no provider implementation authorized by this report.
 
+> **Superseded for the fresh-install Gmail design by [Phase P0](gmail-api-p0-fresh-install.md), dated 2026-10-09.** The owner will replace the local database when the native provider is ready. All legacy identity bridging/deduplication, UUID aliases, migration journals/inventories, shadow synchronization, IMAP rollback, old Gmail record compatibility and cohort cutover recommendations below are historical and must not be implemented. The original repository findings and generic IMAP hotfix analysis remain evidence. The P0 documents govern the new schema, provider, synchronization, SMTP policy, acceptance gates and release procedure. Neither document authorizes a database deletion or implementation before P0 review.
+
 Evidence vocabulary: **VERIFIED** means inspected repository code or explicitly cited primary documentation; **RECOMMENDED** means a proposed design; **OPEN** means validation is still required. Protocol documentation establishes feasibility, not the contents of a particular installation's database or its Cloud configuration.
 
 Repository baseline (local refs, matching the displayed remote tracking refs where present):
