@@ -246,7 +246,7 @@ export class MessageContentService {
           ne(messageContents.status, "ready"),
           and(
             isNotNull(messageContents.sanitizedHtml),
-            ne(messageContents.policyVersion, EMAIL_HTML_POLICY),
+            sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
           ),
         ),
       });
@@ -332,7 +332,7 @@ export class MessageContentService {
               ne(messageContents.status, "ready"),
               and(
                 isNotNull(messageContents.sanitizedHtml),
-                ne(messageContents.policyVersion, EMAIL_HTML_POLICY),
+                sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
               ),
             ),
           ),
@@ -409,7 +409,7 @@ export class MessageContentService {
                 ne(messageContents.status, "ready"),
                 and(
                   isNotNull(messageContents.sanitizedHtml),
-                  ne(messageContents.policyVersion, EMAIL_HTML_POLICY),
+                  sql<boolean>`${messageContents.policyVersion} IS DISTINCT FROM ${EMAIL_HTML_POLICY}`,
                 ),
               ),
             ),

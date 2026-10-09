@@ -1307,9 +1307,19 @@ describe("Phase 0 PostgreSQL foundations", () => {
     expect(await service.request(accountId, mailbox.id, message.id)).toBe(
       false,
     );
+    // A ready cache lacking a policy version must still be refreshable.
+    await db
+      .update(messageContents)
+      .set({ policyVersion: null })
+      .where(eq(messageContents.messageId, message.id));
+    expect(await service.request(accountId, mailbox.id, message.id)).toBe(true);
+    await service.run(accountId, mailbox.id, message.id);
+    expect(
+      (await db.select().from(messageContents))[0]?.policyVersion,
+    ).not.toBeNull();
     fail = true;
     await service.run(accountId, mailbox.id, message.id);
-    expect(downloads).toBe(1);
+    expect(downloads).toBe(2);
     expect(
       (await service.detail(accountId, mailbox.id, message.id)).content.status,
     ).toBe("ready");
