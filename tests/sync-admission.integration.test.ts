@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
   installSyncAdmission,
+  syncCandidatesSql,
   SYNC_QUEUES,
 } from "@/modules/mail/infrastructure/sync-admission";
 import { createIdleAccountLease } from "@/modules/mail/infrastructure/idle-account-lease";
@@ -254,6 +255,199 @@ describe("distributed synchronization admission on real pg-boss", () => {
     expect(await fetch(recent)).toHaveLength(0);
     expect(await fetch(delta, second)).toHaveLength(0);
   });
+  it("settles leftover jobs of deleted accounts without blocking healthy accounts", async () => {
+    const removed = await account(),
+      healthy = await account();
+    const stale = await send(discovery, removed);
+    await database.client`update pgboss.job set created_on=now()-interval '1 minute' where id=${stale}`;
+    await database.client`delete from mail_accounts where id=${removed}`;
+    await send(delta, healthy, await mailbox(healthy, "INBOX"));
+    const [job] = await fetch(discovery);
+    expect(job.id).toBe(stale);
+    await first.complete(discovery, job.id);
+    expect((await fetch(delta))[0].data.accountId).toBe(healthy);
+  });
+  it("ignores stale singleton statistics while preserving live singleton exclusion", async () => {
+    const a = await account(),
+      healthy = await account();
+    const inbox = await mailbox(a, "INBOX");
+    const key = inbox;
+    await first.send(
+      delta,
+      { accountId: a, mailboxId: inbox },
+      { singletonKey: key },
+    );
+    const [active] = await fetch(delta);
+    // Supervision writes this advisory hint while the delivery is active. A
+    // newly-started process loads that value into its 60-second queue cache.
+    await database.client`update pgboss.queue set singletons_active=array[${key}] where name=${delta}`;
+    const connectionString = `postgresql://test:test@${container.getHost()}:${container.getMappedPort(5432)}/admission`;
+    const cached = new PgBoss({ connectionString, supervise: false });
+    await cached.start();
+    const restore = installSyncAdmission(cached, 2);
+    try {
+      await first.send(
+        delta,
+        { accountId: a, mailboxId: inbox },
+        { singletonKey: key },
+      );
+      expect(await fetch(delta, cached)).toHaveLength(0); // Actual authority remains.
+      await first.complete(delta, active.id);
+      await send(recent, healthy, await mailbox(healthy, "Projects"));
+      const [successor] = await fetch(delta, cached);
+      expect(successor.data.accountId).toBe(a);
+      await cached.complete(delta, successor.id);
+      expect(await fetch(recent, cached)).toHaveLength(1);
+    } finally {
+      restore();
+      await cached.stop();
+      await database.client`update pgboss.queue set singletons_active=null where name=${delta}`;
+    }
+  });
+  it("checks installed enum ordering and preserves expiration recovery", async () => {
+    const isolation = await first
+      .getDb()
+      .executeSql("show transaction_isolation");
+    expect(isolation.rows[0].transaction_isolation).toBe("read committed");
+    const states =
+      await database.client`select enumlabel from pg_enum e join pg_type t on t.oid=e.enumtypid join pg_namespace n on n.oid=t.typnamespace where n.nspname='pgboss' and t.typname='job_state' order by enumsortorder`;
+    expect(states.map((row) => row.enumlabel)).toEqual([
+      "created",
+      "retry",
+      "active",
+      "completed",
+      "cancelled",
+      "failed",
+    ]);
+    const a = await account(),
+      b = await account();
+    await send(delta, a, await mailbox(a, "INBOX"));
+    const [job] = await fetch(delta);
+    await database.client`update pgboss.job set started_on=now()-interval '16 minutes' where id=${job.id}`;
+    await first.supervise(delta);
+    expect(await fetch(delta)).toHaveLength(0);
+    await send(delta, b, await mailbox(b, "INBOX"));
+    expect((await fetch(delta))[0].data.accountId).toBe(b);
+  });
+  it("rolls back an actual claim when fairness persistence fails", async () => {
+    const a = await account();
+    const id = await send(delta, a, await mailbox(a, "INBOX"));
+    const db = first.getDb();
+    const begin = db.beginTransaction!;
+    // Reinstall so the adapter captures this fault-injecting transaction factory.
+    restoreFirst();
+    db.beginTransaction = async () => {
+      const tx = await begin.call(db);
+      const execute = tx.db.executeSql.bind(tx.db);
+      tx.db.executeSql = (sql, values) => {
+        if (sql.includes("insert into public.sync_account_admission"))
+          throw new Error("fixture fairness persistence failure");
+        return execute(sql, values);
+      };
+      return tx;
+    };
+    restoreFirst = installSyncAdmission(first, 2);
+    try {
+      await expect(fetch(delta)).rejects.toThrow(
+        "fixture fairness persistence failure",
+      );
+      const [job] = await first.findJobs(delta, { id: id! });
+      expect(job.state).toBe("created");
+      expect(job.startedOn).toBeNull();
+      expect(job.priority).toBe(10);
+      expect(job.retryCount).toBe(0);
+      expect(
+        await database.client`select * from sync_account_admission`,
+      ).toHaveLength(0);
+    } finally {
+      restoreFirst();
+      db.beginTransaction = begin;
+      restoreFirst = installSyncAdmission(first, 2);
+    }
+    expect((await fetch(delta))[0].id).toBe(id);
+  });
+  it("profiles admission with many folders and retained terminal jobs", async () => {
+    const ids = await Promise.all(Array.from({ length: 50 }, () => account()));
+    await database.client`insert into mailboxes(id,account_id,remote_path,name,selectable,first_discovered_at,last_discovered_at)
+      select gen_random_uuid(),a.id,case when i=0 then 'INBOX' else 'Folder_'||i end,'Fixture',true,now(),now()
+      from mail_accounts a cross join generate_series(0,100) i where a.id=any(${ids}::uuid[])`;
+    const folders =
+      await database.client`select id,account_id,remote_path from mailboxes where account_id=any(${ids}::uuid[])`;
+    const groups = new Map<
+      string,
+      { data: { accountId: string; mailboxId: string }; singletonKey: string }[]
+    >();
+    for (const [i, folder] of folders.entries()) {
+      const queue =
+        folder.remote_path === "INBOX"
+          ? delta
+          : [recent, delta, backfill][i % 3];
+      const rows = groups.get(queue) ?? [];
+      rows.push({
+        data: { accountId: folder.account_id, mailboxId: folder.id },
+        singletonKey: folder.id,
+      });
+      groups.set(queue, rows);
+    }
+    for (const [queue, jobs] of groups) await first.insert(queue, jobs);
+    await first.insert(
+      discovery,
+      Array.from({ length: 20000 }, () => ({
+        data: { accountId: ids[0] },
+        singletonKey: randomUUID(),
+      })),
+    );
+    await database.client`update pgboss.job set state='completed' where name=${discovery}`;
+    await database.client`analyze pgboss.job_common`;
+    await database.client`analyze mailboxes`;
+    const profiles = [];
+    for (let i = 0; i < 3; i++) {
+      const result = await first
+        .getDb()
+        .executeSql(
+          `explain (analyze,buffers,format json) ${syncCandidatesSql}`,
+          [[...SYNC_QUEUES], 2],
+        );
+      const plan = result.rows[0]["QUERY PLAN"][0];
+      const scans: number[] = [];
+      function inspect(node: Record<string, unknown>) {
+        if (node["CTE Name"] === "candidates")
+          scans.push(Number(node["Actual Loops"]));
+        for (const child of (node.Plans ?? []) as Record<string, unknown>[])
+          inspect(child);
+      }
+      inspect(plan.Plan);
+      profiles.push({
+        executionMs: plan["Execution Time"],
+        planningMs: plan["Planning Time"],
+        sharedHitBlocks: plan.Plan["Shared Hit Blocks"],
+        sharedReadBlocks: plan.Plan["Shared Read Blocks"],
+        plan: JSON.stringify(plan.Plan),
+        maxCandidateScanLoops: Math.max(0, ...scans),
+      });
+    }
+    console.info(
+      "admission profile",
+      JSON.stringify({
+        accounts: 50,
+        eligible: folders.length,
+        terminal: 20000,
+        samples: profiles.map((sample) => ({
+          executionMs: sample.executionMs,
+          planningMs: sample.planningMs,
+          sharedHitBlocks: sample.sharedHitBlocks,
+          sharedReadBlocks: sample.sharedReadBlocks,
+          maxCandidateScanLoops: sample.maxCandidateScanLoops,
+        })),
+        usesReadyIndex: profiles[0].plan.includes("job_common_i11"),
+      }),
+    );
+    // A backfill check must not rescan the whole materialized backlog per job.
+    expect(profiles.every((sample) => sample.maxCandidateScanLoops <= 1)).toBe(
+      true,
+    );
+    expect((await fetch(delta))[0]).toBeDefined();
+  });
   it("does not bypass a queued retry deadline or increment retry counts for admission deferral", async () => {
     const a = await account(),
       b = await account();
@@ -372,7 +566,9 @@ describe("distributed synchronization admission on real pg-boss", () => {
     expect(order).toEqual(["INBOX"]);
     releaseInbox();
     await work;
-    expect(order).toEqual(["INBOX", "Archive", "Projects"]);
+    expect(order[0]).toBe("INBOX");
+    // The remaining P1 requests run concurrently; their completion order is free.
+    expect(order.slice(1).sort()).toEqual(["Archive", "Projects"]);
   });
   it("the Gmail poller reaches accounts beyond its first 20 pending jobs", async () => {
     await ensureGmailQueue(first);

@@ -41,8 +41,10 @@ with candidates as (
     and not exists(select 1 from pgboss.job retry where retry.name=j.name
       and retry.singleton_key=j.singleton_key and retry.state='retry' and retry.id<>j.id)
 ), eligible as (
-  select * from candidates c where c.class<>2 or c.mailbox_id is null or not exists(
-    select 1 from candidates higher where higher.mailbox_id=c.mailbox_id and higher.class<2)
+  -- Build the current-mailbox set once; a correlated CTE scan is quadratic
+  -- in the backlog when many backfill jobs have no current-work sibling.
+  select * from candidates c where c.class<>2 or c.mailbox_id is null or c.mailbox_id not in(
+    select distinct mailbox_id from candidates where class<2 and mailbox_id is not null)
 ), capacity as (
   select count(*) as active,
     count(*) filter(where j.priority<100) as lower_active
@@ -86,13 +88,14 @@ export function installSyncAdmission(
     const queue = SYNC_QUEUES.find((name) =>
       sql.includes(`j.name = '${name}'`),
     );
-    if (!queue || !sql.includes("started_on = pgboss.job_now()"))
-      return execute(sql, values);
+    if (!queue || !sql.includes("started_on")) return execute(sql, values);
     const marker = `WHERE j.name = '${queue}'`;
     if (
       !sql.includes(marker) ||
       !sql.includes("next AS (") ||
-      !sql.includes("LIMIT 1")
+      !/\bLIMIT 1\b/.test(sql) ||
+      !sql.includes("started_on = pgboss.job_now()") ||
+      !sql.includes("active_job.policy = 'stately'")
     )
       throw new Error("Unsupported pg-boss synchronization fetch shape.");
     const tx = await begin();
@@ -131,7 +134,16 @@ export function installSyncAdmission(
         return { rows: [] };
       }
       const result = await tx.db.executeSql(
-        sql.replace(marker, `${marker} AND j.id=$${values.length + 1}::uuid`),
+        // The installed pg-boss patch checks live stately rows and retains its
+        // unique active-key index. Its cached singleton list can lag completion
+        // by a monitor/cache cycle; it must not veto the global selected head.
+        // Keep the parameter typed/bound while removing only that advisory hint.
+        sql
+          .replace(
+            /COALESCE\(j\.singleton_key, ''\) <> ALL\((\$\d+::text\[\])\)/,
+            "($1 IS NULL OR TRUE)",
+          )
+          .replace(marker, `${marker} AND j.id=$${values.length + 1}::uuid`),
         [...values, next.id],
       );
       if (result.rows.length) {
@@ -186,7 +198,8 @@ async function recordAdmission(
 ) {
   await db.executeSql(
     `insert into public.sync_account_admission(account_id,last_admitted_at)
-    values($1,clock_timestamp()) on conflict(account_id) do update set last_admitted_at=excluded.last_admitted_at`,
+    select id,clock_timestamp() from public.mail_accounts where id::text=$1 for key share
+    on conflict(account_id) do update set last_admitted_at=excluded.last_admitted_at`,
     [account],
   );
   // Admissions rather than claimed productive slices give lower classes an

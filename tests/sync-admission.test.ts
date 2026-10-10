@@ -23,7 +23,7 @@ describe("synchronization admission adapter boundaries", () => {
     return { db, tx, executeSql, restore };
   }
   const fetchSql =
-    "WITH next AS (SELECT j.id FROM pgboss.job_common j WHERE j.name = 'mailbox-delta-sync-v1' LIMIT 1) UPDATE pgboss.job_common j SET started_on = pgboss.job_now() RETURNING j.id";
+    "WITH next AS (SELECT j.id FROM pgboss.job_common j WHERE j.name = 'mailbox-delta-sync-v1' AND NOT EXISTS (SELECT 1 FROM pgboss.job_common active_job WHERE active_job.policy = 'stately') LIMIT 1) UPDATE pgboss.job_common j SET started_on = pgboss.job_now() RETURNING j.id";
   it("leaves commands and content database operations unchanged and restores the adapter", async () => {
     const f = fixture();
     await f.db.executeSql("select 1", ["parameter"]);
@@ -47,6 +47,22 @@ describe("synchronization admission adapter boundaries", () => {
     expect(f.executeSql).not.toHaveBeenCalled();
     expect(f.db.beginTransaction).not.toHaveBeenCalled();
   });
+  it.each([
+    fetchSql.replace("LIMIT 1", "LIMIT 10"),
+    fetchSql.replace("started_on = pgboss.job_now()", "started_on = now()"),
+    fetchSql.replace(
+      "active_job.policy = 'stately'",
+      "active_job.policy = 'standard'",
+    ),
+  ])(
+    "rejects changed fetch semantics or a missing installed stately patch",
+    async (sql) => {
+      const f = fixture();
+      await expect(f.db.executeSql(sql)).rejects.toThrow("Unsupported pg-boss");
+      expect(f.executeSql).not.toHaveBeenCalled();
+      expect(f.db.beginTransaction).not.toHaveBeenCalled();
+    },
+  );
   it("rolls back SQL failures without swallowing them or modifying retry deadlines", async () => {
     const f = fixture();
     f.tx.db.executeSql.mockRejectedValueOnce(
