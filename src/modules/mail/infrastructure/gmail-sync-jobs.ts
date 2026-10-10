@@ -78,7 +78,7 @@ export class GmailPoller {
       const result = await this.boss
         .getDb()
         .executeSql(
-          `select a.id from public.mail_accounts a left join public.gmail_account_sync_state s on s.account_id=a.id where a.receive_transport='gmail' and a.enabled and a.oauth_status='connected' and (s.account_id is null or s.account_revision<>a.work_revision or s.next_attempt_at is null or s.next_attempt_at<=now()) order by s.updated_at nulls first limit 20`,
+          `select a.id from public.mail_accounts a left join public.gmail_account_sync_state s on s.account_id=a.id left join public.sync_account_admission admitted on admitted.account_id=a.id where a.receive_transport='gmail' and a.enabled and a.oauth_status='connected' and (s.account_id is null or s.account_revision<>a.work_revision or s.next_attempt_at is null or s.next_attempt_at<=now()) and not exists(select 1 from pgboss.job pending where pending.name='gmail-account-sync-v1' and pending.state<'completed' and pending.data->>'accountId'=a.id::text) order by admitted.last_admitted_at nulls first, s.updated_at nulls first, a.id limit 20`,
           [],
         );
       for (const row of result.rows) await enqueueGmail(this.boss, row.id);
@@ -93,11 +93,12 @@ export async function registerGmailWorker(
   service: GmailSyncService,
   signal?: AbortSignal,
   logger?: Pick<Logger, "debug">,
+  concurrency = 2,
 ) {
   await ensureGmailQueue(boss);
   await boss.work(
     GMAIL_SYNC_QUEUE,
-    { localConcurrency: 2, includeMetadata: true },
+    { localConcurrency: Math.max(2, concurrency), includeMetadata: true },
     safeJobHandler("delta-sync", async (batch) => {
       const request = payload.parse(batch[0]?.data);
       await observeSyncDelivery(

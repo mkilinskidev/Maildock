@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import { observeSyncDelivery } from "./sync-diagnostics";
 import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
-import { PgBoss } from "pg-boss";
+import { PgBoss, type JobWithMetadata } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
 import { and, eq, ne, or } from "drizzle-orm";
@@ -17,6 +17,13 @@ import { MAILBOX_DELTA_SYNC_QUEUE } from "./delta-sync-jobs";
 import { MAILBOX_RECENT_SYNC_QUEUE } from "./recent-sync-jobs";
 
 export const MAILBOX_BACKFILL_SYNC_QUEUE = "mailbox-backfill-sync-v1";
+function hasEligibleWork(jobs: JobWithMetadata<unknown>[]): boolean {
+  return jobs.some(
+    (job) =>
+      !job.blocked &&
+      (!job.startAfter || job.startAfter.getTime() <= Date.now()),
+  );
+}
 const payloadSchema = z
   .object({
     accountRevision: z.string().regex(/^[1-9][0-9]*$/),
@@ -61,11 +68,12 @@ export async function registerBackfillWorker(
   service: BackfillSyncService,
   withLock: (mailboxId: string, work: () => Promise<void>) => Promise<void>,
   logger?: Pick<Logger, "debug">,
+  concurrency = 2,
 ): Promise<void> {
   await ensureBackfillQueue(boss);
   await boss.work(
     MAILBOX_BACKFILL_SYNC_QUEUE,
-    { localConcurrency: 1, includeMetadata: true },
+    { localConcurrency: Math.max(2, concurrency), includeMetadata: true },
     safeJobHandler("backfill-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Backfill received an empty batch.");
@@ -92,7 +100,7 @@ export async function registerBackfillWorker(
               queued: true,
             }),
           ]);
-          if (recent.length || delta.length) return;
+          if (hasEligibleWork(recent) || hasEligibleWork(delta)) return;
           let more: string | null = null;
           await withLock(payload.mailboxId, async () => {
             const [recent, delta] = await Promise.all([
@@ -105,7 +113,7 @@ export async function registerBackfillWorker(
                 queued: true,
               }),
             ]);
-            if (recent.length || delta.length) return;
+            if (hasEligibleWork(recent) || hasEligibleWork(delta)) return;
             more = await service.run(
               payload.accountId,
               payload.mailboxId,

@@ -77,6 +77,7 @@ describe("Phase 1G job priority", () => {
     const mailboxId = "00000000-0000-4000-8000-000000000002";
     let handler!: (batch: { data: unknown }[]) => Promise<void>;
     let queued = MAILBOX_RECENT_SYNC_QUEUE;
+    let deferred = false;
     let entered = false;
     const boss = {
       getDb: () => ({
@@ -101,7 +102,16 @@ describe("Phase 1G job priority", () => {
       ) => {
         handler = callback;
       },
-      findJobs: async (name: string) => (name === queued ? [{}] : []),
+      findJobs: async (name: string) =>
+        name === queued
+          ? [
+              {
+                startAfter: deferred
+                  ? new Date(Date.now() + 60_000)
+                  : undefined,
+              },
+            ]
+          : [],
       send: async () => "job",
     } as unknown as PgBoss;
     const service = {
@@ -123,6 +133,11 @@ describe("Phase 1G job priority", () => {
     await handler(job);
     expect(entered).toBe(false);
     queued = "";
+    await handler(job);
+    expect(entered).toBe(true);
+    entered = false;
+    queued = MAILBOX_DELTA_SYNC_QUEUE;
+    deferred = true;
     await handler(job);
     expect(entered).toBe(true);
   });

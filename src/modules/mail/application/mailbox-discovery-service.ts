@@ -72,9 +72,20 @@ export class MailboxDiscoveryService {
       });
       if (this.messages) {
         const selectable = await this.mailboxes.listForAccount(accountId);
+        const inboxes = selectable.filter(
+          (mailbox) =>
+            mailbox.selectable && mailbox.remotePath.toUpperCase() === "INBOX",
+        );
+        await Promise.allSettled(
+          inboxes.map((mailbox) =>
+            this.messages!.requestSync(accountId, mailbox.id),
+          ),
+        );
         await Promise.allSettled(
           selectable
-            .filter((mailbox) => mailbox.selectable)
+            .filter(
+              (mailbox) => mailbox.selectable && !inboxes.includes(mailbox),
+            )
             .map((mailbox) =>
               this.messages!.requestSync(accountId, mailbox.id),
             ),

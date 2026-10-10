@@ -104,7 +104,7 @@ export async function registerDeltaWorker(
   await ensureDeltaQueue(boss);
   await boss.work(
     MAILBOX_DELTA_SYNC_QUEUE,
-    { localConcurrency: concurrency, includeMetadata: true },
+    { localConcurrency: Math.max(2, concurrency), includeMetadata: true },
     safeJobHandler("delta-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Delta sync received an empty batch.");

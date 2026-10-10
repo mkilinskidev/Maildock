@@ -84,7 +84,7 @@ export async function registerRecentSyncWorker(
   await ensureQueue(boss);
   await boss.work(
     MAILBOX_RECENT_SYNC_QUEUE,
-    { localConcurrency: concurrency, includeMetadata: true },
+    { localConcurrency: Math.max(2, concurrency), includeMetadata: true },
     safeJobHandler("recent-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Recent sync received an empty batch.");

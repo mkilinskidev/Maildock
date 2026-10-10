@@ -20,6 +20,25 @@ import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
 import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
 import type { RichDocument } from "../../../modules/mail/domain/rich-document";
 
+export const syncAdmissionPolicy = pgTable(
+  "sync_admission_policy",
+  {
+    id: integer("id").primaryKey(),
+    p0Admissions: integer("p0_admissions").notNull().default(0),
+    lastLowerClass: integer("last_lower_class").notNull().default(2),
+  },
+  (t) => [check("sync_admission_policy_singleton", sql`${t.id}=1`)],
+);
+
+export const syncAccountAdmission = pgTable("sync_account_admission", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => mailAccounts.id, { onDelete: "cascade" }),
+  lastAdmittedAt: timestamp("last_admitted_at", {
+    withTimezone: true,
+  }).notNull(),
+});
+
 export const outgoingMessages = pgTable(
   "outgoing_messages",
   {

@@ -907,7 +907,13 @@ export class ImapSmtpMailProvider implements MailProvider {
           client.capabilities.keys(),
           client.enabled,
         ),
-        mailboxes: listed.map(normalizeMailbox),
+        mailboxes: listed
+          .map(normalizeMailbox)
+          .sort(
+            (a, b) =>
+              Number(b.remotePath.toUpperCase() === "INBOX") -
+              Number(a.remotePath.toUpperCase() === "INBOX"),
+          ),
       };
     } catch (error) {
       throw new MailProviderOperationError(sanitizeError(error, "IMAP"));

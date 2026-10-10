@@ -11,8 +11,10 @@ import {
   mailboxes,
 } from "../../../shared/infrastructure/database/schema";
 import { enqueueDelta } from "./delta-sync-jobs";
+import type { IdleAccountLease } from "./idle-account-lease";
+import { SyncLockContentionError } from "./sync-diagnostics";
 
-type Watch = { stop(): void; revision?: string };
+type Watch = { stop(): void; revision?: string; done: Promise<void> };
 export function idleReconnectDelay(backoff: number, random: number): number {
   return backoff + Math.floor((random * backoff) / 2);
 }
@@ -39,6 +41,7 @@ export class IdleWatcherManager {
     private readonly createClient: (
       options: ConstructorParameters<typeof ImapFlow>[0],
     ) => IdleClient = (options) => new ImapFlow(options),
+    private readonly acquireLease?: IdleAccountLease,
   ) {}
 
   async start(): Promise<void> {
@@ -54,6 +57,9 @@ export class IdleWatcherManager {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     for (const watch of this.watches.values()) watch.stop();
+    await Promise.allSettled(
+      [...this.watches.values()].map((watch) => watch.done),
+    );
     this.watches.clear();
   }
 
@@ -138,12 +144,21 @@ export class IdleWatcherManager {
     };
     const loop = async () => {
       while (!cancelled && !this.stopped) {
+        let releaseLease: (() => Promise<void>) | undefined;
+        let leaseLost = false;
         try {
           const account = await this.accounts.getProviderImapAccountForWork(
             accountId,
             revision,
           );
           if (cancelled || this.stopped) break;
+          releaseLease = await this.acquireLease?.(accountId, () => {
+            leaseLost = true;
+            client?.close();
+          });
+          if (cancelled || this.stopped) break;
+          if (leaseLost)
+            throw new SyncLockContentionError("IDLE authority was lost.");
           client = this.createClient({
             ...imapOptions(account.imap),
             disableAutoIdle: false,
@@ -177,19 +192,23 @@ export class IdleWatcherManager {
           );
           backoff = 1_000;
           await closed;
-        } catch {
+        } catch (error) {
           this.logger.warn(
             {
               event: "mail.idle_disconnected",
               accountId,
               mailboxId,
-              category: "connection_failed",
+              category:
+                error instanceof SyncLockContentionError
+                  ? "lock_contention"
+                  : "connection_failed",
             },
             "IDLE watcher disconnected",
           );
         } finally {
           client?.close();
           client = undefined;
+          await releaseLease?.().catch(() => undefined);
         }
         if (cancelled || this.stopped) break;
         await new Promise<void>((resolve) => {
@@ -204,9 +223,10 @@ export class IdleWatcherManager {
         backoff = nextIdleReconnectBackoff(backoff);
       }
     };
-    void loop();
+    const done = loop();
     return {
       revision,
+      done,
       stop: () => {
         cancelled = true;
         if (wakeTimer) clearTimeout(wakeTimer);

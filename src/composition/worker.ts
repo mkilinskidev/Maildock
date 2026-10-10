@@ -34,6 +34,7 @@ import { DeltaSyncService } from "../modules/mail/application/delta-sync-service
 import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { enqueueDelta } from "../modules/mail/infrastructure/delta-sync-jobs.js";
 import { IdleWatcherManager } from "../modules/mail/infrastructure/idle-watchers.js";
+import { createIdleAccountLease } from "../modules/mail/infrastructure/idle-account-lease";
 import { createMailboxLock } from "../modules/mail/infrastructure/mailbox-lock.js";
 import { BackfillSyncService } from "../modules/mail/application/backfill-sync-service.js";
 import {
@@ -244,7 +245,14 @@ export function createWorkerComposition() {
       config.backfillChunkSize,
     ),
     backfillPoller: new BackfillPoller(database.db, jobs.boss),
-    watchers: new IdleWatcherManager(database.db, accounts, jobs.boss, logger),
+    watchers: new IdleWatcherManager(
+      database.db,
+      accounts,
+      jobs.boss,
+      logger,
+      undefined,
+      createIdleAccountLease(database.client),
+    ),
     mailboxDiscovery: new MailboxDiscoveryService(
       database.db,
       accounts,
