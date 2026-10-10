@@ -474,7 +474,15 @@ export function MailClient({
     const requestLocation = location;
     const previous = messages.find((item) => item.id === targetId);
     const index = messages.findIndex((item) => item.id === targetId);
-    const moving = action === "archive" || action === "trash";
+    const targetAccount = accounts.find((item) => item.id === target.accountId);
+    const targetMailbox = liveMailboxesByAccount[target.accountId]?.find(
+      (item) => item.id === target.mailboxId,
+    );
+    const moving =
+      action === "trash" ||
+      (action === "archive" &&
+        (targetAccount?.receiveTransport !== "gmail" ||
+          targetMailbox?.providerMailboxId === "INBOX"));
     const countDelta =
       action === "mark_read" && !target.seen
         ? -1

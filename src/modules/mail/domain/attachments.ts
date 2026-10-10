@@ -37,7 +37,10 @@ export function downloadDisposition(filename: string | null) {
   );
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
-export function discoverAttachments(root: RemoteMimePart | null | undefined) {
+export function discoverAttachments(
+  root: RemoteMimePart | null | undefined,
+  transport: "imap" | "gmail" = "imap",
+) {
   const found: {
     partId: string;
     filename: string | null;
@@ -64,7 +67,11 @@ export function discoverAttachments(root: RemoteMimePart | null | undefined) {
           type.includes("/") &&
           safeContentType(type) === type))
     ) {
-      if (partId && /^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(partId)) {
+      if (
+        partId !== null &&
+        (transport === "gmail" ||
+          (!!partId && /^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(partId)))
+      ) {
         found.push({
           partId,
           filename: node.filename || null,

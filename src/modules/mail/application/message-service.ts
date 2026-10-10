@@ -153,10 +153,18 @@ export class MessageService {
       schedule(accountId: string, mailboxId: string): Promise<boolean>;
     },
     private readonly events?: ApplicationEventService,
+    private readonly gmailScheduler?: {
+      schedule(accountId: string): Promise<boolean>;
+    },
   ) {}
 
   async requestSync(accountId: string, mailboxId: string): Promise<boolean> {
     const mailbox = await this.ownedMailbox(accountId, mailboxId);
+    if (mailbox.receiveTransport === "gmail") {
+      if (!this.gmailScheduler)
+        throw new Error("Gmail scheduler is unavailable.");
+      return this.gmailScheduler.schedule(accountId);
+    }
     if (
       mailbox.recentSyncStatus !== "success" ||
       mailbox.recentSyncUidValidity === null
@@ -184,6 +192,11 @@ export class MessageService {
     mailboxId: string,
   ): Promise<boolean> {
     const mailbox = await this.ownedMailbox(accountId, mailboxId);
+    if (mailbox.receiveTransport === "gmail") {
+      if (!this.gmailScheduler)
+        throw new Error("Gmail scheduler is unavailable.");
+      return this.gmailScheduler.schedule(accountId);
+    }
     if (!mailbox.selectable || mailbox.lifecycleStatus !== "active")
       throw new MailboxNotSynchronizableError();
     const [account] = await this.database

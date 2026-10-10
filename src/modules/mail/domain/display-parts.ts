@@ -5,19 +5,20 @@ export type DisplayPart = Readonly<{
   type: "text/plain" | "text/html";
 }>;
 
-function isBody(node: RemoteMimePart): boolean {
+function isBody(node: RemoteMimePart, transport: "imap" | "gmail"): boolean {
   return (
     (node.type === "text/plain" || node.type === "text/html") &&
     node.disposition !== "attachment" &&
     !node.filename &&
     typeof node.part === "string" &&
-    /^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(node.part)
+    (transport === "gmail" || /^(?:[1-9]\d*)(?:\.[1-9]\d*)*$/.test(node.part))
   );
 }
 
 /** Pick one body branch. Alternatives can contribute one plain and one HTML part. */
 export function selectDisplayParts(
   root: RemoteMimePart | null | undefined,
+  transport: "imap" | "gmail" = "imap",
 ): DisplayPart[] {
   if (!root) return [];
   // ImapFlow leaves `part` unset on a single-part BODYSTRUCTURE. Its
@@ -32,7 +33,7 @@ export function selectDisplayParts(
     return [{ part: "1", type: root.type }];
   function visit(node: RemoteMimePart): DisplayPart[] {
     if (node.disposition === "attachment" || node.filename) return [];
-    if (isBody(node))
+    if (isBody(node, transport))
       return [{ part: node.part!, type: node.type as DisplayPart["type"] }];
     if (!node.type.startsWith("multipart/")) return [];
     if (node.type === "multipart/alternative") {

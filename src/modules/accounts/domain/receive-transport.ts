@@ -18,7 +18,7 @@ export class InvalidAccountTransportError extends Error {
 export class GmailReceiveUnsupportedError extends Error {
   constructor() {
     super(
-      "Native Gmail receiving is not implemented in P1. Install the completed Gmail release before receiving mail; IMAP fallback is unavailable.",
+      "Native Gmail receiving requires its API provider. IMAP receiving is unavailable for Google OAuth accounts.",
     );
     this.name = "GmailReceiveUnsupportedError";
   }
@@ -139,7 +139,7 @@ export type ReceiveDiagnostic = Readonly<{
   error?: string;
 }>;
 
-/** Typed P1 boundary. Never implements mailbox IMAP contracts for Gmail. */
+/** Fail-closed boundary for compositions missing native dependencies. */
 export class UnsupportedGmailReceiveAdapter {
   async synchronize(_accountId: string, _revision: string): Promise<never> {
     void _accountId;
@@ -174,7 +174,10 @@ export class UnsupportedGmailReceiveAdapter {
 }
 
 export class MailTransportRouter {
-  readonly gmail = new UnsupportedGmailReceiveAdapter();
+  gmail: GmailReceiveAdapter = new UnsupportedGmailReceiveAdapter();
+  bindGmail(adapter: GmailReceiveAdapter) {
+    this.gmail = adapter;
+  }
   resolve = resolveReceiveTransport;
   identity = resolveReceiveProvider;
   capabilities = receiveCapabilities;
@@ -186,4 +189,29 @@ export class MailTransportRouter {
     if (this.forWork(account, revision) !== "imap")
       throw new GmailReceiveUnsupportedError();
   }
+}
+
+export interface GmailReceiveAdapter {
+  synchronize(accountId: string, revision: string): Promise<unknown>;
+  content(
+    locator: Extract<MessageLocator, { kind: "gmail" }>,
+  ): Promise<unknown>;
+  attachment(
+    locator: Extract<PartLocator, { kind: "gmail" }>,
+  ): Promise<unknown>;
+  mutate(
+    locator: Extract<MessageLocator, { kind: "gmail" }>,
+    request?: {
+      action:
+        | "mark_read"
+        | "mark_unread"
+        | "flag"
+        | "unflag"
+        | "archive"
+        | "trash"
+        | "move";
+      destinationMailboxId?: string;
+    },
+  ): Promise<unknown>;
+  diagnostic(): ReceiveDiagnostic;
 }

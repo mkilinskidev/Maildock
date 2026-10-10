@@ -2,6 +2,7 @@ import { assertNativeReleaseCompatible } from "../shared/infrastructure/database
 import { logFailure } from "../shared/infrastructure/logging/diagnostics";
 import { createLogger } from "../shared/infrastructure/logging/logger";
 import { registerAttachmentWorker } from "../modules/mail/infrastructure/attachment-jobs";
+import { registerGmailWorker } from "../modules/mail/infrastructure/gmail-sync-jobs";
 import { createWorkerComposition } from "./worker.js";
 import { registerMailboxDiscoveryWorker } from "../modules/mail/infrastructure/mailbox-discovery-jobs.js";
 import { registerRecentSyncWorker } from "../modules/mail/infrastructure/recent-sync-jobs.js";
@@ -68,6 +69,7 @@ async function main() {
     if (contentRecoveryTimer) clearInterval(contentRecoveryTimer);
     await contentRecoveryWork;
     worker.attachmentPoller.stop();
+    await worker.gmailPoller.stop();
     worker.poller.stop();
     worker.backfillPoller.stop();
     worker.commandPoller.stop();
@@ -109,6 +111,12 @@ async function main() {
       await waitForReadinessPoll();
     if (stopping) return;
     await worker.jobs.start();
+    await registerGmailWorker(
+      worker.jobs.boss,
+      worker.gmailSync,
+      shutdownController.signal,
+    );
+    await worker.gmailPoller.start();
     await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
     await worker.attachmentPoller.start();
     await registerSentCopyWorker(worker.jobs.boss, worker.sentCopy);

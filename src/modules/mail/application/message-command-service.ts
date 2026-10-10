@@ -22,8 +22,9 @@ import {
   type RemoteMutationRequest,
 } from "../../accounts/domain/mail-provider";
 import { resolveMappedMailbox } from "./mailbox-role-service";
+import { GmailMessageCommands } from "./gmail-message-commands";
 
-export type MessageAction = RemoteMutationRequest["action"];
+export type MessageAction = RemoteMutationRequest["action"] | "move";
 const moveActions = new Set<MessageAction>(["archive", "trash"]);
 export class MessageCommandUnavailableError extends Error {}
 
@@ -37,6 +38,7 @@ export class MessageCommandService {
     ) => Promise<void>,
     private readonly accounts?: AccountsService,
     private readonly provider?: MailProvider,
+    private readonly gmail?: GmailMessageCommands,
   ) {}
 
   async create(
@@ -44,7 +46,20 @@ export class MessageCommandService {
     mailboxId: string,
     messageId: string,
     action: MessageAction,
+    destinationMailboxId?: string,
   ) {
+    const [owner] = await this.database
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, accountId));
+    if (owner?.receiveTransport === "gmail")
+      return (
+        this.gmail ?? new GmailMessageCommands(this.database, this.enqueue)
+      ).create(accountId, mailboxId, messageId, action, destinationMailboxId);
+    if (action === "move")
+      throw new MessageCommandUnavailableError(
+        "This move operation requires a native Gmail account.",
+      );
     const command = await this.database.transaction(async (tx) => {
       const [account] = await tx
         .select()
@@ -221,14 +236,25 @@ export class MessageCommandService {
 
   async mailboxId(id: string) {
     const [row] = await this.database
-      .select({ mailboxId: messageCommands.mailboxId })
+      .select({
+        mailboxId: messageCommands.mailboxId,
+        transport: messageCommands.receiveTransport,
+      })
       .from(messageCommands)
       .where(eq(messageCommands.id, id))
       .limit(1);
-    return row?.mailboxId;
+    return row?.transport === "gmail" ? undefined : row?.mailboxId;
   }
 
   async run(id: string) {
+    const [native] = await this.database
+      .select()
+      .from(messageCommands)
+      .where(eq(messageCommands.id, id));
+    if (native?.receiveTransport === "gmail") {
+      if (!this.gmail) throw new Error("Gmail commands are unavailable.");
+      return this.gmail.run(id);
+    }
     if (!this.accounts || !this.provider?.mutateMessage)
       throw new Error("Message mutation provider is unavailable.");
     const [initial] = await this.database
@@ -353,7 +379,7 @@ export class MessageCommandService {
         sourcePath: initial.sourcePath!,
         uidValidity: initial.sourceUidValidity!.toString(),
         uid: initial.sourceUid!.toString(),
-        action: initial.action as MessageAction,
+        action: initial.action as RemoteMutationRequest["action"],
         ...(initial.destinationPath
           ? { destinationPath: initial.destinationPath }
           : {}),

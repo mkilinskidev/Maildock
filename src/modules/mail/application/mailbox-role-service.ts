@@ -159,6 +159,19 @@ export class MailboxRoleService {
         throw new MailboxRoleUnavailableError(
           "Select an active mailbox from this account.",
         );
+      if (
+        selected.receiveTransport === "gmail" &&
+        ((role === "trash" && selected.providerMailboxId !== "TRASH") ||
+          (role === "sent" && selected.providerMailboxId !== "SENT") ||
+          (role === "junk" && selected.providerMailboxId !== "SPAM") ||
+          role === "drafts" ||
+          (role === "archive" &&
+            selected.viewKind !== "all_mail" &&
+            !selected.providerMailboxId?.startsWith("Label_")))
+      )
+        throw new MailboxRoleUnavailableError(
+          "Use native Gmail system labels, or a custom label for Archive. Drafts remain local.",
+        );
       const now = new Date();
       await tx
         .insert(mailboxRoles)

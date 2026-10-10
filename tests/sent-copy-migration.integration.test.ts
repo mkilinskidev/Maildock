@@ -63,7 +63,7 @@ it("forward migration preserves old accounts and outgoing mail as server / not_r
       sentCopySyncPending: false,
     });
     await apply(migrations[14].sql);
-    for (const migration of migrations.slice(15, -1))
+    for (const migration of migrations.slice(15, 36))
       await apply(migration.sql);
     const [upgraded] = await db.db
       .select({

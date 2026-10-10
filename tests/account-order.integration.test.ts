@@ -50,11 +50,15 @@ beforeAll(async () => {
     await database.client`INSERT INTO mail_accounts (id, display_name, email, imap_host, imap_port, imap_security, imap_username, imap_password, smtp_host, smtp_port, smtp_security, created_at)
       VALUES (${legacy[index]}, 'Existing', 'owner@example.com', 'imap.test', 993, 'tls', 'owner', '{}', 'smtp.test', 465, 'tls', ${created})`;
   }
-  for (const migration of migrations.slice(27, -1))
+  for (const migration of migrations.slice(27, 36))
     await database.client.begin(async (tx) => {
       for (const statement of migration.sql) await tx.unsafe(statement);
     });
-  await reseedNativeAccountFixture(database, migrations.at(-1)!);
+  await reseedNativeAccountFixture(database, migrations[36]);
+  for (const migration of migrations.slice(37))
+    await database.client.begin(async (tx) => {
+      for (const statement of migration.sql) await tx.unsafe(statement);
+    });
   service = new AccountsService(
     database.db,
     new AesGcmSecretEncryption("v1", {

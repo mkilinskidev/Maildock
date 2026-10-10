@@ -1,4 +1,6 @@
 import { and, eq, inArray, ne } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { GmailApiError } from "../../accounts/infrastructure/gmail-client";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   gmailAccountSyncState,
@@ -60,6 +62,12 @@ export class GmailSyncRepository {
     expectedPageToken: string | null;
     nextPageToken: string | null;
     candidateHistoryId?: string;
+    fragment?: {
+      expectedOffset: number;
+      nextOffset: number;
+      digest: string;
+      more: boolean;
+    };
   }) {
     const ids = [...new Set(input.messageIds)];
     if (
@@ -94,7 +102,13 @@ export class GmailSyncRepository {
         (inventory
           ? state.inventoryNextPageToken
           : state.historyNextPageToken) !== input.expectedPageToken ||
-        (inventory ? state.inventoryPagesComplete : state.historyPagesComplete)
+        (inventory
+          ? state.inventoryPagesComplete
+          : state.historyPagesComplete) ||
+        (!inventory &&
+          (state.historyPageOffset !== (input.fragment?.expectedOffset ?? 0) ||
+            (state.historyPageDigest &&
+              state.historyPageDigest !== input.fragment?.digest)))
       )
         throw new StaleAccountWorkError();
       const scope = and(
@@ -102,6 +116,20 @@ export class GmailSyncRepository {
         eq(gmailSyncWork.runId, input.runId),
         eq(gmailSyncWork.purpose, input.purpose),
       );
+      const trail = inventory
+        ? state.inventoryTokenTrail
+        : state.historyTokenTrail;
+      const count = inventory
+        ? state.inventoryPageCount
+        : state.historyPageCount;
+      const hash = input.nextPageToken
+        ? createHash("sha256").update(input.nextPageToken).digest("hex")
+        : null;
+      if (
+        !input.fragment?.more &&
+        (count >= 100000 || (hash && trail.includes(hash)))
+      )
+        throw new GmailApiError("invalid_response");
       const pending = await tx
         .select({ id: gmailSyncWork.gmailMessageId })
         .from(gmailSyncWork)
@@ -123,7 +151,7 @@ export class GmailSyncRepository {
             gmailMessageId,
           })),
         );
-      const complete = input.nextPageToken === null;
+      const complete = !input.fragment?.more && input.nextPageToken === null;
       if (!inventory && complete && input.candidateHistoryId === undefined)
         throw new Error(
           "Final Gmail history page requires its response history ID.",
@@ -135,12 +163,25 @@ export class GmailSyncRepository {
             ? {
                 inventoryNextPageToken: input.nextPageToken,
                 inventoryPagesComplete: complete,
+                inventoryPageCount: count + 1,
+                inventoryTokenTrail: hash ? [...trail, hash].slice(-32) : trail,
                 needsWork: true,
                 updatedAt: new Date(),
               }
             : {
                 historyNextPageToken: input.nextPageToken,
                 historyPagesComplete: complete,
+                historyPageCount: count + (input.fragment?.more ? 0 : 1),
+                historyTokenTrail:
+                  !input.fragment?.more && hash
+                    ? [...trail, hash].slice(-32)
+                    : trail,
+                historyPageOffset: input.fragment?.more
+                  ? input.fragment.nextOffset
+                  : 0,
+                historyPageDigest: input.fragment?.more
+                  ? input.fragment.digest
+                  : null,
                 historyCandidateId: complete ? input.candidateHistoryId! : null,
                 needsWork: true,
                 updatedAt: new Date(),

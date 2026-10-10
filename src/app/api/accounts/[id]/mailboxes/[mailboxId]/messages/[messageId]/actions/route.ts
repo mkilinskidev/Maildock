@@ -27,16 +27,29 @@ export async function POST(
             "unflag",
             "archive",
             "trash",
+            "move",
           ]),
+          destinationMailboxId: z.uuid().optional(),
         })
         .strict()
+        .refine(
+          (body) =>
+            body.action === "move"
+              ? !!body.destinationMailboxId
+              : !body.destinationMailboxId,
+          { message: "A destination is required only for a move." },
+        )
         .parse(await request.json());
-      const command = await messageCommandService.create(
-        z.uuid().parse(values.id),
-        z.uuid().parse(values.mailboxId),
-        z.uuid().parse(values.messageId),
-        body.action,
-      );
+      const commandArgs: [string, string, string, typeof body.action, string?] =
+        [
+          z.uuid().parse(values.id),
+          z.uuid().parse(values.mailboxId),
+          z.uuid().parse(values.messageId),
+          body.action,
+        ];
+      if (body.destinationMailboxId)
+        commandArgs.push(body.destinationMailboxId);
+      const command = await messageCommandService.create(...commandArgs);
       return Response.json(command, { status: 202 });
     } catch (error) {
       if (error instanceof MessageCommandUnavailableError)

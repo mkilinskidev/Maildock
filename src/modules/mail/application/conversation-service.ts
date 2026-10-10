@@ -73,7 +73,8 @@ export class ConversationService {
         JOIN mail_accounts a ON a.id = m.account_id
         WHERE ${allInboxes ? sql`a.enabled AND b.selectable AND b.lifecycle_status = 'active' AND upper(b.remote_path) = 'INBOX'` : sql`p.mailbox_id = ${mailboxId}::uuid AND m.account_id = ${accountId}::uuid`} AND NOT p.action_hidden
       ) SELECT relevant.*, (SELECT count(*)::int FROM conversation_members members
-        WHERE members.account_id = relevant.account_id AND members.conversation_id = relevant.conversation_id) AS conversation_message_count
+         WHERE members.account_id = relevant.account_id AND members.conversation_id = relevant.conversation_id
+         AND EXISTS(SELECT 1 FROM messages counted WHERE counted.id=members.message_id AND (counted.receive_transport <> 'gmail' OR (counted.remote_missing_at IS NULL AND EXISTS(SELECT 1 FROM mailbox_messages visible JOIN mailboxes visible_box ON visible_box.id=visible.mailbox_id WHERE visible.message_id=counted.id AND NOT visible.action_hidden AND visible_box.selectable AND visible_box.lifecycle_status='active'))))) AS conversation_message_count
         FROM relevant WHERE rank = 1
         ${after ? sql`AND (internal_date, id) < (${after[0]}::timestamptz, ${after[1]}::uuid)` : sql``}
       ORDER BY internal_date DESC, id DESC LIMIT ${limit + 1}`);
@@ -129,6 +130,7 @@ export class ConversationService {
       ) p ON true
       ${metadataOnly ? sql`` : sql`LEFT JOIN message_contents c ON c.message_id = m.id`}
       WHERE cm.account_id = ${accountId}::uuid AND m.account_id = ${accountId}::uuid
+        AND (m.receive_transport <> 'gmail' OR (m.remote_missing_at IS NULL AND p.mailbox_id IS NOT NULL))
         AND cm.conversation_id = coalesce(
           (SELECT coalesce(merged_into, id) FROM conversations WHERE id = ${conversationId}::uuid AND account_id = ${accountId}::uuid), ${conversationId}::uuid)
       ORDER BY coalesce(m.sent_at, m.internal_date), m.id`);

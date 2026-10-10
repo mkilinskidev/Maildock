@@ -1,7 +1,4 @@
-import {
-  resolveReceiveTransport,
-  GmailReceiveUnsupportedError,
-} from "../../accounts/domain/receive-transport";
+import { resolveReceiveTransport } from "../../accounts/domain/receive-transport";
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { BlobStorage } from "../../../shared/application/blob-storage";
 import { DEFAULT_ATTACHMENT_LIMITS } from "../domain/attachments";
@@ -83,7 +80,8 @@ export class SentCopyService {
         .update(outgoingMessages)
         .set({
           sentCopyStatus: "failed",
-          sentCopyError: new GmailReceiveUnsupportedError().message,
+          sentCopyError:
+            "Gmail manages the SMTP Sent copy. Maildock cannot create an additional copy; select the server-managed Sent option.",
           sentCopySyncPending: false,
           updatedAt: new Date(),
         })

@@ -210,11 +210,15 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
     const allMigrations = readMigrationFiles({
       migrationsFolder: "db/migrations",
     });
-    for (const migration of allMigrations.slice(26, -1))
+    for (const migration of allMigrations.slice(26, 36))
       await database.client.begin(async (tx) => {
         for (const statement of migration.sql) await tx.unsafe(statement);
       });
-    await reseedNativeAccountFixture(database, allMigrations.at(-1)!);
+    await reseedNativeAccountFixture(database, allMigrations[36]);
+    for (const migration of allMigrations.slice(37))
+      await database.client.begin(async (tx) => {
+        for (const statement of migration.sql) await tx.unsafe(statement);
+      });
     // Record exact release history for the reseeded synthetic fixture.
     await database.client`delete from drizzle.__drizzle_migrations`;
     for (const migration of allMigrations)

@@ -626,6 +626,38 @@ export function AccountSettings({
             <dd>{date(account.mailboxDiscovery.lastSuccessfulAt)}</dd>
             <dt>Last successful sync</dt>
             <dd>{date(latestSync(mailboxes))}</dd>
+            {account.gmailSync && (
+              <>
+                <dt>Gmail synchronization</dt>
+                <dd>{account.gmailSync.status}</dd>
+                <dt>Recent messages</dt>
+                <dd>{account.gmailSync.recentReady ? "Ready" : "Importing"}</dd>
+                <dt>Historical coverage</dt>
+                <dd>
+                  {account.gmailSync.inventoryComplete
+                    ? "Complete"
+                    : "Importing in background"}
+                </dd>
+                <dt>Metadata observations</dt>
+                <dd>{account.gmailSync.processedCount}</dd>
+                <dt>History checkpoint</dt>
+                <dd>
+                  {account.gmailSync.historyHealthy
+                    ? "Healthy"
+                    : "Awaiting synchronization or reconciliation"}
+                </dd>
+                <dt>Quota units reserved</dt>
+                <dd>{account.gmailSync.quotaUnits}</dd>
+                <dt>Next attempt</dt>
+                <dd>{date(account.gmailSync.nextAttemptAt)}</dd>
+                {account.gmailSync.errorCategory && (
+                  <>
+                    <dt>Gmail failure</dt>
+                    <dd>{account.gmailSync.errorCategory}</dd>
+                  </>
+                )}
+              </>
+            )}
             <dt>Capabilities</dt>
             <dd>
               {account.mailboxDiscovery.capabilities.join(", ") ||

@@ -40,6 +40,12 @@ import {
   type MailProvider,
 } from "../../accounts/domain/mail-provider";
 import type { OutgoingLock } from "../infrastructure/outgoing-lock";
+import {
+  GmailProvider,
+  assertGmailPublication,
+} from "../infrastructure/gmail-provider";
+import { gmailParts, gmailPartBytes } from "../infrastructure/gmail-mime";
+import { decodeBase64Url } from "../../accounts/infrastructure/gmail-client";
 
 export class AttachmentUnavailableError extends Error {}
 export async function registerBlob(
@@ -69,6 +75,7 @@ export class AttachmentService {
       accountId: string,
       mailboxId: string,
     ) => Promise<unknown>,
+    private readonly gmail?: GmailProvider,
   ) {}
 
   private async lookup(db: Database, id: string) {
@@ -136,11 +143,12 @@ export class AttachmentService {
         /* Missing/corrupt cache is repairable from the authoritative placement. */
       }
     }
-    new MailTransportRouter().requireImap(row.account);
+    const transport = new MailTransportRouter().forWork(row.account);
     if (
-      !row.placement ||
-      !row.mailbox?.selectable ||
-      row.mailbox.lifecycleStatus !== "active"
+      transport === "imap" &&
+      (!row.placement ||
+        !row.mailbox?.selectable ||
+        row.mailbox.lifecycleStatus !== "active")
     )
       throw new AttachmentUnavailableError(
         "The source mailbox placement is unavailable.",
@@ -318,6 +326,13 @@ export class AttachmentService {
     for (const row of rows) await this.enqueue(row.id).catch(() => undefined);
   }
   async run(id: string, expectedRevision?: string, expectedAccountId?: string) {
+    const native = await this.lookup(this.db, id);
+    if (native.attachment.receiveTransport === "gmail") {
+      if (expectedAccountId && expectedAccountId !== native.account.id)
+        throw new StaleAccountWorkError();
+      await this.runGmail(id, expectedRevision);
+      return;
+    }
     if (!this.lock || !this.accounts || !this.provider?.fetchAttachment)
       throw Error("Attachment worker dependencies are required.");
     // Resolve OAuth before reserving a connection, including one-connection pools.
@@ -459,5 +474,109 @@ export class AttachmentService {
       await this.reconcile?.(candidate.account.id, candidate.mailbox.id).catch(
         () => undefined,
       );
+  }
+
+  private async runGmail(id: string, expectedRevision?: string) {
+    const row = await this.lookup(this.db, id);
+    if (!["pending", "fetching"].includes(row.attachment.status)) return;
+    if (!this.gmail || !this.lock || !row.message.providerMessageId)
+      throw new AttachmentUnavailableError(
+        "Gmail attachment source is unavailable.",
+      );
+    try {
+      const { client, revision } = await this.gmail.interactive(
+        row.account.id,
+        expectedRevision ?? row.account.workRevision.toString(),
+      );
+      let bytes: Buffer;
+      if (row.attachment.gmailAttachmentId)
+        bytes = decodeBase64Url(
+          (
+            await client.attachment(
+              row.message.providerMessageId,
+              row.attachment.gmailAttachmentId,
+            )
+          ).data,
+          this.limits.maxAttachmentBytes,
+        );
+      else {
+        const remote = await client.message(
+          row.message.providerMessageId,
+          true,
+        );
+        const part = gmailParts(remote.payload).find(
+          (p) => p.partId === row.attachment.partId,
+        );
+        if (!part)
+          throw new AttachmentUnavailableError(
+            "The source MIME part is unavailable.",
+          );
+        bytes = await gmailPartBytes(
+          client,
+          remote.id,
+          part,
+          this.limits.maxAttachmentBytes,
+        );
+      }
+      const blob = await this.storage.put(
+        (async function* () {
+          yield bytes;
+        })(),
+        this.limits.maxAttachmentBytes,
+      );
+      await this.lock(id, async (db) => {
+        await db.execute(sql`begin`);
+        try {
+          await assertGmailPublication(db, row.account.id, revision);
+          const [current] = await db
+            .select()
+            .from(messageAttachments)
+            .where(eq(messageAttachments.id, id));
+          if (current && ["pending", "fetching"].includes(current.status)) {
+            const blobId = await registerBlob(db, blob);
+            await db
+              .update(messageAttachments)
+              .set({
+                status: "ready",
+                blobId,
+                error: null,
+                updatedAt: new Date(),
+              })
+              .where(eq(messageAttachments.id, id));
+            await db
+              .update(draftAttachments)
+              .set({ blobId })
+              .where(
+                and(
+                  eq(draftAttachments.id, id),
+                  isNull(draftAttachments.blobId),
+                ),
+              );
+          }
+          await db.execute(sql`commit`);
+        } catch (error) {
+          await db.execute(sql`rollback`);
+          throw error;
+        }
+      });
+    } catch (error) {
+      if (error instanceof StaleAccountWorkError) throw error;
+      await this.db
+        .update(messageAttachments)
+        .set({
+          status: "failed",
+          error: "Gmail attachment could not be downloaded. Retry download.",
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(messageAttachments.id, id),
+            inArray(messageAttachments.status, ["pending", "fetching"]),
+          ),
+        );
+      throw new AttachmentUnavailableError(
+        "Gmail attachment could not be downloaded. Retry download.",
+      );
+    }
   }
 }

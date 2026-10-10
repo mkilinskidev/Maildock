@@ -54,6 +54,7 @@ export async function registerMessageCommandWorker(
         .parse(batch[0]?.data).commandId;
       const mailboxId = await service.mailboxId(id);
       if (mailboxId) await withLock(mailboxId, () => service.run(id));
+      else await service.run(id);
     }),
   );
 }

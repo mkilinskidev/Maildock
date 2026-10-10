@@ -1,5 +1,14 @@
 import { imapJobRevision } from "../modules/mail/infrastructure/receive-job-policy";
 import { MailTransportRouter } from "../modules/accounts/domain/receive-transport";
+import { GmailProvider } from "../modules/mail/infrastructure/gmail-provider";
+import { createGmailAccountLock } from "../modules/mail/infrastructure/gmail-account-lock";
+import { GmailSyncService } from "../modules/mail/application/gmail-sync-service";
+import { GmailMessageCommands } from "../modules/mail/application/gmail-message-commands";
+import {
+  enqueueGmail,
+  GmailPoller,
+} from "../modules/mail/infrastructure/gmail-sync-jobs";
+import { bindNativeGmail } from "../modules/mail/infrastructure/gmail-receive-adapter";
 import { createOAuthComposition } from "../modules/accounts/infrastructure/oauth-composition";
 import { ApplicationEventService } from "../modules/diagnostics/application/application-event-service";
 import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
@@ -67,9 +76,55 @@ export function createWorkerComposition() {
     createOAuthComposition(database.db, encryption, config).registry,
     events,
     transportRouter,
+    {
+      schedule: (id) => enqueueGmail(jobs.boss, id),
+      test: async (id) => {
+        const { client } = await gmailProvider.interactive(id);
+        await client.profile();
+      },
+    },
   );
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
+  const gmailProvider = new GmailProvider(
+    database.db,
+    accounts,
+    undefined,
+    undefined,
+    Math.ceil(
+      (Math.max(config.maxAttachmentBytes, config.maxMessageTextPartBytes) *
+        4) /
+        3,
+    ) + 1048576,
+  );
+  const gmailLock = createGmailAccountLock(database.client);
+  const gmailSync = new GmailSyncService(
+    database.db,
+    gmailProvider,
+    gmailLock,
+    config.initialSyncDays,
+  );
+  const gmailCommands = new GmailMessageCommands(
+    database.db,
+    (id) => enqueueMessageCommand(jobs.boss, id),
+    gmailProvider,
+    gmailLock,
+  );
+  bindNativeGmail(
+    transportRouter,
+    gmailProvider,
+    (id, revision) => gmailSync.run(id, revision),
+    config,
+    async (locator, request) => {
+      if (!request) throw new Error("Gmail mutation intent is required.");
+      return gmailCommands.createNative(
+        locator.accountId,
+        locator.messageId,
+        request.action,
+        request.destinationMailboxId,
+      );
+    },
+  );
   const recentSyncScheduler = {
     schedule: async (accountId: string, mailboxId: string) =>
       (await jobs.boss.send(
@@ -98,6 +153,7 @@ export function createWorkerComposition() {
         enqueueBackfill(jobs.boss, accountId, mailboxId),
     },
     events,
+    { schedule: (id) => enqueueGmail(jobs.boss, id) },
   );
   const blobStorage = new LocalBlobStorage(config.attachmentsPath);
   const attachments = new AttachmentService(
@@ -110,6 +166,7 @@ export function createWorkerComposition() {
     createAttachmentLock(database.client),
     (accountId, mailboxId) =>
       recentSyncScheduler.schedule(accountId, mailboxId),
+    gmailProvider,
   );
   const withMailboxLock = createMailboxLock(database.client);
   const sentCopy = new SentCopyService(
@@ -144,8 +201,11 @@ export function createWorkerComposition() {
     },
     accounts,
     provider,
+    gmailCommands,
   );
   return {
+    gmailSync,
+    gmailPoller: new GmailPoller(jobs.boss),
     transportRouter,
     events,
     attachments,
@@ -198,6 +258,7 @@ export function createWorkerComposition() {
       accounts,
       provider,
       config,
+      gmailProvider,
     ),
   };
 }

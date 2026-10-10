@@ -134,7 +134,7 @@ describe("P1 native Gmail PostgreSQL foundation", () => {
     });
     for (const migration of readMigrationFiles({
       migrationsFolder: "db/migrations",
-    }).slice(0, -1))
+    }).slice(0, 36))
       await legacy.client.begin(async (tx) => {
         for (const statement of migration.sql) await tx.unsafe(statement);
       });
@@ -479,7 +479,7 @@ describe("P1 native Gmail PostgreSQL foundation", () => {
     );
     const currentMigration = readMigrationFiles({
       migrationsFolder: "db/migrations",
-    }).at(-1)!;
+    })[36];
     await expect(
       legacy.client.begin(async (tx) => {
         for (const statement of currentMigration.sql)

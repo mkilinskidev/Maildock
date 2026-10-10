@@ -2,6 +2,14 @@
 
 Date: 2026-10-09. Status: proposed gates after owner P0 review. [Architecture](gmail-api-p0-fresh-install.md), [database design](gmail-api-p0-database-design.md) and ADRs 0012–0015 are the design inputs. This is a plan for a complete Gmail provider on a fresh installation, not an account-migration program.
 
+Implementation update, 2026-10-10: P2–P4 receiving, synchronization, content,
+actions and SMTP integration are recorded in
+[the complete provider implementation](gmail-api-complete-provider.md). Automated
+tests were explicitly authorized for that task. See its
+[validation report](../validation/gmail-provider-validation.md) for actual results
+and remaining P5/live qualification gates; this roadmap's performance criteria
+are not claimed as passed by a single synthetic import.
+
 ## Delivery sequence
 
 | Phase                                           | Complete deliverable and main seams                                                                                                                                                                 | Completion gate                                                                                                                                                                                       |

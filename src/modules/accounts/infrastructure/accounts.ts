@@ -25,9 +25,14 @@ import { MessageCommandService } from "@/modules/mail/application/message-comman
 import { PgBossMessageCommandScheduler } from "@/modules/mail/infrastructure/message-command-jobs";
 import { OutgoingMessageService } from "@/modules/mail/application/outgoing-message-service";
 import { PgBossOutgoingScheduler } from "@/modules/mail/infrastructure/outgoing-jobs";
+import { PgBossGmailScheduler } from "../../mail/infrastructure/gmail-sync-jobs";
+import { GmailProvider } from "../../mail/infrastructure/gmail-provider";
+import { bindNativeGmail } from "../../mail/infrastructure/gmail-receive-adapter";
+import { GmailMessageCommands } from "../../mail/application/gmail-message-commands";
 
 export const transportRouter = new MailTransportRouter();
 const config = getConfig();
+const gmailScheduler = new PgBossGmailScheduler(config);
 const outgoingScheduler = new PgBossOutgoingScheduler(config);
 export const blobStorage = new LocalBlobStorage(config.attachmentsPath);
 const attachmentScheduler = new PgBossAttachmentScheduler(config);
@@ -64,6 +69,40 @@ export const accountsService = new AccountsService(
   oauthProviders,
   new ApplicationEventService(db, createLogger(config)),
   transportRouter,
+  {
+    schedule: (id) => gmailScheduler.schedule(id),
+    test: async (id) => {
+      const { client } = await gmailProvider.interactive(id);
+      await client.profile();
+    },
+  },
+);
+export const gmailProvider = new GmailProvider(
+  db,
+  accountsService,
+  undefined,
+  undefined,
+  Math.ceil(
+    (Math.max(config.maxAttachmentBytes, config.maxMessageTextPartBytes) * 4) /
+      3,
+  ) + 1048576,
+);
+bindNativeGmail(
+  transportRouter,
+  gmailProvider,
+  (accountId) => gmailScheduler.schedule(accountId),
+  config,
+  async (locator, request) => {
+    if (!request) throw new Error("Gmail mutation intent is required.");
+    return new GmailMessageCommands(db, (id) =>
+      commandScheduler.enqueue(id),
+    ).createNative(
+      locator.accountId,
+      locator.messageId,
+      request.action,
+      request.destinationMailboxId,
+    );
+  },
 );
 
 export const mailboxService = new MailboxService(db);
@@ -75,6 +114,9 @@ export const messageService = new MessageService(
   undefined,
   new PgBossRecentSyncScheduler(config),
   new PgBossDeltaSyncScheduler(config),
+  undefined,
+  undefined,
+  gmailScheduler,
 );
 export const messageContentService = new MessageContentService(
   db,

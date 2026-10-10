@@ -47,6 +47,9 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
       "CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS",
       "POSTGRES_PASSWORD",
       "MAILDOCK_ENV",
+      "MAILDOCK_GMAIL_DAILY_UNITS",
+      "MAILDOCK_GMAIL_PROJECT_UNITS_PER_MINUTE",
+      "MAILDOCK_GMAIL_USER_UNITS_PER_MINUTE",
       "NODE_ENV",
     ].sort(),
   );

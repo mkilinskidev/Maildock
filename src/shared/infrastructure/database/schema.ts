@@ -1376,7 +1376,7 @@ export const messageCommands = pgTable(
 
     check(
       "message_commands_action",
-      sql`${table.action} in ('mark_read', 'mark_unread', 'flag', 'unflag', 'archive', 'trash')`,
+      sql`${table.action} in ('mark_read', 'mark_unread', 'flag', 'unflag', 'archive', 'trash') or (${table.action} = 'move' and ${table.receiveTransport} = 'gmail' and ${table.destinationMailboxId} is not null)`,
     ),
     check(
       "message_commands_status",
@@ -1415,6 +1415,11 @@ export const gmailAccountSyncState = pgTable(
     inventoryPagesComplete: boolean("inventory_pages_complete")
       .default(false)
       .notNull(),
+    inventoryPageCount: integer("inventory_page_count").default(0).notNull(),
+    inventoryTokenTrail: text("inventory_token_trail")
+      .array()
+      .default([])
+      .notNull(),
     historyRunId: uuid("history_run_id"),
     historyStartId: text("history_start_id"),
     historyNextPageToken: text("history_next_page_token"),
@@ -1422,6 +1427,13 @@ export const gmailAccountSyncState = pgTable(
     historyPagesComplete: boolean("history_pages_complete")
       .default(false)
       .notNull(),
+    historyPageCount: integer("history_page_count").default(0).notNull(),
+    historyTokenTrail: text("history_token_trail")
+      .array()
+      .default([])
+      .notNull(),
+    historyPageOffset: integer("history_page_offset").default(0).notNull(),
+    historyPageDigest: text("history_page_digest"),
     needsWork: boolean("needs_work").default(true).notNull(),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
     errorCategory: text("error_category"),
@@ -1435,6 +1447,12 @@ export const gmailAccountSyncState = pgTable(
       .default(sql`0`)
       .notNull(),
     quotaPreviousUnits: bigint("quota_previous_units", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    quotaDay: bigint("quota_day", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
+    quotaDailyUnits: bigint("quota_daily_units", { mode: "bigint" })
       .default(sql`0`)
       .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -1451,6 +1469,14 @@ export const gmailAccountSyncState = pgTable(
       foreignColumns: [mailAccounts.id, mailAccounts.receiveTransport],
     }).onDelete("cascade"),
     check("gmail_sync_transport", sql`${t.receiveTransport} = 'gmail'`),
+    check(
+      "gmail_sync_fragment",
+      sql`${t.historyPageOffset} between 0 and 100000 and ((${t.historyPageOffset}=0 and ${t.historyPageDigest} is null) or (${t.historyPageOffset}>0 and ${t.historyPageDigest} is not null and ${t.historyPageDigest} ~ '^[a-f0-9]{64}$'))`,
+    ),
+    check(
+      "gmail_sync_budgets",
+      sql`${t.quotaDay} >= 0 and ${t.quotaDailyUnits} >= 0 and ${t.inventoryPageCount} between 0 and 100000 and ${t.historyPageCount} between 0 and 100000 and cardinality(${t.inventoryTokenTrail}) <= 32 and cardinality(${t.historyTokenTrail}) <= 32`,
+    ),
     check(
       "gmail_sync_status",
       sql`${t.status} in ('not_started', 'initializing', 'ready', 'reconcile_required', 'reconciling', 'blocked')`,

@@ -32,6 +32,11 @@ import {
 } from "../infrastructure/sanitize-email-html";
 import type { ContentScheduler } from "./content-scheduler";
 import { searchBodyText } from "../infrastructure/search-body-text";
+import {
+  GmailProvider,
+  assertGmailPublication,
+} from "../infrastructure/gmail-provider";
+import { gmailDisplay } from "../infrastructure/gmail-mime";
 
 export class MessagePlacementNotFoundError extends Error {
   constructor() {
@@ -51,6 +56,7 @@ export class MessageContentService {
     private readonly accounts?: AccountsService,
     private readonly provider?: MailProvider,
     private readonly config?: Pick<AppConfig, "maxMessageTextPartBytes">,
+    private readonly gmail?: GmailProvider,
   ) {}
 
   private recoveryCursor?: string;
@@ -220,7 +226,7 @@ export class MessageContentService {
 
   async request(accountId: string, mailboxId: string, messageId: string) {
     const row = await this.placement(accountId, mailboxId, messageId);
-    new MailTransportRouter().requireImap(row.account);
+    new MailTransportRouter().forWork(row.account);
     if (!row.account.enabled)
       throw new MessageContentUnavailableError("This account is disabled.");
     if (!row.mailbox.selectable || row.mailbox.lifecycleStatus !== "active")
@@ -392,34 +398,74 @@ export class MessageContentService {
         throw new MessageContentUnavailableError(
           "Account or mailbox is unavailable.",
         );
-      if (row.mailbox.recentSyncUidValidity !== row.placement.uidValidity)
+      if (
+        row.account.receiveTransport === "imap" &&
+        row.mailbox.recentSyncUidValidity !== row.placement.uidValidity
+      )
         throw new MessageContentUnavailableError(
           "Mailbox UIDVALIDITY changed. Synchronize metadata again.",
         );
-      if (row.placement.uid === null || row.placement.uidValidity === null)
+      if (
+        row.account.receiveTransport === "imap" &&
+        (row.placement.uid === null || row.placement.uidValidity === null)
+      )
         throw new MessageContentUnavailableError(
-          "Native Gmail content is not implemented in P1.",
+          "Message has no current IMAP placement.",
         );
       const finishMime = beginStage("mime_discovery");
       const parts = selectDisplayParts(row.message.mimeStructure);
       finishMime();
-      if (parts.length === 0)
+      if (row.account.receiveTransport === "imap" && parts.length === 0)
         throw new MessageContentUnavailableError(
           "No display text part is available.",
         );
-      const account = await measureStage("credentials", () =>
-        this.accounts!.getProviderImapAccountForWork(
-          accountId,
-          expectedRevision ?? row.account.workRevision.toString(),
-        ),
-      );
-      const result = await this.provider.fetchMessageContent(account, {
-        remotePath: row.mailbox.remotePath,
-        uid: row.placement.uid.toString(),
-        expectedUidValidity: row.placement.uidValidity.toString(),
-        parts,
-        maxPartBytes: this.config.maxMessageTextPartBytes,
-      });
+      const result =
+        row.account.receiveTransport === "gmail"
+          ? await (async () => {
+              if (!this.gmail || !row.message.providerMessageId)
+                throw new Error("Gmail content source is unavailable.");
+              const { client, revision } = await this.gmail.interactive(
+                accountId,
+                expectedRevision ?? row.account.workRevision.toString(),
+              );
+              const remote = await client.message(
+                row.message.providerMessageId,
+                true,
+              );
+              // Metadata publication requires account authority; content only persists
+              // MIME attachment descriptors here and never changes label state.
+              await this.database.transaction(async (tx) => {
+                await assertGmailPublication(tx, accountId, revision);
+                const { persistGmailAttachments } =
+                  await import("../infrastructure/gmail-projector");
+                await persistGmailAttachments(
+                  tx as unknown as Database,
+                  accountId,
+                  messageId,
+                  remote,
+                );
+              });
+              return gmailDisplay(
+                client,
+                remote,
+                this.config!.maxMessageTextPartBytes,
+              );
+            })()
+          : await (async () => {
+              const account = await measureStage("credentials", () =>
+                this.accounts!.getProviderImapAccountForWork(
+                  accountId,
+                  expectedRevision ?? row.account.workRevision.toString(),
+                ),
+              );
+              return this.provider!.fetchMessageContent(account, {
+                remotePath: row.mailbox.remotePath,
+                uid: row.placement.uid!.toString(),
+                expectedUidValidity: row.placement.uidValidity!.toString(),
+                parts,
+                maxPartBytes: this.config!.maxMessageTextPartBytes,
+              });
+            })();
       const finishSanitize = beginStage("sanitization");
       let html: string | null = null;
       let blocked = false;
@@ -454,11 +500,11 @@ export class MessageContentService {
       finishSanitize();
       await measureStage("persistence", () =>
         this.database.transaction(async (tx) => {
-          await assertImapPublication(
-            tx,
-            accountId,
-            row.account.workRevision.toString(),
-          );
+          await (
+            row.account.receiveTransport === "gmail"
+              ? assertGmailPublication
+              : assertImapPublication
+          )(tx, accountId, row.account.workRevision.toString());
           return tx
             .update(messageContents)
             .set({

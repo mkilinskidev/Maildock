@@ -1,0 +1,41 @@
+{
+  "kind": "synthetic HTTP + disposable PostgreSQL, no live Gmail",
+  "messages": 41000,
+  "poolSize": 1,
+  "concurrency": 4,
+  "quotaThrottling": "disabled for throughput measurement; limiter tested separately",
+  "recentWindowMessages": 100,
+  "recentReadyMs": 3207.6832000000004,
+  "inventoryMs": 2164686.2254,
+  "noChangesMs": 362.7994999997318,
+  "fourChangesMs": 584.8877000003122,
+  "quotaUnitsInventory": "825053",
+  "quotaUnitsAfterDeltas": "825147",
+  "httpRequests": 43904,
+  "queryRoundtrip": {
+    "samples": 50,
+    "p50Ms": 2.2432000001426786,
+    "p95Ms": 3.8389999999199063,
+    "maxMs": 4.226699999999255
+  },
+  "transactions": {
+    "total": 63215,
+    "samples": 10000,
+    "p50Ms": 14.298699999926612,
+    "p95Ms": 158.10550000006333,
+    "maxMs": 1876.1765999998897
+  },
+  "interactiveDuringBackfill": {
+    "samples": 6,
+    "p50Ms": 663.7090999999782,
+    "p95Ms": 1645.9655000000494,
+    "maxMs": 1645.9655000000494
+  },
+  "initialRssMiB": 272.5,
+  "peakRssMiB": 704.55859375,
+  "memoryIncludesSyntheticRemoteFixture": true,
+  "restarts": 4,
+  "restartRecoveryMs": 1010.5759999998845,
+  "slices": 4920,
+  "bodyFetchRequests": 6
+}

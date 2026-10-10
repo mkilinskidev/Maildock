@@ -1,4 +1,4 @@
-import { imapJobRevision, assertImapJob } from "./receive-job-policy";
+import { receiveJobRevision, assertReceiveJob } from "./receive-job-policy";
 import { withPerformance } from "../../../shared/infrastructure/logging/performance";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
@@ -38,7 +38,7 @@ export async function enqueueContent(
   mailboxId: string,
   messageId: string,
 ) {
-  const accountRevision = await imapJobRevision(boss, accountId);
+  const accountRevision = await receiveJobRevision(boss, accountId);
   const database = boss.getDb();
   if (!database.beginTransaction)
     throw new Error("Content enqueue requires transactions.");
@@ -137,7 +137,7 @@ export async function registerContentWorker(
       const job = batch[0];
       if (!job) throw new Error("Content fetch received an empty batch.");
       const request = payload.parse(job.data);
-      await assertImapJob(boss, request);
+      await assertReceiveJob(boss, request);
       const metadata = job as JobWithMetadata;
       await withPerformance(
         "content",

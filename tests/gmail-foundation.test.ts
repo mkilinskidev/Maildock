@@ -104,10 +104,21 @@ describe("P1 authoritative receiving policy", () => {
   });
   it("fences attachment producers and captures their owning account revision", async () => {
     const googleJobs = boss();
-    await expect(
-      enqueueAttachment(googleJobs, "attachment"),
-    ).rejects.toBeInstanceOf(GmailReceiveUnsupportedError);
-    expect(googleJobs.send).not.toHaveBeenCalled();
+    await enqueueAttachment(googleJobs, "attachment");
+    expect(googleJobs.send).toHaveBeenCalledWith(
+      "attachment-fetch-v1",
+      {
+        attachmentId: "attachment",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        accountRevision: "9",
+      },
+      { singletonKey: "attachment" },
+    );
+    const disabled = boss({ ...google, enabled: false });
+    await expect(enqueueAttachment(disabled, "attachment")).rejects.toThrow(
+      "stale",
+    );
+    expect(disabled.send).not.toHaveBeenCalled();
     const imapJobs = boss(password);
     await enqueueAttachment(imapJobs, "attachment");
     expect(imapJobs.send).toHaveBeenCalledWith(

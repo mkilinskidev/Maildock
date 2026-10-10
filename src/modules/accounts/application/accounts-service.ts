@@ -28,7 +28,10 @@ import type {
 import type { SecretEncryption } from "../../../shared/application/secret-encryption";
 import type { MailboxDiscoveryScheduler } from "./mailbox-discovery-scheduler";
 import type { Database } from "../../../shared/infrastructure/database/database";
-import { mailAccounts } from "../../../shared/infrastructure/database/schema";
+import {
+  mailAccounts,
+  gmailAccountSyncState,
+} from "../../../shared/infrastructure/database/schema";
 import type { OAuthProviderRegistry } from "./oauth-provider-registry";
 
 export class MailAccountNotFoundError extends Error {
@@ -99,6 +102,16 @@ export type MailAccountView = Readonly<{
   }>;
   createdAt: string;
   updatedAt: string;
+  gmailSync?: {
+    status: string;
+    recentReady: boolean;
+    inventoryComplete: boolean;
+    processedCount: string;
+    historyHealthy: boolean;
+    nextAttemptAt: string | null;
+    errorCategory: string | null;
+    quotaUnits: string;
+  };
 }>;
 
 function toView(
@@ -125,7 +138,11 @@ function toView(
     ),
     receiveDiagnostic:
       row.providerType === "gmail_smtp"
-        ? new MailTransportRouter().gmail.diagnostic()
+        ? {
+            transport: "gmail",
+            status: row.imapStatus as ReceiveDiagnostic["status"],
+            ...(row.imapError ? { error: row.imapError } : {}),
+          }
         : {
             transport: "imap",
             status: row.imapStatus as ReceiveDiagnostic["status"],
@@ -187,6 +204,10 @@ export class AccountsService {
     private readonly oauth?: OAuthProviderRegistry,
     private readonly events?: ApplicationEventService,
     readonly transportRouter = new MailTransportRouter(),
+    private readonly gmail?: {
+      schedule(accountId: string): Promise<boolean>;
+      test(accountId: string): Promise<void>;
+    },
   ) {}
 
   async list(): Promise<MailAccountView[]> {
@@ -194,7 +215,15 @@ export class AccountsService {
       .select()
       .from(mailAccounts)
       .orderBy(mailAccounts.sortOrder, mailAccounts.createdAt, mailAccounts.id);
-    return rows.map((row) => toView(row, this.oauth));
+    const states = rows.some((row) => row.receiveTransport === "gmail")
+      ? await this.database.select().from(gmailAccountSyncState)
+      : [];
+    return rows.map((row) =>
+      this.withGmailState(
+        toView(row, this.oauth),
+        states.find((s) => s.accountId === row.id),
+      ),
+    );
   }
 
   async move(id: string, direction: "up" | "down"): Promise<MailAccountView[]> {
@@ -241,7 +270,41 @@ export class AccountsService {
   }
 
   async get(id: string): Promise<MailAccountView> {
-    return toView(await this.getRow(id), this.oauth);
+    const row = await this.getRow(id);
+    const [state] =
+      row.receiveTransport === "gmail"
+        ? await this.database
+            .select()
+            .from(gmailAccountSyncState)
+            .where(eq(gmailAccountSyncState.accountId, id))
+        : [];
+    return this.withGmailState(toView(row, this.oauth), state);
+  }
+  private withGmailState(
+    view: MailAccountView,
+    state: typeof gmailAccountSyncState.$inferSelect | undefined,
+  ): MailAccountView {
+    return state
+      ? {
+          ...view,
+          gmailSync: {
+            status: state.status,
+            recentReady: state.recentReady,
+            inventoryComplete: state.inventoryComplete,
+            processedCount: state.processedCount.toString(),
+            historyHealthy:
+              !!state.historyId &&
+              !["reconcile_required", "reconciling", "blocked"].includes(
+                state.status,
+              ),
+            nextAttemptAt: state.nextAttemptAt?.toISOString() ?? null,
+            errorCategory: state.errorCategory,
+            quotaUnits: (
+              state.quotaCurrentUnits + state.quotaPreviousUnits
+            ).toString(),
+          },
+        }
+      : view;
   }
 
   async create(input: CreateAccountInput): Promise<MailAccountView> {
@@ -437,7 +500,21 @@ export class AccountsService {
     if (input && row.authMethod !== "password")
       throw new MailAccountNotFoundError();
     if (this.transportRouter.resolve(row) === "gmail") {
-      const diagnostic = this.transportRouter.gmail.diagnostic();
+      let receive: ConnectionReport["imap"];
+      try {
+        if (!this.gmail) throw new GmailReceiveUnsupportedError();
+        await this.gmail.test(id);
+        receive = { success: true };
+      } catch (error) {
+        receive = {
+          success: false,
+          category: "verification_failed",
+          message:
+            error instanceof GmailReceiveUnsupportedError
+              ? error.message
+              : "Gmail API verification failed. Check OAuth access and enable Gmail API in the configured Google Cloud project.",
+        };
+      }
       const smtp = await this.getProviderSmtpAccountForWork(id);
       const smtpResult = (await this.provider.testSmtpConnection?.(smtp)) ?? {
         success: false as const,
@@ -445,19 +522,16 @@ export class AccountsService {
         message: "SMTP verification is unavailable.",
       };
       const report: ConnectionReport = {
-        imap: {
-          success: false,
-          category: "verification_failed",
-          message: diagnostic.error!,
-        },
+        imap: receive,
         smtp: smtpResult,
       };
       await this.database
         .update(mailAccounts)
         .set({
-          connectionStatus: "error",
-          imapStatus: "error",
-          imapError: diagnostic.error,
+          connectionStatus:
+            receive.success && smtpResult.success ? "verified" : "error",
+          imapStatus: receive.success ? "success" : "error",
+          imapError: receive.success ? null : receive.message,
           smtpStatus: smtpResult.success ? "success" : "error",
           smtpError: smtpResult.success ? null : smtpResult.message,
         })
@@ -530,6 +604,21 @@ export class AccountsService {
         username: row.imapUsername!,
         credential,
       },
+    };
+  }
+
+  async getProviderGmailAccountForWork(id: string, expectedRevision?: string) {
+    const row = await this.getRow(id);
+    if (this.transportRouter.forWork(row, expectedRevision) !== "gmail")
+      throw new Error("The account does not use Gmail receiving.");
+    const credential = await this.resolveCredential(row);
+    if (credential.kind !== "oauth2")
+      throw new Error("Google OAuth is required.");
+    await this.assertWorkRevision(id, row.workRevision.toString());
+    return {
+      accountId: id,
+      revision: row.workRevision.toString(),
+      accessToken: credential.accessToken,
     };
   }
 
@@ -622,6 +711,22 @@ export class AccountsService {
     const row = await this.getRow(id);
     this.transportRouter.forWork(row);
     if (this.transportRouter.resolve(row) === "gmail") {
+      if (this.gmail) {
+        await this.database
+          .update(mailAccounts)
+          .set({
+            mailboxDiscoveryStatus: "pending",
+            mailboxDiscoveryError: null,
+          })
+          .where(
+            and(
+              eq(mailAccounts.id, id),
+              eq(mailAccounts.workRevision, row.workRevision),
+            ),
+          );
+        await this.gmail.schedule(id);
+        return;
+      }
       await new GmailSyncRepository(this.database).blockUnsupported(
         id,
         row.workRevision,

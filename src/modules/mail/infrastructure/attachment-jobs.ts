@@ -1,4 +1,4 @@
-import { imapJobRevision, assertImapJob } from "./receive-job-policy";
+import { receiveJobRevision, assertReceiveJob } from "./receive-job-policy";
 import { StaleAccountWorkError } from "../../accounts/domain/receive-transport";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
@@ -31,7 +31,7 @@ export async function enqueueAttachment(boss: PgBoss, id: string) {
     );
   const accountId = result.rows[0]?.account_id;
   if (!accountId) throw new StaleAccountWorkError();
-  const accountRevision = await imapJobRevision(boss, accountId);
+  const accountRevision = await receiveJobRevision(boss, accountId);
   await boss.send(
     ATTACHMENT_QUEUE,
     { attachmentId: id, accountId, accountRevision },
@@ -72,7 +72,7 @@ export async function registerAttachmentWorker(
     { localConcurrency: 2 },
     safeJobHandler("attachment", async (batch) => {
       const payload = attachmentJob.parse(batch[0]?.data);
-      await assertImapJob(boss, payload);
+      await assertReceiveJob(boss, payload);
       await service.run(
         payload.attachmentId,
         payload.accountRevision,
