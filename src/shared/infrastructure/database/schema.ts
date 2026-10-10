@@ -17,6 +17,7 @@ import {
   customType,
 } from "drizzle-orm/pg-core";
 import type { EncryptedEnvelope } from "../../application/secret-encryption.js";
+import type { ImapSyncProgress } from "../../../modules/accounts/domain/imap-sync-slice";
 import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
 import type { RichDocument } from "../../../modules/mail/domain/rich-document";
 
@@ -837,6 +838,8 @@ export const mailboxes = pgTable(
     deltaUidValidity: bigint("delta_uid_validity", { mode: "bigint" }),
     deltaLastSeenUid: bigint("delta_last_seen_uid", { mode: "bigint" }),
     deltaHighestModseq: bigint("delta_highest_modseq", { mode: "bigint" }),
+    imapRecentProgress: jsonb("imap_recent_progress").$type<ImapSyncProgress>(),
+    imapDeltaProgress: jsonb("imap_delta_progress").$type<ImapSyncProgress>(),
     deltaSyncStatus: text("delta_sync_status").default("not_started").notNull(),
     deltaSyncError: text("delta_sync_error"),
     deltaSyncStartedAt: timestamp("delta_sync_started_at", {

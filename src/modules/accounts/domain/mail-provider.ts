@@ -235,6 +235,14 @@ export type RemoteMutationResult = Readonly<{
 }>;
 
 export interface MailProvider {
+  synchronizeMailboxSlice?(
+    account: ProviderImapAccount,
+    remotePath: string,
+    phase: "recent" | "delta",
+    limits: ImapSliceLimits,
+    sink: ImapSliceSink,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
   /** Adapter retains the connection until the streaming consumer has finished. */
   fetchAttachment?<T>(
     account: ProviderImapAccount,
@@ -310,3 +318,4 @@ export type SentCopyAppendResult =
 export type SentCopyLookupResult =
   | ({ outcome: "found" } & SentCopyIdentity)
   | { outcome: "not_found" | "uncertain" };
+import type { ImapSliceLimits, ImapSliceSink } from "./imap-sync-slice";

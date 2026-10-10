@@ -5,6 +5,8 @@ import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
+import { enqueueCoalescedSync } from "./coalesced-sync-job";
+import { enqueueImapContinuation } from "./imap-slice-continuation";
 import { z } from "zod";
 
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
@@ -22,7 +24,7 @@ export const recentSyncPayloadSchema = z
   })
   .strict();
 
-async function ensureQueue(boss: PgBoss): Promise<void> {
+export async function ensureRecentQueue(boss: PgBoss): Promise<void> {
   await boss.createQueue(MAILBOX_RECENT_SYNC_QUEUE, {
     policy: "stately",
     retryLimit: 4,
@@ -50,25 +52,33 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
   private start(): Promise<void> {
     this.started ??= (async () => {
       await this.boss.start();
-      await ensureQueue(this.boss);
+      await ensureRecentQueue(this.boss);
     })();
     return this.started;
   }
 
   async schedule(accountId: string, mailboxId: string): Promise<boolean> {
     await this.start();
-    const id = await this.boss.send(
-      MAILBOX_RECENT_SYNC_QUEUE,
-      {
-        version: 1,
-        accountId,
-        mailboxId,
-        accountRevision: await imapJobRevision(this.boss, accountId),
-      },
-      { singletonKey: mailboxId, priority: 10 },
-    );
-    return id !== null;
+    return enqueueRecent(this.boss, accountId, mailboxId);
   }
+}
+
+export async function enqueueRecent(
+  boss: PgBoss,
+  accountId: string,
+  mailboxId: string,
+): Promise<boolean> {
+  return enqueueCoalescedSync(
+    boss,
+    MAILBOX_RECENT_SYNC_QUEUE,
+    {
+      version: 1,
+      accountId,
+      mailboxId,
+      accountRevision: await imapJobRevision(boss, accountId),
+    },
+    { singletonKey: mailboxId, priority: 10 },
+  );
 }
 
 export async function registerRecentSyncWorker(
@@ -81,7 +91,7 @@ export async function registerRecentSyncWorker(
   ) => Promise<void> = async (_mailboxId, work) => work(),
   logger?: Pick<Logger, "debug">,
 ): Promise<void> {
-  await ensureQueue(boss);
+  await ensureRecentQueue(boss);
   await boss.work(
     MAILBOX_RECENT_SYNC_QUEUE,
     { localConcurrency: Math.max(2, concurrency), includeMetadata: true },
@@ -101,13 +111,23 @@ export async function registerRecentSyncWorker(
         },
         async () => {
           await assertImapJob(boss, payload);
-          await withLock(payload.mailboxId, () =>
-            service.runRecentSync(
+          let more: boolean | void = false;
+          await withLock(payload.mailboxId, async () => {
+            more = await service.runRecentSync(
               payload.accountId,
               payload.mailboxId,
               payload.accountRevision,
-            ),
-          );
+              job.signal,
+            );
+          });
+          job.signal?.throwIfAborted();
+          if (more)
+            await enqueueImapContinuation(
+              boss,
+              MAILBOX_RECENT_SYNC_QUEUE,
+              payload,
+              logger,
+            );
         },
       );
     }),

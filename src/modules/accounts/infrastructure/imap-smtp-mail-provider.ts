@@ -7,6 +7,8 @@ import {
   recordPerformanceError,
 } from "../../../shared/infrastructure/logging/performance";
 import { presenceBatches, missingUids } from "./uid-presence";
+import { executeImapSlice } from "./imap-sync-slice";
+import type { ImapSliceLimits, ImapSliceSink } from "../domain/imap-sync-slice";
 import {
   ImapFlow,
   type FetchMessageObject,
@@ -62,7 +64,7 @@ import {
 const CONNECTION_TIMEOUT_MS = 10_000;
 const SOCKET_TIMEOUT_MS = 15_000;
 
-type ImapClient = {
+export type ImapClient = {
   on?(event: "error", listener: (error: unknown) => void): unknown;
   connect(): Promise<unknown>;
   list(options?: {
@@ -926,6 +928,32 @@ export class ImapSmtpMailProvider implements MailProvider {
         }
       }
       client.close();
+    }
+  }
+
+  async synchronizeMailboxSlice(
+    account: ProviderImapAccount,
+    remotePath: string,
+    phase: "recent" | "delta",
+    limits: ImapSliceLimits,
+    sink: ImapSliceSink,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const client = this.createImap(imapOptions(account.imap));
+    try {
+      return await executeImapSlice(
+        client,
+        remotePath,
+        phase,
+        limits,
+        sink,
+        normalizeMessage,
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof MailboxEpochChangedError) throw error;
+      if (error instanceof MailProviderOperationError) throw error;
+      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
     }
   }
 

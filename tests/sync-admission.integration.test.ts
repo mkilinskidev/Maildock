@@ -251,7 +251,14 @@ describe("distributed synchronization admission on real pg-boss", () => {
     await send(recent, a, inbox);
     await send(delta, a, inbox);
     const result = await Promise.all([fetch(recent), fetch(delta, second)]);
-    expect(result.flat()).toHaveLength(1);
+    const claimed = result.flat();
+    // The mismatching queue can win the try-lock and defer while the matching
+    // queue observes contention. Both empty polls are valid; its next normal
+    // opportunity must claim exactly one job and still exclude this account.
+    if (!claimed.length) {
+      claimed.push(...(await fetch(recent)), ...(await fetch(delta, second)));
+    }
+    expect(claimed).toHaveLength(1);
     expect(await fetch(recent)).toHaveLength(0);
     expect(await fetch(delta, second)).toHaveLength(0);
   });

@@ -6,8 +6,10 @@ import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
+import { enqueueImapContinuation } from "./imap-slice-continuation";
+import { enqueueRecent, ensureRecentQueue } from "./recent-sync-jobs";
 import { z } from "zod";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, or, isNotNull } from "drizzle-orm";
 
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -121,14 +123,24 @@ export async function registerDeltaWorker(
         },
         async () => {
           await assertImapJob(boss, payload);
-          await withLock(payload.mailboxId, () =>
-            service.run(
+          let more: boolean | void = false;
+          await withLock(payload.mailboxId, async () => {
+            more = await service.run(
               payload.accountId,
               payload.mailboxId,
               payload.reason,
               payload.accountRevision,
-            ),
-          );
+              job.signal,
+            );
+          });
+          job.signal?.throwIfAborted();
+          if (more)
+            await enqueueImapContinuation(
+              boss,
+              MAILBOX_DELTA_SYNC_QUEUE,
+              payload,
+              logger,
+            );
         },
       );
     }),
@@ -161,6 +173,28 @@ export class DeltaPoller {
     if (this.running) return;
     this.running = true;
     try {
+      // Repair a crash after a recent checkpoint but before enqueue/ACK.
+      // Coalescing retains any retry deadline and at most one pending successor.
+      const partial = await this.database
+        .select({ accountId: mailboxes.accountId, mailboxId: mailboxes.id })
+        .from(mailboxes)
+        .innerJoin(mailAccounts, eq(mailAccounts.id, mailboxes.accountId))
+        .where(
+          and(
+            eq(mailAccounts.enabled, true),
+            eq(mailAccounts.providerType, "imap_smtp"),
+            or(
+              eq(mailAccounts.authMethod, "password"),
+              eq(mailAccounts.oauthStatus, "connected"),
+            ),
+            eq(mailboxes.selectable, true),
+            eq(mailboxes.lifecycleStatus, "active"),
+            isNotNull(mailboxes.imapRecentProgress),
+          ),
+        );
+      if (partial.length) await ensureRecentQueue(this.boss);
+      for (const row of partial)
+        await enqueueRecent(this.boss, row.accountId, row.mailboxId);
       const eligible = await this.database
         .select({ accountId: mailboxes.accountId, mailboxId: mailboxes.id })
         .from(mailboxes)

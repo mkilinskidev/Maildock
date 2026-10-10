@@ -96,6 +96,18 @@ const schema = z
       .min(1)
       .max(365)
       .default(30),
+    MAILDOCK_IMAP_SLICE_UID_SPAN: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .default(500),
+    MAILDOCK_IMAP_SLICE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1000)
+      .max(120000)
+      .default(60000),
     MAILDOCK_MESSAGE_FETCH_BATCH_SIZE: z.coerce
       .number()
       .int()
@@ -205,6 +217,8 @@ export type AppConfig = Readonly<{
   workerConcurrency: number;
   initialSyncDays: number;
   messageFetchBatchSize: number;
+  imapSliceUidSpan: number;
+  imapSliceTimeoutMs: number;
   backfillChunkSize: number;
   messageSyncConcurrency: number;
   mailPollIntervalSeconds: number;
@@ -263,6 +277,8 @@ export function parseConfig(
     workerConcurrency: result.data.WORKER_CONCURRENCY,
     initialSyncDays: result.data.MAILDOCK_INITIAL_SYNC_DAYS,
     messageFetchBatchSize: result.data.MAILDOCK_MESSAGE_FETCH_BATCH_SIZE,
+    imapSliceUidSpan: result.data.MAILDOCK_IMAP_SLICE_UID_SPAN,
+    imapSliceTimeoutMs: result.data.MAILDOCK_IMAP_SLICE_TIMEOUT_MS,
     backfillChunkSize: result.data.MAILDOCK_BACKFILL_CHUNK_SIZE,
     messageSyncConcurrency: result.data.MAILDOCK_MESSAGE_SYNC_CONCURRENCY,
     mailPollIntervalSeconds: result.data.MAILDOCK_MAIL_POLL_INTERVAL_SECONDS,

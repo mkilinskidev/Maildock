@@ -1,4 +1,6 @@
 import { StaleAccountWorkError } from "../../accounts/domain/receive-transport";
+import { ImapSliceSyncService } from "./imap-slice-sync-service";
+import type { ImapSliceLimits } from "../../accounts/domain/imap-sync-slice";
 import { assertImapPublication } from "../infrastructure/receive-publication-fence";
 import {
   withPerformance,
@@ -35,6 +37,7 @@ export class DeltaSyncService {
     private readonly batchSize: number,
     private readonly logger?: Logger,
     private readonly events?: ApplicationEventService,
+    private readonly sliceLimits?: ImapSliceLimits,
   ) {}
 
   async run(
@@ -42,7 +45,23 @@ export class DeltaSyncService {
     mailboxId: string,
     reason: DeltaReason,
     expectedRevision?: string,
-  ): Promise<void> {
+    signal?: AbortSignal,
+  ): Promise<boolean | void> {
+    if (this.provider.synchronizeMailboxSlice)
+      return new ImapSliceSyncService(
+        this.database,
+        this.accounts,
+        this.provider,
+        this.messages,
+        this.sliceLimits ?? {
+          uidSpan: 500,
+          batchSize: Math.min(this.batchSize, 150),
+          timeoutMs: 60000,
+        },
+        30,
+        this.logger,
+        this.events,
+      ).run(accountId, mailboxId, "delta", expectedRevision, signal);
     return withPerformance("delta", () =>
       this.runImpl(accountId, mailboxId, reason, expectedRevision),
     );

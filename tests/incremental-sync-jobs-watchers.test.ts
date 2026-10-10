@@ -28,10 +28,11 @@ const accountId = "00000000-0000-4000-8000-0000000000e1";
 const mailboxId = "00000000-0000-4000-8000-0000000000e2";
 const logger = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
-function databaseRows<T>(rows: T[]): Database {
+function databaseRows<T>(rows: T[], partialRecent = false): Database {
+  let reads = 0;
   const chain = {
     innerJoin: () => chain,
-    where: async () => rows,
+    where: async () => (partialRecent && reads++ % 2 === 0 ? [] : rows),
   };
   return { select: () => ({ from: () => chain }) } as unknown as Database;
 }
@@ -204,7 +205,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
   it("polls initialized eligible mailboxes and coalesces pending jobs", async () => {
     const jobs = boss();
     const poller = new DeltaPoller(
-      databaseRows([{ accountId, mailboxId }]),
+      databaseRows([{ accountId, mailboxId }], true),
       jobs.value,
       60,
     );

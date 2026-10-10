@@ -32,9 +32,23 @@ describe("configuration", () => {
     expect(config.messageFetchBatchSize).toBe(150);
     expect(config.backfillChunkSize).toBe(500);
     expect(config.messageSyncConcurrency).toBe(2);
+    expect(config.imapSliceUidSpan).toBe(500);
+    expect(config.imapSliceTimeoutMs).toBe(60000);
   });
 
   it("validates recent synchronization bounds", () => {
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        MAILDOCK_IMAP_SLICE_UID_SPAN: "5001",
+      }),
+    ).toThrow(/MAILDOCK_IMAP_SLICE_UID_SPAN/);
+    expect(() =>
+      parseConfig({
+        ...validEnvironment,
+        MAILDOCK_IMAP_SLICE_TIMEOUT_MS: "120001",
+      }),
+    ).toThrow(/MAILDOCK_IMAP_SLICE_TIMEOUT_MS/);
     expect(() =>
       parseConfig({ ...validEnvironment, MAILDOCK_INITIAL_SYNC_DAYS: "0" }),
     ).toThrow(/MAILDOCK_INITIAL_SYNC_DAYS/);

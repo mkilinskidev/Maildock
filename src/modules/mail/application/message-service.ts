@@ -1,10 +1,12 @@
 import { assertImapPublication } from "../infrastructure/receive-publication-fence";
+import { ImapSliceSyncService } from "./imap-slice-sync-service";
 import {
   MailTransportRouter,
   StaleAccountWorkError,
 } from "../../accounts/domain/receive-transport";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { randomUUID } from "node:crypto";
+import type { Logger } from "pino";
 import { ConversationService } from "./conversation-service";
 import { persistAttachmentMetadata } from "./attachment-metadata";
 
@@ -140,7 +142,8 @@ export class MessageService {
     private readonly config?: Pick<
       AppConfig,
       "initialSyncDays" | "messageFetchBatchSize"
-    >,
+    > &
+      Partial<Pick<AppConfig, "imapSliceUidSpan" | "imapSliceTimeoutMs">>,
     private readonly scheduler?: RecentSyncScheduler,
     private readonly deltaScheduler?: {
       schedule(
@@ -156,6 +159,7 @@ export class MessageService {
     private readonly gmailScheduler?: {
       schedule(accountId: string): Promise<boolean>;
     },
+    private readonly syncLogger?: Pick<Logger, "debug">,
   ) {}
 
   async requestSync(accountId: string, mailboxId: string): Promise<boolean> {
@@ -243,9 +247,29 @@ export class MessageService {
     accountId: string,
     mailboxId: string,
     expectedRevision?: string,
-  ): Promise<void> {
+    signal?: AbortSignal,
+  ): Promise<boolean | void> {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Recent sync worker dependencies are unavailable.");
+    if (this.provider.synchronizeMailboxSlice) {
+      const more = await new ImapSliceSyncService(
+        this.database,
+        this.accounts,
+        this.provider,
+        this,
+        {
+          uidSpan: this.config.imapSliceUidSpan ?? 500,
+          batchSize: Math.min(this.config.messageFetchBatchSize, 150),
+          timeoutMs: this.config.imapSliceTimeoutMs ?? 60000,
+        },
+        this.config.initialSyncDays,
+        this.syncLogger,
+        this.events,
+      ).run(accountId, mailboxId, "recent", expectedRevision, signal);
+      if (!more && this.backfillScheduler)
+        await this.backfillScheduler.schedule(accountId, mailboxId);
+      return more;
+    }
     const startedAt = new Date();
     try {
       const mailbox = await this.ownedMailbox(accountId, mailboxId);

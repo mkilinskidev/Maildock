@@ -1,4 +1,3 @@
-import { imapJobRevision } from "../modules/mail/infrastructure/receive-job-policy";
 import { MailTransportRouter } from "../modules/accounts/domain/receive-transport";
 import { GmailProvider } from "../modules/mail/infrastructure/gmail-provider";
 import { createGmailAccountLock } from "../modules/mail/infrastructure/gmail-account-lock";
@@ -28,7 +27,7 @@ import { ImapSmtpMailProvider } from "../modules/accounts/infrastructure/imap-sm
 import { MailboxService } from "../modules/mail/application/mailbox-service.js";
 import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-discovery-service.js";
 import { MessageService } from "../modules/mail/application/message-service.js";
-import { MAILBOX_RECENT_SYNC_QUEUE } from "../modules/mail/infrastructure/recent-sync-jobs.js";
+import { enqueueRecent } from "../modules/mail/infrastructure/recent-sync-jobs.js";
 import { MessageContentService } from "../modules/mail/application/message-content-service.js";
 import { DeltaSyncService } from "../modules/mail/application/delta-sync-service.js";
 import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
@@ -128,17 +127,8 @@ export function createWorkerComposition() {
     },
   );
   const recentSyncScheduler = {
-    schedule: async (accountId: string, mailboxId: string) =>
-      (await jobs.boss.send(
-        MAILBOX_RECENT_SYNC_QUEUE,
-        {
-          version: 1,
-          accountId,
-          mailboxId,
-          accountRevision: await imapJobRevision(jobs.boss, accountId),
-        },
-        { singletonKey: mailboxId, priority: 10 },
-      )) !== null,
+    schedule: (accountId: string, mailboxId: string) =>
+      enqueueRecent(jobs.boss, accountId, mailboxId),
   };
   const messages = new MessageService(
     database.db,
@@ -156,6 +146,7 @@ export function createWorkerComposition() {
     },
     events,
     { schedule: (id) => enqueueGmail(jobs.boss, id) },
+    logger,
   );
   const blobStorage = new LocalBlobStorage(config.attachmentsPath);
   const attachments = new AttachmentService(
@@ -231,6 +222,11 @@ export function createWorkerComposition() {
       config.messageFetchBatchSize,
       logger,
       events,
+      {
+        uidSpan: config.imapSliceUidSpan,
+        batchSize: Math.min(config.messageFetchBatchSize, 150),
+        timeoutMs: config.imapSliceTimeoutMs,
+      },
     ),
     poller: new DeltaPoller(
       database.db,
