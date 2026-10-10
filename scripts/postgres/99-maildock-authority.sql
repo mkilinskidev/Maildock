@@ -60,7 +60,7 @@ BEGIN
       OR (n.nspname = 'public' AND c.relkind IN ('r','p') AND c.relname NOT IN (
         'account','account_signature_defaults','application_events','auth_admission','blobs',
         'conversation_members','conversation_references','conversations','draft_attachments','drafts',
-        'gmail_account_sync_state','gmail_sync_work','instance_state','login_throttle','mail_accounts','mailbox_messages','mailbox_roles','mailboxes',
+        'gmail_account_sync_state','gmail_quota_buckets','gmail_sync_work','instance_state','login_throttle','mail_accounts','mailbox_messages','mailbox_roles','mailboxes',
         'message_attachments','message_commands','message_contents','messages','mfa_replacement',
         'notification_events','oauth_authorization_states','oauth_provider_configs',
         'outgoing_message_attachments','outgoing_messages','owner_recovery','rate_limit','recovery_maintenance','remote_content_senders',

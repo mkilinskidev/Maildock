@@ -3,7 +3,7 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   GenericContainer,
   Wait,
@@ -11,6 +11,7 @@ import {
 } from "testcontainers";
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import { createDatabase } from "@/shared/infrastructure/database/database";
+import { validateDatabaseAuthority } from "@/shared/infrastructure/database/database-authority";
 import {
   mailAccounts,
   mailboxes,
@@ -22,6 +23,7 @@ import {
   messageCommands,
   notificationEvents,
   outgoingMessages,
+  gmailQuotaBuckets,
 } from "@/shared/infrastructure/database/schema";
 import { AesGcmSecretEncryption } from "@/shared/infrastructure/crypto/aes-gcm-secret-encryption";
 import { AccountsService } from "@/modules/accounts/application/accounts-service";
@@ -71,6 +73,7 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       databasePoolSize: 1,
     });
     await migrate(database.db, { migrationsFolder: "db/migrations" });
+    await validateDatabaseAuthority(database.client);
     directory = await mkdtemp(path.join(tmpdir(), "maildock-gmail-test-"));
   });
   afterAll(async () => {
@@ -87,7 +90,7 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       providerType: "gmail_smtp",
       authMethod: "oauth2",
       oauthProviderId: "google",
-      oauthHomeAccountId: "subject",
+      oauthHomeAccountId: `subject-${id}`,
       oauthCache: encryption.encrypt(
         "fixture",
         `maildock:account-credential:v1:${id}:oauth-cache`,
@@ -801,5 +804,259 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       nextAttemptAt: null,
       quotaDailyUnits: charged,
     });
+  });
+  it("quota expires a charged boundary second without retaining a whole previous minute", async () => {
+    await database.db.delete(gmailQuotaBuckets);
+    const t = await setup();
+    await t.provider.lease(t.id, "1");
+    const limits = {
+      MAILDOCK_GMAIL_USER_UNITS_PER_MINUTE: 100,
+      MAILDOCK_GMAIL_PROJECT_UNITS_PER_MINUTE: 100,
+      MAILDOCK_GMAIL_DAILY_UNITS: 1000,
+    };
+    const now = Math.floor(Date.now() / 60000) * 60000;
+    await reserveGmailQuota(database.db, t.id, 1n, 100, true, limits, now);
+    await expect(
+      reserveGmailQuota(database.db, t.id, 1n, 1, true, limits, now + 59999),
+    ).rejects.toMatchObject({ category: "quota", retryAfterMs: 1001 });
+    await reserveGmailQuota(
+      database.db,
+      t.id,
+      1n,
+      1,
+      true,
+      limits,
+      now + 61000,
+    );
+    expect((await t.state()).quotaDailyUnits).toBe(101n);
+  });
+  it("quota migration retains previous minute and daily reservations", async () => {
+    const migration = await readFile(
+      "db/migrations/0038_furry_molten_man.sql",
+      "utf8",
+    );
+    // Isolated schema in the disposable fixture; roll back the entire probe.
+    const namespace = `gmail_quota_probe_${randomUUID().replaceAll("-", "")}`;
+    const sentinel = new Error("rollback quota migration fixture");
+    await expect(
+      database.db.transaction(async (tx) => {
+        await tx.execute(sql.raw(`create schema ${namespace}`));
+        await tx.execute(sql.raw(`set local search_path to ${namespace}`));
+        await tx.execute(
+          sql`create table mail_accounts(id text,oauth_home_account_id text)`,
+        );
+        await tx.execute(
+          sql`create table gmail_account_sync_state(account_id text,quota_minute bigint,quota_current_units bigint,quota_previous_units bigint,quota_day bigint,quota_daily_units bigint)`,
+        );
+        await tx.execute(
+          sql`insert into mail_accounts values('legacy','legacy-subject')`,
+        );
+        await tx.execute(
+          sql`insert into gmail_account_sync_state values('legacy',100,20,30,1,200)`,
+        );
+        for (const statement of migration.split("--> statement-breakpoint"))
+          await tx.execute(sql.raw(statement));
+        const project = await tx.execute(
+          sql`select kind,bucket::text,units::text from gmail_quota_buckets where scope='project' order by kind,bucket`,
+        );
+        expect(project).toMatchObject([
+          { kind: "day", bucket: "1", units: "200" },
+          { kind: "second", bucket: "5999", units: "30" },
+          { kind: "second", bucket: "6059", units: "20" },
+        ]);
+        expect(
+          await tx.execute(
+            sql`select sum(units)::text as units from gmail_quota_buckets where scope='user:'||encode(sha256(convert_to('legacy-subject','UTF8')),'hex')`,
+          ),
+        ).toMatchObject([{ units: "50" }]);
+        throw sentinel;
+      }),
+    ).rejects.toBe(sentinel);
+  });
+  it("quota serializes competing workers and retains project usage after deletion", async () => {
+    await database.db.delete(gmailQuotaBuckets);
+    const a = await setup(),
+      b = await setup();
+    await a.provider.lease(a.id, "1");
+    await b.provider.lease(b.id, "1");
+    const limits = {
+      MAILDOCK_GMAIL_USER_UNITS_PER_MINUTE: 1000,
+      MAILDOCK_GMAIL_PROJECT_UNITS_PER_MINUTE: 100,
+      MAILDOCK_GMAIL_DAILY_UNITS: 1000,
+    };
+    const now = Date.now();
+    const results = await Promise.allSettled(
+      [a, b].map((t) =>
+        t.lock(t.id, (db) =>
+          reserveGmailQuota(db, t.id, 1n, 60, true, limits, now),
+        ),
+      ),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const winner = results[0].status === "fulfilled" ? a : b,
+      survivor = winner === a ? b : a;
+    await database.db
+      .delete(mailAccounts)
+      .where(eq(mailAccounts.id, winner.id));
+    await reserveGmailQuota(
+      database.db,
+      survivor.id,
+      1n,
+      40,
+      true,
+      limits,
+      now,
+    );
+    await expect(
+      reserveGmailQuota(database.db, survivor.id, 1n, 1, true, limits, now),
+    ).rejects.toMatchObject({ category: "quota" });
+  });
+  it("quota preserves daily and Google-user budgets after deletion and re-add", async () => {
+    await database.db.delete(gmailQuotaBuckets);
+    const a = await setup();
+    await a.provider.lease(a.id, "1");
+    const limits = {
+      MAILDOCK_GMAIL_USER_UNITS_PER_MINUTE: 100,
+      MAILDOCK_GMAIL_PROJECT_UNITS_PER_MINUTE: 1000,
+      MAILDOCK_GMAIL_DAILY_UNITS: 100,
+    };
+    const now = Date.now();
+    await reserveGmailQuota(database.db, a.id, 1n, 60, true, limits, now);
+    await database.db.delete(mailAccounts).where(eq(mailAccounts.id, a.id));
+    const b = await setup();
+    await database.db
+      .update(mailAccounts)
+      .set({ oauthHomeAccountId: `subject-${a.id}` })
+      .where(eq(mailAccounts.id, b.id));
+    await b.provider.lease(b.id, "1");
+    await expect(
+      reserveGmailQuota(
+        database.db,
+        b.id,
+        1n,
+        41,
+        true,
+        { ...limits, MAILDOCK_GMAIL_DAILY_UNITS: 1000 },
+        now,
+      ),
+    ).rejects.toMatchObject({ category: "quota" });
+    await expect(
+      reserveGmailQuota(database.db, b.id, 1n, 41, true, limits, now + 180000),
+    ).rejects.toMatchObject({ category: "quota" });
+  });
+  it("authority leaves pool-one interactive queries available during a remote wait", async () => {
+    const t = await setup();
+    let entered!: () => void, resume!: () => void;
+    const waiting = new Promise<void>((resolve) => (entered = resolve)),
+      released = new Promise<void>((resolve) => (resume = resolve));
+    const work = t.lock(t.id, async (db) => {
+      entered();
+      await released;
+      await db.transaction((tx) => tx.execute(sql`select 1`));
+    });
+    await waiting;
+    try {
+      await expect(
+        Promise.race([
+          database.db.execute(sql`select 1`).then(() => "available"),
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve("starved"), 1000),
+          ),
+        ]),
+      ).resolves.toBe("available");
+      await expect(t.lock(t.id, async () => undefined)).rejects.toThrow(
+        "already running",
+      );
+    } finally {
+      resume();
+      await work;
+    }
+  });
+  it("authority verifies the exact advisory lock and rolls back failed nested transactions", async () => {
+    const t = await setup();
+    await t.lock(t.id, async (db) => {
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`create temporary table gmail_lock_probe(value int)`,
+        );
+        await tx.execute(sql`insert into gmail_lock_probe values(1)`);
+        await expect(
+          tx.transaction(async (nested) => {
+            await nested.execute(sql`insert into gmail_lock_probe values(2)`);
+            throw new Error("rollback probe");
+          }),
+        ).rejects.toThrow("rollback probe");
+        expect(
+          await tx.execute(sql`select value from gmail_lock_probe`),
+        ).toMatchObject([{ value: 1 }]);
+      });
+      await db.execute(sql`select pg_advisory_unlock_all()`);
+      await db.execute(sql`select pg_advisory_lock(123)`);
+      await expect(
+        db.transaction((tx) => tx.execute(sql`select 1`)),
+      ).rejects.toThrow("authority was lost");
+    });
+    // Failed authority must not poison a reused pool session.
+    await t.lock(t.id, (db) =>
+      db.transaction((tx) => tx.execute(sql`select 1`)),
+    );
+  });
+  it("refreshes an expired metadata token and resumes durable receipts after 401", async () => {
+    const remote = new SyntheticGmail();
+    remote.fixture("expired-metadata");
+    const fetcher = remote.fetch;
+    const tokens: string[] = [];
+    remote.fetch = async (input, options) => {
+      const token = new Headers(options?.headers).get("authorization")!;
+      tokens.push(token);
+      if (token === "Bearer expired")
+        return new Response("{}", { status: 401 });
+      return fetcher(input, options);
+    };
+    const t = await setup(remote);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    vi.mocked(t.accounts.getProviderGmailAccountForWork)
+      .mockResolvedValueOnce({
+        accountId: t.id,
+        revision: "1",
+        accessToken: "expired",
+      })
+      .mockResolvedValueOnce({
+        accountId: t.id,
+        revision: "1",
+        accessToken: "fresh",
+      });
+    await t.sync.run(t.id, "1");
+    expect(tokens).toContain("Bearer expired");
+    expect(tokens).toContain("Bearer fresh");
+    expect(
+      await database.db
+        .select()
+        .from(messages)
+        .where(eq(messages.accountId, t.id)),
+    ).toHaveLength(1);
+    expect((await t.state()).processedCount).toBe(1n);
+  });
+  it("refreshes again on a worker retry after repeated 401 without advancing work", async () => {
+    const remote = new SyntheticGmail(),
+      fetcher = remote.fetch;
+    let rejected = true;
+    remote.fetch = async (input, options) =>
+      rejected ? new Response("{}", { status: 401 }) : fetcher(input, options);
+    const t = await setup(remote);
+    await t.sync.run(t.id, "1");
+    expect(await t.state()).toMatchObject({
+      errorCategory: "authentication",
+      baselineHistoryId: null,
+    });
+    rejected = false;
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ nextAttemptAt: new Date(0) })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.sync.run(t.id, "1");
+    expect((await t.state()).baselineHistoryId).toBe("100");
+    expect(t.accounts.getProviderGmailAccountForWork).toHaveBeenCalledTimes(3);
   });
 });

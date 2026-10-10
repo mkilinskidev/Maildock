@@ -1393,6 +1393,26 @@ export const messageCommands = pgTable(
   ],
 );
 
+// Quota survives account deletion; scopes contain only a project marker or a
+// hash of the Google subject. Expired buckets are removed by reservations.
+export const gmailQuotaBuckets = pgTable(
+  "gmail_quota_buckets",
+  {
+    scope: text("scope").notNull(),
+    kind: text("kind").notNull(),
+    bucket: bigint("bucket", { mode: "bigint" }).notNull(),
+    units: bigint("units", { mode: "bigint" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.scope, t.kind, t.bucket] }),
+    index("gmail_quota_expiry_idx").on(t.kind, t.bucket),
+    check(
+      "gmail_quota_bucket_shape",
+      sql`${t.bucket} >= 0 and ${t.units} >= 0 and ${t.kind} in ('second','day') and (${t.scope}='project' or ${t.scope} ~ '^user:[a-f0-9]{64}$')`,
+    ),
+  ],
+);
+
 export const gmailAccountSyncState = pgTable(
   "gmail_account_sync_state",
   {

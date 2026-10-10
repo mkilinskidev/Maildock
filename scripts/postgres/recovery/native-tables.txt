@@ -9,6 +9,7 @@ conversations
 draft_attachments
 drafts
 gmail_account_sync_state
+gmail_quota_buckets
 gmail_sync_work
 instance_state
 login_throttle
