@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { AccountsService } from "../../accounts/application/accounts-service";
 import {
@@ -187,17 +187,6 @@ export class ImapSliceSyncService {
               ) {
                 value = resume;
               } else {
-                const [local] = await tx
-                  .select({ uid: mailboxMessages.uid })
-                  .from(mailboxMessages)
-                  .where(
-                    and(
-                      eq(mailboxMessages.mailboxId, mailboxId),
-                      eq(mailboxMessages.uidValidity, observed),
-                    ),
-                  )
-                  .orderBy(desc(mailboxMessages.uid))
-                  .limit(1);
                 const cutoff = new Date();
                 cutoff.setUTCDate(cutoff.getUTCDate() - this.initialDays);
                 cutoff.setUTCHours(0, 0, 0, 0);
@@ -211,12 +200,12 @@ export class ImapSliceSyncService {
                   revision: account.revision!,
                   uidValidity: epoch,
                   frontier,
+                  // Persisted messages (including legacy recent batches) do not
+                  // prove UID coverage. Replay if no checkpoint exists.
                   cursor:
                     phase === "recent" || empty
                       ? "0"
-                      : (current.deltaLastSeenUid?.toString() ??
-                        local?.uid?.toString() ??
-                        "0"),
+                      : (current.deltaLastSeenUid?.toString() ?? "0"),
                   phase: "messages",
                   localCursor: "0",
                   highestModseq: modseq,

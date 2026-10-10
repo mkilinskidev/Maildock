@@ -17,6 +17,7 @@ import {
 } from "vitest";
 import { eq } from "drizzle-orm";
 import type { AccountsService } from "@/modules/accounts/application/accounts-service";
+import type { MailProvider } from "@/modules/accounts/domain/mail-provider";
 import { StaleAccountWorkError } from "@/modules/accounts/domain/receive-transport";
 import { ImapSliceSyncService } from "@/modules/mail/application/imap-slice-sync-service";
 import { MessageService } from "@/modules/mail/application/message-service";
@@ -174,6 +175,131 @@ describe("durable IMAP slices and Phase 2 admission", () => {
       /* drain */
     }
   }
+
+  async function legacyRecentComplete(omitted: number[] = []) {
+    // Exercise the pre-slice recent path, including its lack of durable UID
+    // coverage. A partial FETCH could persist a higher UID without a lower one.
+    omitted.forEach((uid) => server.state.omit.add(uid));
+    const provider = Object.create(server.provider) as MailProvider;
+    provider.synchronizeMailboxSlice = undefined;
+    const legacy = new MessageService(database.db, accounts, provider, {
+      initialSyncDays: 30,
+      messageFetchBatchSize: 2,
+    });
+    await legacy.runRecentSync(accountId, mailboxId, "1");
+    server.state.omit.clear();
+    server.state.searches.length = 0;
+    expect((await row()).recentSyncStatus).toBe("success");
+    expect((await row()).imapDeltaProgress).toBeNull();
+    expect((await row()).deltaLastSeenUid).toBeNull();
+  }
+
+  describe("delta cursor migration regression", () => {
+    it.each([null, 10n])(
+      "recovers legacy recent UID gaps without a checkpoint (delta epoch %s)",
+      async (epoch) => {
+        await legacyRecentComplete([2, 4, 6]);
+        expect(await uids()).toEqual(["1", "3", "5", "7"]);
+        await database.db
+          .update(mailboxes)
+          .set({ deltaUidValidity: epoch })
+          .where(eq(mailboxes.id, mailboxId));
+        server.add(8);
+        await deltaComplete();
+        // A second cycle must not permanently strand the missing lower UIDs.
+        await deltaComplete();
+        expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+        expect(server.state.searches[0].uid).toBe("1:3");
+        expect((await row()).deltaLastSeenUid).toBe(8n);
+        expect((await row()).imapDeltaProgress).toBeNull();
+      },
+    );
+
+    it("uses a durable checkpoint rather than a higher local UID with missing slice progress", async () => {
+      await legacyRecentComplete([4, 5, 6]);
+      await database.db
+        .update(mailboxes)
+        .set({
+          deltaUidValidity: 10n,
+          deltaLastSeenUid: 3n,
+          deltaHighestModseq: 5n,
+        })
+        .where(eq(mailboxes.id, mailboxId));
+      server.add(8);
+      await deltaComplete();
+      expect(server.state.searches[0].uid).toBe("4:6");
+      expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    });
+
+    it("replays a delta slice when message persistence succeeds but checkpoint persistence fails", async () => {
+      await legacyRecentComplete([4, 5, 6]);
+      await database.db
+        .update(mailboxes)
+        .set({ deltaUidValidity: 10n, deltaLastSeenUid: 3n })
+        .where(eq(mailboxes.id, mailboxId));
+      await database.client`create function fail_delta_checkpoint() returns trigger language plpgsql as $$ begin if new.imap_delta_progress->>'cursor'='6' then raise exception 'injected delta checkpoint failure'; end if; return new; end $$`;
+      await database.client`create trigger fail_delta_checkpoint before update on mailboxes for each row execute function fail_delta_checkpoint()`;
+      try {
+        await expect(
+          service.run(accountId, mailboxId, "delta", "1"),
+        ).rejects.toThrow();
+        expect((await row()).imapDeltaProgress?.cursor).toBe("3");
+        expect((await row()).deltaLastSeenUid).toBe(3n);
+        expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+      } finally {
+        await database.client`drop trigger fail_delta_checkpoint on mailboxes`;
+        await database.client`drop function fail_delta_checkpoint()`;
+      }
+      service = makeService();
+      await deltaComplete();
+      expect(
+        server.state.searches.filter((query) => query.uid === "4:6"),
+      ).toHaveLength(2);
+      expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+      expect((await row()).imapDeltaProgress).toBeNull();
+    });
+
+    it("reconciles a deleted highest local UID and imports arrivals in the following cycle", async () => {
+      await legacyRecentComplete([4, 5, 6]);
+      server.state.remote.delete(7);
+      await deltaComplete();
+      expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6"]);
+      expect((await row()).deltaLastSeenUid).toBe(7n);
+      server.add(8);
+      await deltaComplete();
+      expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "8"]);
+    });
+
+    it("keeps the migration horizon fixed while arrivals wait for a subsequent cycle", async () => {
+      await legacyRecentComplete([2, 4, 6]);
+      server.state.onFetch = () => {
+        server.state.onFetch = undefined;
+        server.add(8);
+      };
+      expect(await service.run(accountId, mailboxId, "delta", "1")).toBe(true);
+      expect((await row()).imapDeltaProgress).toMatchObject({
+        frontier: "7",
+        cursor: "3",
+      });
+      service = makeService();
+      await deltaComplete();
+      expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+      expect((await row()).deltaLastSeenUid).toBe(7n);
+      await deltaComplete();
+      expect(await uids()).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    });
+
+    it("preserves the recent cutoff when bootstrapping an empty recent window", async () => {
+      const old = new Date(Date.now() - 60 * 86400000);
+      for (let uid = 1; uid <= 7; uid++) server.add(uid, [], 10n, old);
+      await legacyRecentComplete();
+      const cutoff = (await row()).recentSyncCutoff;
+      server.add(8);
+      await deltaComplete();
+      expect(await uids()).toEqual(["8"]);
+      expect(server.state.searches[0].since).toEqual(cutoff);
+    });
+  });
 
   it("persists recent progress and resumes with a new service after a crash before enqueue", async () => {
     expect(await service.run(accountId, mailboxId, "recent", "1")).toBe(true);

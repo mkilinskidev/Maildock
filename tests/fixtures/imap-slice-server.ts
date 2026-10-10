@@ -74,7 +74,9 @@ export function sliceServer() {
         },
         search: async (query: { uid?: string; since?: Date }) => {
           state.searches.push(query);
-          return range(query.uid!).filter(
+          return (
+            query.uid ? range(query.uid) : [...state.remote.keys()]
+          ).filter(
             (uid) => !query.since || state.remote.get(uid)!.date >= query.since,
           );
         },
