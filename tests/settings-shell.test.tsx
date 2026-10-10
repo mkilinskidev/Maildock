@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { SettingsShell } from "@/components/settings-shell";
+import { AccountSettings } from "@/components/account-settings";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 
@@ -59,6 +60,57 @@ afterEach(async () => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+it("refreshes native Gmail diagnostics during import before mailbox sync markers exist", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const refresh = router.refresh.mockClear();
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  const account: MailAccountView = {
+    ...accounts[0],
+    providerType: "gmail_smtp",
+    receiveTransport: "gmail",
+    gmailSync: {
+      status: "initializing",
+      recentReady: false,
+      inventoryComplete: false,
+      processedCount: "17",
+      historyHealthy: false,
+      nextAttemptAt: null,
+      errorCategory: null,
+      quotaUnits: "0",
+    },
+  };
+  const render = (value: MailAccountView) =>
+    root.render(
+      <AccountSettings
+        account={value}
+        mailboxes={[]}
+        roles={[]}
+        catalog={catalog}
+        onDirtyChange={() => undefined}
+        onBusyChange={() => undefined}
+      />,
+    );
+  await act(async () => render(account));
+  await act(async () => vi.advanceTimersByTime(3000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    render({
+      ...account,
+      gmailSync: {
+        ...account.gmailSync!,
+        status: "ready",
+        recentReady: true,
+        inventoryComplete: true,
+      },
+    }),
+  );
+  await act(async () => vi.advanceTimersByTime(3000));
+  expect(refresh).toHaveBeenCalledTimes(1);
 });
 async function mount(initialAddAccount = false, oauthConfigured = true) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

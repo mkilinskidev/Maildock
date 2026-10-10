@@ -26,6 +26,42 @@ function client(
   });
 }
 describe("native Gmail bounded HTTP", () => {
+  it("accepts long opaque attachment handles in metadata, full MIME and attachment GET", async () => {
+    const handle = "A".repeat(404);
+    const message = {
+      id: "long-handle",
+      historyId: "1",
+      internalDate: "1",
+      payload: {
+        partId: "",
+        mimeType: "text/plain",
+        body: { attachmentId: handle, size: 5 },
+      },
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async (url) =>
+        json(
+          new URL(String(url)).pathname.includes("/attachments/")
+            ? { data: Buffer.from("hello").toString("base64url"), size: 5 }
+            : message,
+        ),
+      );
+    const api = client(fetcher);
+    expect((await api.message(message.id)).payload?.body?.attachmentId).toBe(
+      handle,
+    );
+    const full = await api.message(message.id, true);
+    expect(await gmailDisplay(api, full, 100)).toEqual({
+      plainText: "hello",
+      html: null,
+    });
+    expect(String(fetcher.mock.calls[2][0])).toContain(
+      `/attachments/${handle}`,
+    );
+    expect(() => api.attachment(message.id, "A".repeat(4097))).toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
   it("uses trusted origin, users/me, string histories and rejects redirects", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json(profile));
     expect(await client(fetcher).profile()).toEqual(profile);

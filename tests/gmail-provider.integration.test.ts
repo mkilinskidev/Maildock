@@ -32,6 +32,7 @@ import { createGmailAccountLock } from "@/modules/mail/infrastructure/gmail-acco
 import { GmailSyncService } from "@/modules/mail/application/gmail-sync-service";
 import { GmailMessageCommands } from "@/modules/mail/application/gmail-message-commands";
 import { MessageContentService } from "@/modules/mail/application/message-content-service";
+import { MailboxService } from "@/modules/mail/application/mailbox-service";
 import { AttachmentService } from "@/modules/mail/application/attachment-service";
 import { createAttachmentLock } from "@/modules/mail/infrastructure/attachment-lock";
 import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
@@ -161,6 +162,68 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       inventoryComplete: true,
       status: "ready",
     });
+  });
+  it("fills folder counters during blocked backfill and imports paginated MIME with long handles", async () => {
+    const remote = new SyntheticGmail();
+    remote.labels.push({ id: "Label_two", name: "Second", type: "user" });
+    for (let i = 0; i < 102; i++) {
+      const message = remote.fixture(
+        `long-${i}`,
+        ["INBOX", "Label_one", "Label_two", "UNREAD"],
+        i === 101 ? Date.now() - 40 * 86400000 : Date.now(),
+      );
+      message.payload!.parts!.push({
+        partId: "2",
+        mimeType: "application/pdf",
+        filename: "fixture.pdf",
+        body: { attachmentId: "A".repeat(404), size: 18 },
+      });
+    }
+    const t = await setup(remote);
+    await t.sync.run(t.id, "1"); // Bootstrap refreshes only four counters.
+    remote.failures.set("messages/long-0", 500);
+    await t.sync.run(t.id, "1"); // Fill remaining counters and stage a page.
+    await t.sync.run(t.id, "1"); // The metadata failure cannot hide counters.
+    expect((await t.state()).inventoryComplete).toBe(false);
+    const service = new MailboxService(database.db);
+    const partial = await service.listForAccount(t.id);
+    const [account] = await database.db
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, t.id));
+    expect(account.lastSuccessfulMailboxDiscoveryAt).toBeInstanceOf(Date);
+    expect(
+      partial
+        .filter((box) => box.providerMailboxId)
+        .every((box) => box.unseenCount !== null),
+    ).toBe(true);
+    expect(
+      partial.find((box) => box.providerMailboxId === "Label_two")?.unseenCount,
+    ).toBe("102");
+    expect(await t.finish()).toMatchObject({
+      status: "ready",
+      recentReady: true,
+      inventoryComplete: true,
+      errorCategory: null,
+    });
+    const boxes = await service.listForAccount(t.id);
+    expect(
+      boxes.find((box) => box.providerMailboxId === "Label_two"),
+    ).toMatchObject({
+      messageCount: "102",
+      unseenCount: "102",
+      synchronizedMessageCount: "102",
+    });
+    expect(
+      remote.requests.some(
+        (request) =>
+          request.path === "messages" &&
+          request.query.get("pageToken") === "100",
+      ),
+    ).toBe(true);
+    expect(remote.requests.every((request) => request.method === "GET")).toBe(
+      true,
+    );
   });
   it("refreshes a rejected token outside reserved authority with pool size one", async () => {
     const remote = new SyntheticGmail();
@@ -516,7 +579,7 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       partId: "2",
       mimeType: "application/pdf",
       filename: "file.pdf",
-      body: { attachmentId: "file", size: 18 },
+      body: { attachmentId: "A".repeat(404), size: 18 },
     });
     const t = await setup(remote);
     await t.finish();

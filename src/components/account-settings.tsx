@@ -138,6 +138,9 @@ export function AccountSettings({
     return () => onBusyChange(false);
   }, [pending, onBusyChange]);
   const working =
+    (account.enabled &&
+      account.gmailSync &&
+      !account.gmailSync.inventoryComplete) ||
     account.mailboxDiscovery.status === "pending" ||
     account.mailboxDiscovery.status === "running" ||
     mailboxes.some((m) =>

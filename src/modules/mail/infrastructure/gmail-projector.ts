@@ -146,6 +146,7 @@ export async function projectGmailLabels(
       .set({
         mailboxDiscoveryStatus: "success",
         mailboxDiscoveryError: null,
+        lastSuccessfulMailboxDiscoveryAt: now,
         imapStatus: "success",
         imapError: null,
         updatedAt: now,

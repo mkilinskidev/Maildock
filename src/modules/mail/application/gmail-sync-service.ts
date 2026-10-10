@@ -356,14 +356,29 @@ export class GmailSyncService {
     revision: string,
   ) {
     const catalog = await db
-      .select({ id: mailboxes.id })
+      .select({
+        id: mailboxes.id,
+        providerMailboxId: mailboxes.providerMailboxId,
+        unseenCount: mailboxes.reportedUnseenCount,
+        lifecycleStatus: mailboxes.lifecycleStatus,
+      })
       .from(mailboxes)
-      .where(eq(mailboxes.accountId, state.accountId))
-      .limit(1);
+      .where(eq(mailboxes.accountId, state.accountId));
     if (!catalog.length) {
       await this.labels(db, client, state.accountId, revision);
       return;
     }
+    // Fill unknown remote counters during backfill, before metadata can fail.
+    // Keep the existing four-label bound and rotation independent of its finish.
+    if (
+      catalog.some(
+        (box) =>
+          box.providerMailboxId &&
+          box.lifecycleStatus === "active" &&
+          box.unseenCount === null,
+      )
+    )
+      await this.labels(db, client, state.accountId, revision);
     if (await this.drain(db, client, state, revision, "inventory")) return;
     if (!state.inventoryPagesComplete) {
       const query =

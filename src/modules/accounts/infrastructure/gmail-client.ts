@@ -2,6 +2,8 @@ import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
 
 const id = z.string().min(1).max(256);
+// Attachment handles are opaque and longer than message/label identifiers.
+const attachmentHandle = z.string().min(1).max(4096);
 const historyId = z.string().regex(/^\d+$/).max(128);
 const page = { nextPageToken: z.string().min(1).max(4096).optional() };
 const header = z.object({
@@ -26,7 +28,7 @@ const part: z.ZodType<GmailPart> = z.lazy(() =>
       .object({
         size: z.number().int().nonnegative().optional(),
         data: z.string().optional(),
-        attachmentId: id.optional(),
+        attachmentId: attachmentHandle.optional(),
       })
       .optional(),
     parts: z.array(part).max(1000).optional(),
@@ -437,7 +439,7 @@ export class GmailClient {
   attachment(messageId: string, attachmentId: string) {
     return this.request(
       "attachments.get",
-      `messages/${encodeURIComponent(id.parse(messageId))}/attachments/${encodeURIComponent(id.parse(attachmentId))}`,
+      `messages/${encodeURIComponent(id.parse(messageId))}/attachments/${encodeURIComponent(attachmentHandle.parse(attachmentId))}`,
       z.object({
         data: z.string(),
         size: z.number().int().nonnegative().optional(),
