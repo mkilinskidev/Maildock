@@ -112,6 +112,93 @@ it("refreshes native Gmail diagnostics during import before mailbox sync markers
   await act(async () => vi.advanceTimersByTime(3000));
   expect(refresh).toHaveBeenCalledTimes(1);
 });
+it.each([
+  ["google", "oauth2", true],
+  ["microsoft", "oauth2", false],
+  [null, "password", false],
+] as const)(
+  "keeps Drafts local only for %s/%s accounts",
+  async (provider, authMethod, local) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    fetcher = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetcher);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const boxes = [
+      {
+        id: "folder-local",
+        name: "Server folder",
+        providerMailboxId: "Label_one",
+      },
+      {
+        id: "remote-draft",
+        name: "Remote Gmail DRAFT",
+        providerMailboxId: "DRAFT",
+      },
+      {
+        id: "deleted-label",
+        name: "Deleted label",
+        providerMailboxId: "Label_deleted",
+        lifecycleStatus: "missing",
+      },
+    ].map((box) => ({
+      selectable: true,
+      lifecycleStatus: "active",
+      attributes: [],
+      specialUse: [],
+      recentSync: { status: "not_started" },
+      deltaSync: { status: "not_started" },
+      backfill: { status: "complete" },
+      ...box,
+    })) as unknown as MailboxView[];
+    await act(async () =>
+      root.render(
+        <AccountSettings
+          account={{
+            ...accounts[0],
+            authMethod,
+            oauthProviderId: provider,
+            providerType: local ? "gmail_smtp" : "imap_smtp",
+            receiveTransport: local ? "gmail" : "imap",
+          }}
+          mailboxes={boxes}
+          roles={[]}
+          catalog={catalog}
+          onDirtyChange={() => undefined}
+          onBusyChange={() => undefined}
+        />,
+      ),
+    );
+    const draft = host.querySelector<HTMLInputElement | HTMLSelectElement>(
+      '[aria-label="Drafts mailbox"]',
+    )!;
+    if (local) {
+      expect(draft).toBeInstanceOf(HTMLInputElement);
+      expect((draft as HTMLInputElement).readOnly).toBe(true);
+      expect(draft.value).toBe("Local — Maildock drafts");
+      expect(host.querySelector('option[value="remote-draft"]')).toBeNull();
+    } else {
+      expect(draft).toBeInstanceOf(HTMLSelectElement);
+      await choose("Drafts mailbox", "folder-local");
+      await act(async () =>
+        host
+          .querySelector<HTMLFormElement>("#panel-General form")!
+          .dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+          ),
+      );
+      expect(JSON.parse(fetcher.mock.calls[0][1].body).folders).toEqual({
+        drafts: "folder-local",
+      });
+    }
+    expect(host.querySelector('option[value="deleted-label"]')).toBeNull();
+    for (const role of ["Sent", "Archive", "Trash"])
+      expect(
+        host.querySelector(`[aria-label="${role} mailbox"]`),
+      ).toBeInstanceOf(HTMLSelectElement);
+  },
+);
 async function mount(initialAddAccount = false, oauthConfigured = true) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fetcher = vi.fn(async (url: string) =>

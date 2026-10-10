@@ -33,6 +33,7 @@ import { GmailSyncService } from "@/modules/mail/application/gmail-sync-service"
 import { GmailMessageCommands } from "@/modules/mail/application/gmail-message-commands";
 import { MessageContentService } from "@/modules/mail/application/message-content-service";
 import { MailboxService } from "@/modules/mail/application/mailbox-service";
+import { MailboxRoleService } from "@/modules/mail/application/mailbox-role-service";
 import { AttachmentService } from "@/modules/mail/application/attachment-service";
 import { createAttachmentLock } from "@/modules/mail/infrastructure/attachment-lock";
 import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
@@ -362,6 +363,8 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
         ),
       );
     remote.labels[4].name = "Renamed";
+    const roles = new MailboxRoleService(database.db);
+    await roles.setManual(t.id, "archive", label.id);
     await t.delta();
     expect(
       (
@@ -391,14 +394,60 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
           .where(eq(mailboxMessages.mailboxId, label.id))
       ).length,
     ).toBe(0);
+    const boxes = await new MailboxService(database.db).listForAccount(t.id);
+    expect(boxes.some((box) => box.id === label.id)).toBe(false);
+    const mappings = await roles.list(t.id);
+    expect(mappings.some((mapping) => mapping.mailboxId === label.id)).toBe(
+      false,
+    );
+    expect(
+      mappings.find((mapping) => mapping.role === "archive"),
+    ).toMatchObject({
+      available: true,
+      source: "special_use",
+      mailboxId: boxes.find((box) => box.remotePath === "@gmail/all-mail")!.id,
+    });
+    for (const [role, native] of [
+      ["sent", "SENT"],
+      ["trash", "TRASH"],
+    ] as const)
+      expect(mappings.find((mapping) => mapping.role === role)).toMatchObject({
+        available: true,
+        mailboxId: boxes.find((box) => box.providerMailboxId === native)!.id,
+      });
+    expect(
+      (
+        await database.db
+          .select()
+          .from(mailboxMessages)
+          .where(eq(mailboxMessages.messageId, local.id))
+      )
+        .map((placement) => placement.mailboxId)
+        .sort(),
+    ).toEqual(
+      boxes
+        .filter(
+          (box) =>
+            box.providerMailboxId === "INBOX" ||
+            box.remotePath === "@gmail/all-mail",
+        )
+        .map((box) => box.id)
+        .sort(),
+    );
   });
   it("accounts for remote drafts without exposing them in normal placements", async () => {
     const remote = new SyntheticGmail();
+    remote.labels.push({ id: "DRAFT", name: "DRAFT", type: "system" });
     remote.fixture("draft", ["DRAFT"]);
     remote.fixture("trash", ["TRASH"]);
     remote.fixture("spam", ["SPAM"]);
     const t = await setup(remote);
     await t.finish();
+    expect(
+      (await new MailboxService(database.db).listForAccount(t.id)).some(
+        (box) => box.providerMailboxId === "DRAFT",
+      ),
+    ).toBe(false);
     const rows = await database.db
       .select()
       .from(messages)

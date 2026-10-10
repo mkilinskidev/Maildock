@@ -7,6 +7,7 @@ import {
   mailAccounts,
   mailboxes,
   mailboxMessages,
+  mailboxRoles,
   messages,
   messageAttachments,
   messageCommands,
@@ -140,6 +141,16 @@ export async function projectGmailLabels(
         await tx
           .delete(mailboxMessages)
           .where(eq(mailboxMessages.mailboxId, previous.id));
+        // Retire mappings to deleted labels; other label memberships and the
+        // canonical message remain intact. Native role autodetection can resume.
+        await tx
+          .delete(mailboxRoles)
+          .where(
+            and(
+              eq(mailboxRoles.accountId, accountId),
+              eq(mailboxRoles.mailboxId, previous.id),
+            ),
+          );
       }
     await tx
       .update(mailAccounts)

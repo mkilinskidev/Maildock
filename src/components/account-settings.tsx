@@ -126,6 +126,8 @@ export function AccountSettings({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const localDrafts =
+    account.authMethod === "oauth2" && account.oauthProviderId === "google";
   const generalDirty =
     JSON.stringify(identity) !== JSON.stringify(savedIdentity) ||
     Object.keys(folders).length > 0 ||
@@ -258,6 +260,17 @@ export function AccountSettings({
             <div className="settings-fields">
               {(Object.keys(folderLabels) as SystemMailboxRole[]).map(
                 (role) => {
+                  if (role === "drafts" && localDrafts)
+                    return (
+                      <label key={role}>
+                        {folderLabels[role]}
+                        <input
+                          aria-label="Drafts mailbox"
+                          value="Local — Maildock drafts"
+                          readOnly
+                        />
+                      </label>
+                    );
                   const mapped = roles.find((r) => r.role === role);
                   const value =
                     role in folders
@@ -294,7 +307,9 @@ export function AccountSettings({
                         {mailboxes
                           .filter(
                             (m) =>
-                              m.selectable && m.lifecycleStatus === "active",
+                              m.selectable &&
+                              m.lifecycleStatus === "active" &&
+                              (!localDrafts || m.providerMailboxId !== "DRAFT"),
                           )
                           .map((m) => (
                             <option key={m.id} value={m.id}>
