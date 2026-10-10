@@ -4,6 +4,10 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import type { RemoteMailbox } from "../../accounts/domain/mail-provider";
+import {
+  mailboxCounterObservation,
+  type MailboxCounterObservation,
+} from "../domain/synchronization-policy";
 import { MailboxRoleService } from "./mailbox-role-service";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
@@ -30,6 +34,8 @@ export type MailboxView = Readonly<{
   unseenCount: string | null;
   unseenCountObservedAt: string | null;
   synchronizedMessageCount: string;
+  /** Additive Phase 1 observation; legacy badge fields await coherent refresh. */
+  counterObservation?: MailboxCounterObservation;
   lifecycleStatus: "active" | "missing";
   firstDiscoveredAt: string;
   lastDiscoveredAt: string;
@@ -66,7 +72,11 @@ export type MailboxView = Readonly<{
   }>;
 }>;
 
-function view(row: MailboxRow, synchronizedMessageCount: string): MailboxView {
+function view(
+  row: MailboxRow,
+  synchronizedMessageCount: string,
+  counterObservation: MailboxCounterObservation,
+): MailboxView {
   return {
     id: row.id,
     remotePath: row.remotePath,
@@ -91,6 +101,7 @@ function view(row: MailboxRow, synchronizedMessageCount: string): MailboxView {
           : null
         : (row.lastSuccessfulDeltaSyncAt?.toISOString() ?? null),
     synchronizedMessageCount,
+    counterObservation,
     lifecycleStatus: row.lifecycleStatus as "active" | "missing",
     firstDiscoveredAt: row.firstDiscoveredAt.toISOString(),
     lastDiscoveredAt: row.lastDiscoveredAt.toISOString(),
@@ -156,33 +167,63 @@ export class MailboxService {
     accountId: string,
     includeMissing = false,
   ): Promise<MailboxView[]> {
-    const [rows, counts] = await Promise.all([
-      this.database
-        .select()
-        .from(mailboxes)
-        .where(
-          includeMissing
-            ? eq(mailboxes.accountId, accountId)
-            : and(
-                eq(mailboxes.accountId, accountId),
-                eq(mailboxes.lifecycleStatus, "active"),
-              ),
-        )
-        .orderBy(asc(mailboxes.remotePath)),
-      this.database
-        .select({
-          mailboxId: mailboxMessages.mailboxId,
-          count: sql<string>`count(*)::text`,
-        })
-        .from(mailboxMessages)
-        .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
-        .where(eq(mailboxes.accountId, accountId))
-        .groupBy(mailboxMessages.mailboxId),
-    ]);
-    const countsByMailbox = new Map(
-      counts.map((row) => [row.mailboxId, row.count]),
+    // One SQL statement gives mailbox observations and local aggregates the
+    // same DB snapshot. It does not coordinate the separate message-list API.
+    const counts = this.database
+      .select({
+        mailboxId: mailboxMessages.mailboxId,
+        count: sql<string>`count(*)::text`.as("placement_count"),
+        visibleCount:
+          sql<string>`count(distinct ${mailboxMessages.messageId}) filter (where not ${mailboxMessages.actionHidden})::text`.as(
+            "visible_count",
+          ),
+        unreadCount:
+          sql<string>`count(distinct ${mailboxMessages.messageId}) filter (where not ${mailboxMessages.actionHidden} and not (${"\\Seen"} = any(${mailboxMessages.flags})))::text`.as(
+            "unread_count",
+          ),
+      })
+      .from(mailboxMessages)
+      .where(eq(mailboxMessages.accountId, accountId))
+      .groupBy(mailboxMessages.mailboxId)
+      .as("local_counts");
+    const rows = await this.database
+      .select({
+        mailbox: mailboxes,
+        count: counts.count,
+        visibleCount: counts.visibleCount,
+        unreadCount: counts.unreadCount,
+        sampledAt: sql<string>`statement_timestamp()::text`,
+      })
+      .from(mailboxes)
+      .leftJoin(counts, eq(mailboxes.id, counts.mailboxId))
+      .where(
+        includeMissing
+          ? eq(mailboxes.accountId, accountId)
+          : and(
+              eq(mailboxes.accountId, accountId),
+              eq(mailboxes.lifecycleStatus, "active"),
+            ),
+      )
+      .orderBy(asc(mailboxes.remotePath));
+    return rows.map((row) =>
+      view(
+        row.mailbox,
+        row.count ?? "0",
+        mailboxCounterObservation({
+          localMessageCount: row.visibleCount ?? "0",
+          localUnreadCount: row.unreadCount ?? "0",
+          remoteMessageCount:
+            row.mailbox.reportedMessageCount?.toString() ?? null,
+          remoteUnreadCount:
+            row.mailbox.reportedUnseenCount?.toString() ?? null,
+          sampledAt: new Date(row.sampledAt).toISOString(),
+          lastSuccessfulDeltaSyncAt:
+            row.mailbox.receiveTransport === "imap"
+              ? (row.mailbox.lastSuccessfulDeltaSyncAt?.toISOString() ?? null)
+              : null,
+        }),
+      ),
     );
-    return rows.map((row) => view(row, countsByMailbox.get(row.id) ?? "0"));
   }
 
   async countActive(accountId: string): Promise<number> {

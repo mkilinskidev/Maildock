@@ -19,6 +19,7 @@ ADRs preserve durable architectural decisions. Accepted records are immutable ex
 - [ADR 0013: Native Gmail identity and label memberships in shared tables](0013-gmail-message-identity-and-label-membership.md) — proposed; P0 review required
 - [ADR 0014: Account-wide Gmail checkpoints and progressive synchronization](0014-gmail-account-history-and-progressive-sync.md) — proposed; P0 review required
 - [ADR 0015: SMTP-first sending, native Gmail Sent and local drafts](0015-gmail-smtp-first-and-local-drafts.md) — proposed; Sent preference decision open
+- [ADR 0016: Synchronization priority and local count contract](0016-synchronization-priority-and-local-count-contract.md) — accepted; phased implementation
 
 The proposed Gmail ADRs are governed by [Phase P0: fresh-install architecture](../architecture/gmail-api-p0-fresh-install.md). They supersede the original audit's legacy migration recommendations, but do not change accepted ADR status or authorize implementation before P0 review.
 

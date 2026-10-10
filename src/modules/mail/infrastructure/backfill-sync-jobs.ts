@@ -1,3 +1,5 @@
+import type { Logger } from "pino";
+import { observeSyncDelivery } from "./sync-diagnostics";
 import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
@@ -58,54 +60,73 @@ export async function registerBackfillWorker(
   boss: PgBoss,
   service: BackfillSyncService,
   withLock: (mailboxId: string, work: () => Promise<void>) => Promise<void>,
+  logger?: Pick<Logger, "debug">,
 ): Promise<void> {
   await ensureBackfillQueue(boss);
   await boss.work(
     MAILBOX_BACKFILL_SYNC_QUEUE,
-    { localConcurrency: 1 },
+    { localConcurrency: 1, includeMetadata: true },
     safeJobHandler("backfill-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Backfill received an empty batch.");
       const payload = payloadSchema.parse(job.data);
-      await assertImapJob(boss, payload);
-      const [recent, delta] = await Promise.all([
-        boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
-          key: payload.mailboxId,
-          queued: true,
-        }),
-        boss.findJobs(MAILBOX_DELTA_SYNC_QUEUE, {
-          key: payload.mailboxId,
-          queued: true,
-        }),
-      ]);
-      if (recent.length || delta.length) return;
-      let more: string | null = null;
-      await withLock(payload.mailboxId, async () => {
-        const [recent, delta] = await Promise.all([
-          boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
-            key: payload.mailboxId,
-            queued: true,
-          }),
-          boss.findJobs(MAILBOX_DELTA_SYNC_QUEUE, {
-            key: payload.mailboxId,
-            queued: true,
-          }),
-        ]);
-        if (recent.length || delta.length) return;
-        more = await service.run(
-          payload.accountId,
-          payload.mailboxId,
-          payload.accountRevision,
-        );
-      });
-      // The active singleton still owns its key. A fresh key permits exactly one
-      // continuation; the poller repairs a crash between commit and enqueue.
-      if (more)
-        await enqueueCoalescedSync(boss, MAILBOX_BACKFILL_SYNC_QUEUE, payload, {
-          singletonKey: `${payload.mailboxId}:${more}`,
-          priority: -10,
-          startAfter: 5,
-        });
+      await observeSyncDelivery(
+        logger,
+        job,
+        {
+          accountId: payload.accountId,
+          mailboxId: payload.mailboxId,
+          transport: "imap",
+          phase: "backfill",
+          reason: "unknown",
+        },
+        async () => {
+          await assertImapJob(boss, payload);
+          const [recent, delta] = await Promise.all([
+            boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
+              key: payload.mailboxId,
+              queued: true,
+            }),
+            boss.findJobs(MAILBOX_DELTA_SYNC_QUEUE, {
+              key: payload.mailboxId,
+              queued: true,
+            }),
+          ]);
+          if (recent.length || delta.length) return;
+          let more: string | null = null;
+          await withLock(payload.mailboxId, async () => {
+            const [recent, delta] = await Promise.all([
+              boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
+                key: payload.mailboxId,
+                queued: true,
+              }),
+              boss.findJobs(MAILBOX_DELTA_SYNC_QUEUE, {
+                key: payload.mailboxId,
+                queued: true,
+              }),
+            ]);
+            if (recent.length || delta.length) return;
+            more = await service.run(
+              payload.accountId,
+              payload.mailboxId,
+              payload.accountRevision,
+            );
+          });
+          // The active singleton still owns its key. A fresh key permits exactly one
+          // continuation; the poller repairs a crash between commit and enqueue.
+          if (more)
+            await enqueueCoalescedSync(
+              boss,
+              MAILBOX_BACKFILL_SYNC_QUEUE,
+              payload,
+              {
+                singletonKey: `${payload.mailboxId}:${more}`,
+                priority: -10,
+                startAfter: 5,
+              },
+            );
+        },
+      );
     }),
   );
 }

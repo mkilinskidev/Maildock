@@ -188,6 +188,15 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
     expect((await t.state()).inventoryComplete).toBe(false);
     const service = new MailboxService(database.db);
     const partial = await service.listForAccount(t.id);
+    expect(
+      partial.find((box) => box.providerMailboxId === "INBOX")
+        ?.counterObservation,
+    ).toMatchObject({
+      local: { provenance: "local_materialized" },
+      remote: { unreadCount: "102", observedAt: null },
+      coverage: "remote_sample_exceeds_local",
+      lastSuccessfulDeltaSyncAt: null,
+    });
     const [account] = await database.db
       .select()
       .from(mailAccounts)
@@ -214,6 +223,12 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       messageCount: "102",
       unseenCount: "102",
       synchronizedMessageCount: "102",
+      counterObservation: {
+        local: { messageCount: "102", unreadCount: "102" },
+        remote: { messageCount: "102", unreadCount: "102", observedAt: null },
+        coverage: "unknown",
+        lastSuccessfulDeltaSyncAt: null,
+      },
     });
     expect(
       remote.requests.some(

@@ -1,3 +1,4 @@
+import { SyncLockContentionError } from "./sync-diagnostics";
 import type { createWorkerDatabase } from "../../../shared/infrastructure/database/database-worker.js";
 
 type DatabaseClient = ReturnType<typeof createWorkerDatabase>["client"];
@@ -13,7 +14,7 @@ export function createMailboxLock(client: DatabaseClient) {
         { acquired: boolean }[]
       >`select pg_try_advisory_lock(hashtextextended(${`mailbox-sync:${mailboxId}`}, 0)) as acquired`;
       if (!result[0]?.acquired)
-        throw new Error("Mailbox sync is already running.");
+        throw new SyncLockContentionError("Mailbox sync is already running.");
       try {
         await work();
       } finally {

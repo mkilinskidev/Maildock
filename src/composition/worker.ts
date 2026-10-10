@@ -103,6 +103,7 @@ export function createWorkerComposition() {
     gmailProvider,
     gmailLock,
     config.initialSyncDays,
+    logger,
   );
   const gmailCommands = new GmailMessageCommands(
     database.db,

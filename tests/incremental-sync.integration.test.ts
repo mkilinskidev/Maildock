@@ -257,6 +257,45 @@ describe("Phase 1E persisted delta state", () => {
     await delta.run(accountId, (await mailbox()).id, "poll");
   }
 
+  it("samples all local unread messages separately from remote counts and UI pages", async () => {
+    for (let uid = 1; uid <= 55; uid++) await seed(uid);
+    await seed(56, 10n, ["\\Seen"]);
+    const [duplicate] = await placements();
+    await db
+      .insert(mailboxMessages)
+      .values({ ...duplicate, id: randomUUID(), uid: 100n });
+    await db
+      .update(mailboxMessages)
+      .set({ actionHidden: true })
+      .where(eq(mailboxMessages.uid, 55n));
+    const completed = new Date("2026-10-10T09:00:00Z");
+    await db.update(mailboxes).set({
+      reportedMessageCount: 100n,
+      reportedUnseenCount: 80n,
+      lastSuccessfulDeltaSyncAt: completed,
+    });
+    const [box] = await new MailboxService(db).listForAccount(accountId);
+    expect(box.counterObservation).toMatchObject({
+      local: {
+        provenance: "local_materialized",
+        messageCount: "55",
+        unreadCount: "54",
+      },
+      remote: {
+        provenance: "remote_observation",
+        messageCount: "100",
+        unreadCount: "80",
+        observedAt: null,
+      },
+      coverage: "remote_sample_exceeds_local",
+      lastSuccessfulDeltaSyncAt: completed.toISOString(),
+    });
+    expect(Date.parse(box.counterObservation!.local.sampledAt)).toBeGreaterThan(
+      0,
+    );
+    expect(box.unseenCount).toBe("80"); // Legacy overlay contract awaits Phase 4.
+  });
+
   async function arrive(uid: number, boxId?: string, remote = metadata(uid)) {
     boxId ??= (await mailbox()).id;
     runProvider = async (sink) => {

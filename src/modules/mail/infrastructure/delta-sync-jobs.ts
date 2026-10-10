@@ -1,3 +1,5 @@
+import type { Logger } from "pino";
+import { observeSyncDelivery } from "./sync-diagnostics";
 import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
@@ -97,23 +99,37 @@ export async function registerDeltaWorker(
   service: DeltaSyncService,
   concurrency: number,
   withLock: (mailboxId: string, work: () => Promise<void>) => Promise<void>,
+  logger?: Pick<Logger, "debug">,
 ): Promise<void> {
   await ensureDeltaQueue(boss);
   await boss.work(
     MAILBOX_DELTA_SYNC_QUEUE,
-    { localConcurrency: concurrency },
+    { localConcurrency: concurrency, includeMetadata: true },
     safeJobHandler("delta-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Delta sync received an empty batch.");
       const payload = payloadSchema.parse(job.data);
-      await assertImapJob(boss, payload);
-      await withLock(payload.mailboxId, () =>
-        service.run(
-          payload.accountId,
-          payload.mailboxId,
-          payload.reason,
-          payload.accountRevision,
-        ),
+      await observeSyncDelivery(
+        logger,
+        job,
+        {
+          accountId: payload.accountId,
+          mailboxId: payload.mailboxId,
+          transport: "imap",
+          phase: "delta",
+          reason: payload.reason,
+        },
+        async () => {
+          await assertImapJob(boss, payload);
+          await withLock(payload.mailboxId, () =>
+            service.run(
+              payload.accountId,
+              payload.mailboxId,
+              payload.reason,
+              payload.accountRevision,
+            ),
+          );
+        },
       );
     }),
   );

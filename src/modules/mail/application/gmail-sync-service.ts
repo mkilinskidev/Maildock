@@ -1,4 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
+import type { Logger } from "pino";
+import { bestEffortDiagnostic } from "../../../shared/infrastructure/logging/diagnostics";
 import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
@@ -55,6 +57,7 @@ export class GmailSyncService {
     private readonly provider: GmailProvider,
     private readonly lock: GmailAccountLock,
     private readonly recentDays = 30,
+    private readonly logger?: Pick<Logger, "debug">,
   ) {}
   async wake(accountId: string) {
     const [account] = await this.db
@@ -91,6 +94,36 @@ export class GmailSyncService {
           .select()
           .from(gmailAccountSyncState)
           .where(eq(gmailAccountSyncState.accountId, accountId));
+        bestEffortDiagnostic(() =>
+          this.logger?.debug(
+            {
+              event: "mail.gmail_sync_state",
+              accountId,
+              transport: "gmail",
+              phase:
+                !state.baselineHistoryId ||
+                state.status === "reconcile_required"
+                  ? "bootstrap"
+                  : state.historyRunId
+                    ? "history"
+                    : state.inventoryRunId
+                      ? "inventory"
+                      : "history_start",
+              blockedReason:
+                state.nextAttemptAt && state.nextAttemptAt > new Date()
+                  ? state.errorCategory === "quota"
+                    ? "quota"
+                    : state.errorCategory
+                      ? "retry"
+                      : "idle_deadline"
+                  : null,
+              nextAttemptAt: state.nextAttemptAt?.toISOString() ?? null,
+              // No existing field records a successful current-INBOX projection.
+              lastSuccessfulRelevantSyncAt: null,
+            },
+            "Gmail synchronization state observed",
+          ),
+        );
         await db.execute(
           sql`delete from public.gmail_sync_work where ctid in (select ctid from public.gmail_sync_work where account_id=${accountId}::uuid and (account_revision<>${BigInt(revision)} or (run_id is distinct from ${state.inventoryRunId}::uuid and run_id is distinct from ${state.historyRunId}::uuid)) limit 500)`,
         );
@@ -113,6 +146,17 @@ export class GmailSyncService {
           )
           .limit(1);
         if (command) {
+          bestEffortDiagnostic(() =>
+            this.logger?.debug(
+              {
+                event: "mail.gmail_sync_blocked",
+                accountId,
+                transport: "gmail",
+                blockedReason: "pending_command",
+              },
+              "Gmail synchronization deferred",
+            ),
+          );
           await this.update(db, state, revision, {
             nextAttemptAt: new Date(Date.now() + 1000),
             needsWork: true,
@@ -141,6 +185,18 @@ export class GmailSyncService {
     } catch (error) {
       if (error instanceof StaleAccountWorkError) return;
       if (error instanceof GmailApiError) {
+        bestEffortDiagnostic(() =>
+          this.logger?.debug(
+            {
+              event: "mail.gmail_sync_blocked",
+              accountId,
+              transport: "gmail",
+              blockedReason: error.category === "quota" ? "quota" : "retry",
+              retryAfterMs: error.retryAfterMs,
+            },
+            "Gmail synchronization deferred",
+          ),
+        );
         // HTTP work has released authority. Refresh once outside a pool=1 lease.
         if (error.category === "authentication" && !refreshed)
           return this.run(accountId, revision, signal, true);

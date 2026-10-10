@@ -1,3 +1,4 @@
+import { SyncLockContentionError } from "./sync-diagnostics";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type {
@@ -33,7 +34,9 @@ export function createGmailAccountLock(
         { acquired: boolean; pid: number }[]
       >`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as acquired, pg_backend_pid() as pid`;
       if (!row?.acquired)
-        throw new Error("Gmail account work is already running.");
+        throw new SyncLockContentionError(
+          "Gmail account work is already running.",
+        );
       // postgres.reserve deliberately exposes neither begin nor savepoint. Install
       // serialized transactions on this session, rather than checking out the pool.
       let tail = Promise.resolve();

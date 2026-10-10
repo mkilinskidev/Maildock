@@ -27,6 +27,30 @@ function adjustment(
   return { key: "command", mailboxId: "inbox", delta, completedAt: done };
 }
 describe("authoritative remote counters with optimistic actions", () => {
+  it("does not acknowledge an optimistic command using the Phase 1 local sample time", () => {
+    const box = {
+      ...mailbox("2"),
+      counterObservation: {
+        local: {
+          provenance: "local_materialized",
+          messageCount: "10",
+          unreadCount: "1",
+          sampledAt: after,
+        },
+        remote: {
+          provenance: "remote_observation",
+          messageCount: "20",
+          unreadCount: "2",
+          observedAt: null,
+        },
+        coverage: "remote_sample_exceeds_local",
+        lastSuccessfulDeltaSyncAt: after,
+      },
+    } as MailboxView;
+    const done = adjustment(-1, completedAt);
+    expect(counterIncludesAction(box, done)).toBe(false);
+    expect(projectedUnreadCount(box, [done])).toBe("1");
+  });
   it.each(["snapshot-first", "completion-first"])(
     "reconciles a counter and command completion atomically: %s",
     (order) => {

@@ -1,3 +1,5 @@
+import type { Logger } from "pino";
+import { observeSyncDelivery } from "./sync-diagnostics";
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
@@ -90,14 +92,25 @@ export async function registerGmailWorker(
   boss: PgBoss,
   service: GmailSyncService,
   signal?: AbortSignal,
+  logger?: Pick<Logger, "debug">,
 ) {
   await ensureGmailQueue(boss);
   await boss.work(
     GMAIL_SYNC_QUEUE,
-    { localConcurrency: 2 },
+    { localConcurrency: 2, includeMetadata: true },
     safeJobHandler("delta-sync", async (batch) => {
       const request = payload.parse(batch[0]?.data);
-      await service.run(request.accountId, request.accountRevision, signal);
+      await observeSyncDelivery(
+        logger,
+        batch[0],
+        {
+          accountId: request.accountId,
+          transport: "gmail",
+          phase: "account_sync",
+          reason: "unknown",
+        },
+        () => service.run(request.accountId, request.accountRevision, signal),
+      );
     }),
   );
 }

@@ -1,3 +1,5 @@
+import type { Logger } from "pino";
+import { observeSyncDelivery } from "./sync-diagnostics";
 import { imapJobRevision, assertImapJob } from "./receive-job-policy";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
 import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
@@ -77,22 +79,36 @@ export async function registerRecentSyncWorker(
     mailboxId: string,
     work: () => Promise<void>,
   ) => Promise<void> = async (_mailboxId, work) => work(),
+  logger?: Pick<Logger, "debug">,
 ): Promise<void> {
   await ensureQueue(boss);
   await boss.work(
     MAILBOX_RECENT_SYNC_QUEUE,
-    { localConcurrency: concurrency },
+    { localConcurrency: concurrency, includeMetadata: true },
     safeJobHandler("recent-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Recent sync received an empty batch.");
       const payload = recentSyncPayloadSchema.parse(job.data);
-      await assertImapJob(boss, payload);
-      await withLock(payload.mailboxId, () =>
-        service.runRecentSync(
-          payload.accountId,
-          payload.mailboxId,
-          payload.accountRevision,
-        ),
+      await observeSyncDelivery(
+        logger,
+        job,
+        {
+          accountId: payload.accountId,
+          mailboxId: payload.mailboxId,
+          transport: "imap",
+          phase: "recent",
+          reason: "unknown",
+        },
+        async () => {
+          await assertImapJob(boss, payload);
+          await withLock(payload.mailboxId, () =>
+            service.runRecentSync(
+              payload.accountId,
+              payload.mailboxId,
+              payload.accountRevision,
+            ),
+          );
+        },
       );
     }),
   );

@@ -115,6 +115,7 @@ async function main() {
       worker.jobs.boss,
       worker.gmailSync,
       shutdownController.signal,
+      worker.logger,
     );
     await worker.gmailPoller.start();
     await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
@@ -127,17 +128,20 @@ async function main() {
       worker.messages,
       worker.config.messageSyncConcurrency,
       worker.withMailboxLock,
+      worker.logger,
     );
     await registerDeltaWorker(
       worker.jobs.boss,
       worker.delta,
       worker.config.messageSyncConcurrency,
       worker.withMailboxLock,
+      worker.logger,
     );
     await registerBackfillWorker(
       worker.jobs.boss,
       worker.backfill,
       worker.withMailboxLock,
+      worker.logger,
     );
     await registerContentWorker(worker.jobs.boss, worker.content);
     recoverContent();
