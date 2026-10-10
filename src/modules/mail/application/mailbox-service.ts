@@ -28,6 +28,7 @@ export type MailboxView = Readonly<{
   highestModseq: string | null;
   messageCount: string | null;
   unseenCount: string | null;
+  unseenCountObservedAt: string | null;
   synchronizedMessageCount: string;
   lifecycleStatus: "active" | "missing";
   firstDiscoveredAt: string;
@@ -81,6 +82,14 @@ function view(row: MailboxRow, synchronizedMessageCount: string): MailboxView {
     highestModseq: row.highestModseq?.toString() ?? null,
     messageCount: row.reportedMessageCount?.toString() ?? null,
     unseenCount: row.reportedUnseenCount?.toString() ?? null,
+    // Native label projection preserves updatedAt until labels.get publishes
+    // counters; a history checkpoint alone does not confirm this observation.
+    unseenCountObservedAt:
+      row.receiveTransport === "gmail"
+        ? row.reportedUnseenCount !== null
+          ? row.updatedAt.toISOString()
+          : null
+        : (row.lastSuccessfulDeltaSyncAt?.toISOString() ?? null),
     synchronizedMessageCount,
     lifecycleStatus: row.lifecycleStatus as "active" | "missing",
     firstDiscoveredAt: row.firstDiscoveredAt.toISOString(),

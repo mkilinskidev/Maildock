@@ -99,7 +99,10 @@ export async function projectGmailLabels(
         lifecycleStatus: "active",
         missingSince: null,
         lastDiscoveredAt: now,
-        updatedAt: previous?.updatedAt ?? now,
+        updatedAt:
+          "messagesUnread" in label && label.messagesUnread !== undefined
+            ? now
+            : (previous?.updatedAt ?? now),
         reportedMessageCount:
           "messagesTotal" in label && label.messagesTotal !== undefined
             ? BigInt(label.messagesTotal)

@@ -30,6 +30,12 @@ import { MailOpen, Plus, RefreshCw, Settings2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
+import {
+  applyMailboxCounterSnapshot,
+  projectedUnreadCount,
+  type CountAdjustment,
+  type UnreadCounterState,
+} from "@/modules/mail/domain/unread-counters";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import type {
   MessageListItem,
@@ -72,12 +78,6 @@ function autoDismissSentFeedback(item?: SendFeedback) {
     )
   );
 }
-type CountAdjustment = {
-  key: string;
-  mailboxId: string;
-  delta: number;
-  completedAt: string | null;
-};
 function formatCount(value: string): string {
   return new Intl.NumberFormat().format(BigInt(value));
 }
@@ -202,8 +202,24 @@ export function MailClient({
   const [accountId, setAccountId] = useState(
     initialNotification?.accountId ?? first?.id ?? "",
   );
-  const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
-    useState(mailboxesByAccount);
+  // Counts and their optimistic overlays must change in the same state update.
+  const [counterState, setCounterState] = useState<UnreadCounterState>({
+    boxes: mailboxesByAccount,
+    adjustments: [],
+  });
+  const liveMailboxesByAccount = counterState.boxes;
+  const countAdjustments = counterState.adjustments;
+  const setCountAdjustments = useCallback(
+    (update: (current: CountAdjustment[]) => CountAdjustment[]) => {
+      setCounterState((current) => {
+        const adjustments = update(current.adjustments);
+        return adjustments === current.adjustments
+          ? current
+          : { ...current, adjustments };
+      });
+    },
+    [],
+  );
   const [liveRolesByAccount, setLiveRolesByAccount] = useState(rolesByAccount);
   const [folderReloadNonce, setFolderReloadNonce] = useState(0);
   const folders = liveMailboxesByAccount[accountId] ?? [];
@@ -315,9 +331,10 @@ export function MailClient({
         .join(" · "),
     );
   }
-  const [countAdjustments, setCountAdjustments] = useState<CountAdjustment[]>(
-    [],
+  const hasGmail = accounts.some(
+    (item) => item.enabled && item.receiveTransport === "gmail",
   );
+
   const folder = folders.find((item) => item.id === mailboxId);
   const base = allInboxes
     ? "/api/mail/all-inboxes"
@@ -964,6 +981,7 @@ export function MailClient({
     actionAccountId,
     allInboxes,
     selectionLocation,
+    setCountAdjustments,
   ]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
@@ -989,65 +1007,69 @@ export function MailClient({
     if (!accountId) return;
     let cancelled = false;
     let busy = false;
-    const load = () => {
+    const lastPolled = new Map<string, number>();
+    const load = (force = true) => {
       if (document.visibilityState !== "visible" || busy) return;
       busy = true;
       void Promise.allSettled(
-        accounts.map(async ({ id: pollAccountId }) => {
-          return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
-            cache: "no-store",
+        accounts
+          .filter((account) => {
+            const interval =
+              account.receiveTransport === "gmail" ? 10_000 : 20_000;
+            return (
+              force ||
+              Date.now() - (lastPolled.get(account.id) ?? 0) >= interval
+            );
           })
-            .then(async (response) => {
-              if (!response.ok)
-                throw new Error("Mailboxes could not be loaded.");
-              return response.json() as Promise<{
-                mailboxes: MailboxView[];
-                roles: MailboxRoleView[];
-              }>;
+          .map(async ({ id: pollAccountId }) => {
+            lastPolled.set(pollAccountId, Date.now());
+            return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
+              cache: "no-store",
             })
-            .then((result) => {
-              if (!cancelled) {
-                setLiveMailboxesByAccount((current) => ({
-                  ...current,
-                  [pollAccountId]: result.mailboxes,
-                }));
-                setLiveRolesByAccount((current) => ({
-                  ...current,
-                  [pollAccountId]: result.roles,
-                }));
-                setCountAdjustments((current) =>
-                  current.filter((adjustment) => {
-                    if (!adjustment.completedAt) return true;
-                    const mailbox = result.mailboxes.find(
-                      (item) => item.id === adjustment.mailboxId,
-                    );
-                    const synchronizedAt = mailbox?.deltaSync.lastSuccessfulAt;
-                    return (
-                      !synchronizedAt ||
-                      new Date(synchronizedAt).getTime() <
-                        new Date(adjustment.completedAt).getTime()
-                    );
-                  }),
-                );
-              }
-            })
-            .catch(() => {
-              // Keep the last known counts; the next poll retries.
-            });
-        }),
+              .then(async (response) => {
+                if (!response.ok)
+                  throw new Error("Mailboxes could not be loaded.");
+                return response.json() as Promise<{
+                  mailboxes: MailboxView[];
+                  roles: MailboxRoleView[];
+                }>;
+              })
+              .then((result) => {
+                if (!cancelled) {
+                  setCounterState((current) =>
+                    applyMailboxCounterSnapshot(
+                      current,
+                      pollAccountId,
+                      result.mailboxes,
+                    ),
+                  );
+                  setLiveRolesByAccount((current) =>
+                    JSON.stringify(current[pollAccountId]) ===
+                    JSON.stringify(result.roles)
+                      ? current
+                      : { ...current, [pollAccountId]: result.roles },
+                  );
+                }
+              })
+              .catch(() => {
+                // Keep the last known counts; the next poll retries.
+              });
+          }),
       ).finally(() => {
         busy = false;
       });
     };
     load();
-    const timer = setInterval(load, 20_000);
-    document.addEventListener("visibilitychange", load);
+    // Reuse the existing visible-tab DB poll; this never requests Gmail APIs.
+    const timer = setInterval(() => load(false), hasGmail ? 10_000 : 20_000);
+    const visible = () => load();
+    document.addEventListener("visibilitychange", visible);
     return () => {
       cancelled = true;
       clearInterval(timer);
-      document.removeEventListener("visibilitychange", load);
+      document.removeEventListener("visibilitychange", visible);
     };
-  }, [accounts, accountId, folderReloadNonce]);
+  }, [accounts, accountId, folderReloadNonce, hasGmail]);
 
   useEffect(() => {
     if (!allInboxes && (!accountId || !mailboxId)) return;
@@ -1323,15 +1345,7 @@ export function MailClient({
     setAllInboxes(all);
   }
   function unread(item: MailboxView) {
-    if (item.unseenCount === null) return null;
-    const projected =
-      BigInt(item.unseenCount) +
-      BigInt(
-        countAdjustments
-          .filter((a) => a.mailboxId === item.id)
-          .reduce((sum, a) => sum + a.delta, 0),
-      );
-    return projected > 0n ? projected.toString() : null;
+    return projectedUnreadCount(item, countAdjustments);
   }
 
   return (

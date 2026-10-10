@@ -235,6 +235,173 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
     expect((await t.state()).baselineHistoryId).toBe("100");
     expect(remote.requests.filter((r) => r.path === "profile")).toHaveLength(2);
   });
+  it.each([false, true])(
+    "prioritizes external INBOX changes from 2 to 0 with backfill active=%s",
+    async (backfill) => {
+      const remote = new SyntheticGmail();
+      for (let i = 0; i < 9; i++)
+        remote.labels.push({
+          id: `Label_extra_${i}`,
+          name: `Extra ${i}`,
+          type: "user",
+        });
+      remote.fixture("unread-a");
+      remote.fixture("unread-b");
+      if (backfill)
+        for (let i = 0; i < 102; i++)
+          remote.fixture(`old-${i}`, ["Label_one"], Date.now() - 40 * 86400000);
+      const t = await setup(remote);
+      if (backfill) {
+        for (let i = 0; i < 12; i++) {
+          await t.sync.run(t.id, "1");
+          if ((await t.state()).recentReady) break;
+        }
+        expect((await t.state()).inventoryComplete).toBe(false);
+      } else await t.finish();
+      const service = new MailboxService(database.db);
+      expect(
+        (await service.listForAccount(t.id)).find(
+          (b) => b.providerMailboxId === "INBOX",
+        )?.unseenCount,
+      ).toBe("2");
+      // An already known, recently sampled INBOX used to lose to unknown labels.
+      await database.db
+        .update(mailboxes)
+        .set({ reportedMessageCount: null, reportedUnseenCount: null })
+        .where(
+          and(
+            eq(mailboxes.accountId, t.id),
+            sql`${mailboxes.providerMailboxId} like 'Label_extra_%'`,
+          ),
+        );
+      remote.change("unread-a", ["INBOX", "Label_one"]);
+      remote.change("unread-b", ["INBOX", "Label_one"]);
+      await t.sync.wake(t.id);
+      remote.requests.length = 0;
+      for (let i = 0; i < 3; i++) {
+        await t.sync.run(t.id, "1");
+        if (remote.requests.some((r) => r.path === "history")) break;
+      }
+      const observed = (await service.listForAccount(t.id)).find(
+        (b) => b.providerMailboxId === "INBOX",
+      )!;
+      expect(observed.unseenCount).toBe("0");
+      expect(observed.unseenCountObservedAt).not.toBeNull();
+      const counterRequests = remote.requests.filter((r) =>
+        r.path.startsWith("labels/"),
+      );
+      expect(counterRequests).toHaveLength(4);
+      expect(counterRequests[0].path).toBe("labels/INBOX");
+      if (backfill) {
+        expect((await t.state()).inventoryComplete).toBe(false);
+        await t.finish();
+        expect(
+          (await service.listForAccount(t.id)).find(
+            (b) => b.providerMailboxId === "INBOX",
+          )?.unseenCount,
+        ).toBe("0");
+      }
+      expect(remote.requests.every((r) => r.method === "GET")).toBe(true);
+    },
+  );
+  it("keeps INBOX priority within the existing quota budget when history is unchanged", async () => {
+    const t = await setup();
+    await t.finish();
+    t.remote.requests.length = 0;
+    await t.delta();
+    expect(
+      t.remote.requests.filter((request) => request.path.startsWith("labels/")),
+    ).toHaveLength(4);
+    expect(
+      t.remote.requests.filter((request) => request.path === "labels/INBOX"),
+    ).toHaveLength(1);
+    expect(
+      t.remote.requests.filter((request) => request.path === "history"),
+    ).toHaveLength(1);
+  });
+  it("refreshes INBOX again after delayed history work and preserves quota backoff before checkpoint", async () => {
+    const remote = new SyntheticGmail();
+    remote.fixture("unread-a");
+    remote.fixture("unread-b");
+    const t = await setup(remote);
+    await t.finish();
+    const service = new MailboxService(database.db);
+    remote.change("unread-a");
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1"); // Start history.
+    await t.sync.run(t.id, "1"); // Stage history and read counters (still two).
+    remote.change("unread-a", ["INBOX"]);
+    remote.change("unread-b", ["INBOX"]);
+    await t.sync.run(t.id, "1"); // Drain the original page after external reads.
+    remote.failures.set("labels/INBOX", 429);
+    await t.sync.run(t.id, "1");
+    const blocked = await t.state();
+    expect(blocked.errorCategory).toBe("quota");
+    expect(blocked.historyId).toBe("100");
+    expect(
+      (await service.listForAccount(t.id)).find(
+        (b) => b.providerMailboxId === "INBOX",
+      )?.unseenCount,
+    ).toBe("2");
+    const requestCount = remote.requests.length;
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    expect(remote.requests).toHaveLength(requestCount);
+    expect((await t.state()).nextAttemptAt).toEqual(blocked.nextAttemptAt);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ nextAttemptAt: null })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.sync.run(t.id, "1");
+    expect((await t.state()).historyId).toBe("101");
+    // Even though the fixed history sweep did not include the later event for b,
+    // the authoritative counter already includes both remote read changes.
+    expect(
+      (await service.listForAccount(t.id)).find(
+        (b) => b.providerMailboxId === "INBOX",
+      )?.unseenCount,
+    ).toBe("0");
+    expect(remote.requests.every((r) => r.method === "GET")).toBe(true);
+  });
+  it("confirmed Gmail read commands preserve an existing quota retry deadline", async () => {
+    const remote = new SyntheticGmail();
+    remote.fixture("read-command");
+    const t = await setup(remote);
+    await t.finish();
+    const [message] = await database.db
+      .select()
+      .from(messages)
+      .where(eq(messages.accountId, t.id));
+    const inbox = (
+      await new MailboxService(database.db).listForAccount(t.id)
+    ).find((box) => box.providerMailboxId === "INBOX")!;
+    const commands = new GmailMessageCommands(
+      database.db,
+      async () => undefined,
+      t.provider,
+      t.lock,
+    );
+    const command = await commands.create(
+      t.id,
+      inbox.id,
+      message.id,
+      "mark_read",
+    );
+    const nextAttemptAt = new Date(Date.now() + 60000);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ errorCategory: "quota", nextAttemptAt })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await commands.run(command.id);
+    expect(await t.state()).toMatchObject({
+      errorCategory: "quota",
+      nextAttemptAt,
+      needsWork: true,
+    });
+    const requests = remote.requests.length;
+    await t.sync.run(t.id, "1");
+    expect(remote.requests).toHaveLength(requests);
+  });
   it("preserves custom-label placement during optimistic archive and cancels stale commands", async () => {
     const remote = new SyntheticGmail();
     remote.fixture("archive-custom", ["INBOX", "Label_one"]);
@@ -594,6 +761,8 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
         ),
       );
       await commands.run(accepted.id);
+      if (!["flag", "unflag"].includes(action))
+        expect((await t.state()).nextAttemptAt).toBeNull();
       expect(
         (
           await database.db

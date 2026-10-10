@@ -266,37 +266,48 @@ export class GmailSyncService {
       .select()
       .from(mailboxes)
       .where(eq(mailboxes.accountId, accountId));
-    // Bound counter work. Unknown counters are filled first, then rotate by time.
+    // Reserve one of the four existing requests for INBOX. Rotate the rest.
     const selected = stored
       .filter((b) => b.providerMailboxId && b.lifecycleStatus === "active")
       .sort(
         (a, b) =>
+          Number(b.providerMailboxId === "INBOX") -
+            Number(a.providerMailboxId === "INBOX") ||
           Number(a.reportedMessageCount !== null) -
             Number(b.reportedMessageCount !== null) ||
           a.updatedAt.getTime() - b.updatedAt.getTime(),
       )
       .slice(0, 4);
     for (const box of selected) {
-      const counter = await client.label(box.providerMailboxId!);
-      await db.transaction(async (tx) => {
-        await assertGmailPublication(tx, accountId, revision);
-        await tx
-          .update(mailboxes)
-          .set({
-            reportedMessageCount:
-              counter.messagesTotal === undefined
-                ? null
-                : BigInt(counter.messagesTotal),
-            reportedUnseenCount:
-              counter.messagesUnread === undefined
-                ? null
-                : BigInt(counter.messagesUnread),
-            updatedAt: new Date(),
-          })
-          .where(eq(mailboxes.id, box.id));
-      });
+      await this.counter(db, client, accountId, revision, box);
     }
     await new MailboxRoleService(db).autodetect(accountId);
+  }
+  private async counter(
+    db: Database,
+    client: GmailClient,
+    accountId: string,
+    revision: string,
+    box: typeof mailboxes.$inferSelect,
+  ) {
+    const counter = await client.label(box.providerMailboxId!);
+    await db.transaction(async (tx) => {
+      await assertGmailPublication(tx, accountId, revision);
+      await tx
+        .update(mailboxes)
+        .set({
+          reportedMessageCount:
+            counter.messagesTotal === undefined
+              ? null
+              : BigInt(counter.messagesTotal),
+          reportedUnseenCount:
+            counter.messagesUnread === undefined
+              ? null
+              : BigInt(counter.messagesUnread),
+          updatedAt: new Date(),
+        })
+        .where(eq(mailboxes.id, box.id));
+    });
   }
   private async drain(
     db: Database,
@@ -487,14 +498,14 @@ export class GmailSyncService {
   ) {
     if (await this.drain(db, client, state, revision, "history")) return;
     if (!state.historyPagesComplete) {
-      if (!state.historyNextPageToken && !state.historyPageOffset)
-        await this.labels(db, client, state.accountId, revision);
       const page = await client.history(
         state.historyStartId!,
         state.historyNextPageToken ?? undefined,
       );
       if (page.nextPageToken === state.historyNextPageToken)
         throw new GmailApiError("invalid_response");
+      if (!state.historyNextPageToken && !state.historyPageOffset)
+        await this.labels(db, client, state.accountId, revision);
       const ids = [
         ...new Set(
           page.history.flatMap((h) =>
@@ -543,6 +554,22 @@ export class GmailSyncService {
         },
       });
       return;
+    }
+    // Changes can arrive while durable history work is draining, including
+    // commands executed between slices. Publish a fresh INBOX before checkpoint.
+    if (state.historyCandidateId !== state.historyStartId) {
+      const [inbox] = await db
+        .select()
+        .from(mailboxes)
+        .where(
+          and(
+            eq(mailboxes.accountId, state.accountId),
+            eq(mailboxes.providerMailboxId, "INBOX"),
+            eq(mailboxes.lifecycleStatus, "active"),
+          ),
+        );
+      if (inbox)
+        await this.counter(db, client, state.accountId, revision, inbox);
     }
     await db.transaction(async (tx) => {
       await assertGmailPublication(tx, state.accountId, revision);

@@ -8,6 +8,7 @@ import {
   messageCommands,
   messages,
   mailboxRoles,
+  gmailAccountSyncState,
 } from "../../../shared/infrastructure/database/schema";
 import {
   assertGmailPublication,
@@ -393,6 +394,20 @@ export class GmailMessageCommands {
             message.providerMessageId!,
             after,
           );
+          // Wake the existing receiver after a confirmed local action. Quota
+          // and remote retry deadlines must still take precedence.
+          if (
+            ["mark_read", "mark_unread", "archive", "trash", "move"].includes(
+              command.action,
+            )
+          )
+            await tx
+              .update(gmailAccountSyncState)
+              .set({
+                needsWork: true,
+                nextAttemptAt: sql`case when ${gmailAccountSyncState.errorCategory} is null then null else ${gmailAccountSyncState.nextAttemptAt} end`,
+              })
+              .where(eq(gmailAccountSyncState.accountId, command.accountId));
         });
       } catch (error) {
         if (command.attempts >= 4) {
