@@ -114,6 +114,7 @@ export function RichEmailBody({
           title="Email content"
           sandbox="allow-popups allow-popups-to-escape-sandbox"
           referrerPolicy="no-referrer"
+          style={{ colorScheme: "only light" }}
           srcDoc={rendering.document}
         />
       ) : (

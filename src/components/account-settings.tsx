@@ -13,6 +13,7 @@ import { AccountIdentityFields } from "./account-identity-fields";
 import { accountConnectionPayload } from "./account-connection-payload";
 import { AccountConnectionFields } from "./account-connection-fields";
 import { SentCopyPolicyFields } from "./sent-copy-settings";
+import type { ConnectionReport } from "@/modules/accounts/domain/mail-provider";
 
 const folderLabels = {
   sent: "Sent",
@@ -25,10 +26,10 @@ type Tab = "General" | "IMAP" | "Diagnostics";
 async function request(url: string, method: string, body?: unknown) {
   const response = await fetch(url, {
     method,
+    headers: { "Content-Type": "application/json" },
     ...(body === undefined
       ? {}
       : {
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         }),
   });
@@ -126,8 +127,50 @@ export function AccountSettings({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [testReport, setTestReport] = useState<ConnectionReport | null>(null);
   const localDrafts =
     account.authMethod === "oauth2" && account.oauthProviderId === "google";
+  async function testConnection(body?: unknown) {
+    setTestReport(null);
+    await run(async () => {
+      const result = await request(
+        `/api/accounts/${account.id}/test`,
+        "POST",
+        body,
+      );
+      setTestReport(result.result);
+    });
+  }
+  const connectionFeedback = (
+    <div className="settings-connection-feedback" aria-live="polite">
+      {pending ? <p role="status">Working…</p> : null}
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {status ? (
+        <p className="success" role="status">
+          {status}
+        </p>
+      ) : null}
+      {testReport ? (
+        <div role="status">
+          {(
+            [
+              [localDrafts ? "Gmail API" : "IMAP", testReport.imap],
+              ["SMTP", testReport.smtp],
+            ] as const
+          ).map(([label, result]) => (
+            <p key={label} className={result.success ? "success" : "error"}>
+              {label}:{" "}
+              {result.success ? "Connection successful" : result.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
   const generalDirty =
     JSON.stringify(identity) !== JSON.stringify(savedIdentity) ||
     Object.keys(folders).length > 0 ||
@@ -208,7 +251,7 @@ export function AccountSettings({
               setStatus("");
             }}
           >
-            {item}
+            {item === "IMAP" && localDrafts ? "Connection" : item}
           </button>
         ))}
       </div>
@@ -423,7 +466,7 @@ export function AccountSettings({
         aria-labelledby="tab-IMAP"
       >
         {account.authMethod === "oauth2" ? (
-          <section className="settings-section">
+          <section className="settings-section settings-oauth-connection">
             <h3>OAuth authentication</h3>
             <dl className="settings-facts">
               <dt>Provider</dt>
@@ -449,18 +492,12 @@ export function AccountSettings({
               <button
                 className="button secondary"
                 disabled={pending}
-                onClick={() =>
-                  void run(async () => {
-                    await request(`/api/accounts/${account.id}/test`, "POST");
-                    setStatus(
-                      "Connection test completed. See Diagnostics for results.",
-                    );
-                  })
-                }
+                onClick={() => void testConnection()}
               >
                 Test connection
               </button>
             </div>
+            {connectionFeedback}
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -578,24 +615,15 @@ export function AccountSettings({
               type="button"
               className="button secondary"
               disabled={pending}
-              onClick={(event) => {
-                const body = connectionPayload(event.currentTarget.form!);
-                void run(async () => {
-                  const result = await request(
-                    `/api/accounts/${account.id}/test`,
-                    "POST",
-                    body,
-                  );
-                  setStatus(
-                    result.result.imap.success && result.result.smtp.success
-                      ? "IMAP and SMTP connections successful"
-                      : "Connection test failed. See Diagnostics for results.",
-                  );
-                });
-              }}
+              onClick={(event) =>
+                void testConnection(
+                  connectionPayload(event.currentTarget.form!),
+                )
+              }
             >
               Test connection
             </button>
+            {connectionFeedback}
           </form>
         )}
       </div>
@@ -788,12 +816,14 @@ export function AccountSettings({
           ))}
         </details>
       </div>
-      {error ? (
+      {tab !== "IMAP" && error ? (
         <p className="error" role="alert">
           {error}
         </p>
       ) : null}
-      <p role="status">{pending ? "Working…" : status}</p>
+      {tab !== "IMAP" ? (
+        <p role="status">{pending ? "Working…" : status}</p>
+      ) : null}
     </>
   );
 }

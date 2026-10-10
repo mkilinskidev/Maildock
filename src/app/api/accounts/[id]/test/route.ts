@@ -15,10 +15,12 @@ export async function POST(
     const denied = await requireOwnerApiAccess(request);
     if (denied) return denied;
     // An empty request tests the saved credentials; JSON supplies overrides.
-    const unsupported = request.body ? requireJsonMediaType(request) : null;
-    if (unsupported) return unsupported;
     try {
       const text = await request.text();
+      // Next may expose an empty POST as a non-null stream. Only actual
+      // override data needs a JSON media type; saved-account tests are bodyless.
+      const unsupported = text ? requireJsonMediaType(request) : null;
+      if (unsupported) return unsupported;
       const input = text ? JSON.parse(text) : undefined;
       return Response.json({
         result: await accountsService.testExisting(

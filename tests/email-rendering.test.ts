@@ -20,6 +20,18 @@ function rendered(
   return renderEmailDocument(sanitizeEmailHtml(input).html, allow, cids);
 }
 describe("Phase 2H HTML/privacy boundary", () => {
+  it("selects light sender color media without changing stored HTML or responsive conditions", () => {
+    const clean = sanitizeEmailHtml(
+      "<style>@media(prefers-color-scheme:dark){p{color:white}}@media(prefers-color-scheme:light) and (max-width:600px){p{color:red}}</style><p>Fixture</p>",
+    ).html;
+    const original = clean;
+    const output = renderEmailDocument(clean, false);
+    expect(output).toContain("(max-width: -1px)");
+    expect(output).toContain("(min-width: 0px) and (max-width:600px)");
+    expect(output).toContain("color:white");
+    expect(output).toContain("color:red");
+    expect(clean).toBe(original);
+  });
   it.each([
     ["image/png", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])],
     ["image/jpeg", Buffer.from([255, 216, 255])],

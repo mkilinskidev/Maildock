@@ -199,6 +199,77 @@ it.each([
       ).toBeInstanceOf(HTMLSelectElement);
   },
 );
+it.each(["google", "microsoft", "password"] as const)(
+  "sends valid %s connection tests and displays receive/SMTP results in the connection section",
+  async (kind) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    fetcher = vi.fn(async () =>
+      Response.json({
+        result: {
+          imap: { success: true },
+          smtp: {
+            success: false,
+            category: "verification_failed",
+            message: "SMTP authentication failed.",
+          },
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <AccountSettings
+          account={{
+            ...accounts[0],
+            authMethod: kind === "password" ? "password" : "oauth2",
+            oauthProviderId: kind === "password" ? null : kind,
+            providerType: kind === "google" ? "gmail_smtp" : "imap_smtp",
+            receiveTransport: kind === "google" ? "gmail" : "imap",
+          }}
+          mailboxes={[]}
+          roles={[]}
+          catalog={catalog}
+          onDirtyChange={() => undefined}
+          onBusyChange={() => undefined}
+        />,
+      ),
+    );
+    await click(kind === "google" ? "Connection" : "IMAP");
+    await click("Test connection", host.querySelector("#panel-IMAP")!);
+    const call = fetcher.mock.calls[0];
+    expect(call[0]).toBe("/api/accounts/a/test");
+    expect(call[1].headers).toEqual({ "Content-Type": "application/json" });
+    expect(call[1].method).toBe("POST");
+    if (kind === "password")
+      expect(JSON.parse(call[1].body).imap).not.toHaveProperty("password");
+    else expect(call[1].body).toBeUndefined();
+    const feedback = host.querySelector(
+      "#panel-IMAP .settings-connection-feedback",
+    )!;
+    expect(feedback.querySelector(".success")?.textContent).toBe(
+      `${kind === "google" ? "Gmail API" : "IMAP"}: Connection successful`,
+    );
+    expect(feedback.querySelector(".error")?.textContent).toBe(
+      "SMTP: SMTP authentication failed.",
+    );
+    expect(host.querySelector("#tab-IMAP")?.textContent).toBe(
+      kind === "google" ? "Connection" : "IMAP",
+    );
+    fetcher.mockResolvedValueOnce(
+      Response.json(
+        { error: "Connection service unavailable." },
+        { status: 500 },
+      ),
+    );
+    await click("Test connection", host.querySelector("#panel-IMAP")!);
+    expect(host.querySelector("#panel-IMAP [role=alert]")?.textContent).toBe(
+      "Connection service unavailable.",
+    );
+  },
+);
 async function mount(initialAddAccount = false, oauthConfigured = true) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fetcher = vi.fn(async (url: string) =>

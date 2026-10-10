@@ -92,28 +92,39 @@ export function AttachmentList({
       {visible.map((a) => {
         const state = states[a.id] ?? a;
         const preparing = ["pending", "fetching"].includes(state.status);
-        return (
-          <div key={a.id} className="mail-attachment">
-            <Paperclip size={13} />{" "}
-            <span>
-              {a.filename || "Attachment"}{" "}
-              {a.size !== null ? `· ${attachmentSize(a.size)}` : ""} · {a.type}
+        const contents = (
+          <>
+            <Paperclip size={13} aria-hidden="true" />
+            <span className="attachment-filename">
+              {a.filename || "Attachment"}
             </span>
+            {a.size !== null ? (
+              <span className="attachment-size">{attachmentSize(a.size)}</span>
+            ) : null}
+            {preparing ? <span role="status">Preparing…</span> : null}
+          </>
+        );
+        return (
+          <span key={a.id} className="attachment-item">
             {state.status === "ready" ? (
-              <a href={`/api/attachments/${a.id}/download`} download>
-                Download
+              <a
+                className="mail-attachment attachment-download"
+                aria-label={`Download ${a.filename || "attachment"}`}
+                href={`/api/attachments/${a.id}/download`}
+                download
+              >
+                {contents}
               </a>
             ) : (
               <button
+                className="mail-attachment attachment-download"
                 type="button"
                 disabled={preparing}
+                aria-busy={preparing}
+                aria-label={`${preparing ? "Preparing" : "Download"} ${a.filename || "attachment"}`}
                 onClick={() => void prepare(a.id)}
               >
-                {preparing
-                  ? "Downloading…"
-                  : state.status === "failed"
-                    ? "Retry download"
-                    : "Download"}
+                {contents}
               </button>
             )}
             {state.error ? (
@@ -121,7 +132,7 @@ export function AttachmentList({
                 {state.error}
               </span>
             ) : null}
-          </div>
+          </span>
         );
       })}
     </div>

@@ -515,12 +515,22 @@ export class AccountsService {
               : "Gmail API verification failed. Check OAuth access and enable Gmail API in the configured Google Cloud project.",
         };
       }
-      const smtp = await this.getProviderSmtpAccountForWork(id);
-      const smtpResult = (await this.provider.testSmtpConnection?.(smtp)) ?? {
-        success: false as const,
-        category: "internal_error" as const,
-        message: "SMTP verification is unavailable.",
-      };
+      let smtpResult: ConnectionReport["smtp"];
+      try {
+        const smtp = await this.getProviderSmtpAccountForWork(id);
+        smtpResult = (await this.provider.testSmtpConnection?.(smtp)) ?? {
+          success: false,
+          category: "internal_error",
+          message: "SMTP verification is unavailable.",
+        };
+      } catch {
+        smtpResult = {
+          success: false,
+          category: "verification_failed",
+          message:
+            "SMTP verification failed. Check account authorization and SMTP settings.",
+        };
+      }
       const report: ConnectionReport = {
         imap: receive,
         smtp: smtpResult,
@@ -534,6 +544,10 @@ export class AccountsService {
           imapError: receive.success ? null : receive.message,
           smtpStatus: smtpResult.success ? "success" : "error",
           smtpError: smtpResult.success ? null : smtpResult.message,
+          ...(receive.success && smtpResult.success
+            ? { lastSuccessfulConnectionTestAt: new Date() }
+            : {}),
+          updatedAt: new Date(),
         })
         .where(
           and(
