@@ -34,6 +34,8 @@ from lateral(select coalesce(s.priority_burst>=8 or
 cross join lateral(select case
   when s.baseline_history_id is null or s.status='reconcile_required'
     or s.account_revision is distinct from sync_account.work_revision then 'bootstrap'
+  when s.recent_ready and (s.error_category is null or s.error_category in ('quota','network')) and (s.inbox_started_at is not null or
+    s.inbox_synced_at is null or s.inbox_synced_at<=statement_timestamp()-interval '60 seconds') then 'inbox_reconcile'
   when s.history_run_id is not null then case
     when s.history_pages_complete and s.history_discovered_at<=statement_timestamp()-interval '60 seconds' then 'history_probe'
     when (s.history_drain_due or s.history_pages_complete or coalesce(p.history_pending,0)>=${GMAIL_HISTORY_PENDING_HIGH_WATER})
@@ -48,6 +50,7 @@ cross join lateral(select case
 export type GmailPriorityDecision = {
   action:
     | "bootstrap"
+    | "inbox_reconcile"
     | "inventory"
     | "inventory_clock"
     | "history_start"

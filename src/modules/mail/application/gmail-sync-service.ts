@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import type { Logger } from "pino";
 import { bestEffortDiagnostic } from "../../../shared/infrastructure/logging/diagnostics";
-import { and, eq, ne, or, isNull, sql, asc, inArray } from "drizzle-orm";
+import { and, eq, ne, or, isNull, sql, asc, inArray, lt } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   gmailAccountSyncState,
@@ -65,7 +65,8 @@ export class GmailSyncService {
     private readonly provider: GmailProvider,
     private readonly lock: GmailAccountLock,
     private readonly recentDays = 30,
-    private readonly logger?: Pick<Logger, "debug">,
+    private readonly logger?: Pick<Logger, "debug"> &
+      Partial<Pick<Logger, "warn">>,
   ) {}
   async wake(accountId: string) {
     const [account] = await this.db
@@ -92,6 +93,7 @@ export class GmailSyncService {
     refreshed = false,
     admittedPriority?: number,
   ): Promise<void> {
+    let workClass: number | undefined = admittedPriority;
     // OAuth's DB-backed refresh happens before reserving execution authority.
     const lease = await this.provider.lease(accountId, revision);
     try {
@@ -173,6 +175,7 @@ export class GmailSyncService {
           return;
         }
         const decision = await readGmailPriorityDecision(db, accountId);
+        workClass = decision.priority_class;
         // Admission reserves capacity for one frozen class. A changed state or
         // elapsed fairness deadline must be admitted again before doing work.
         if (
@@ -194,6 +197,10 @@ export class GmailSyncService {
         }
         if (decision.action === "bootstrap") {
           await this.bootstrap(db, client, state, revision);
+          return;
+        }
+        if (decision.action === "inbox_reconcile") {
+          await this.inbox(db, client, state, revision);
           return;
         }
         if (state.historyRunId) {
@@ -220,14 +227,33 @@ export class GmailSyncService {
     } catch (error) {
       if (error instanceof StaleAccountWorkError) return;
       if (error instanceof GmailApiError) {
+        const nextAttemptAt = new Date(
+          Date.now() +
+            Math.max(
+              error.retryAfterMs,
+              ["authentication", "api_disabled", "access_denied"].includes(
+                error.category,
+              )
+                ? 300000
+                : 30000,
+            ),
+        );
         bestEffortDiagnostic(() =>
-          this.logger?.debug(
+          (this.logger?.warn ?? this.logger?.debug)?.call(
+            this.logger,
             {
               event: "mail.gmail_sync_blocked",
               accountId,
               transport: "gmail",
               blockedReason: error.category === "quota" ? "quota" : "retry",
               retryAfterMs: error.retryAfterMs,
+              quotaSource: error.details?.source ?? null,
+              httpStatus: error.status ?? null,
+              googleReasons: error.details?.reasons ?? [],
+              retryAfter: error.details?.retryAfter ?? null,
+              localBudget: error.details?.budget ?? null,
+              nextEligibleAt: nextAttemptAt.toISOString(),
+              priorityClass: workClass === undefined ? null : `P${workClass}`,
             },
             "Gmail synchronization deferred",
           ),
@@ -262,19 +288,7 @@ export class GmailSyncService {
                 : {}),
               errorCategory: category,
               needsWork: true,
-              nextAttemptAt: new Date(
-                Date.now() +
-                  Math.max(
-                    error.retryAfterMs,
-                    [
-                      "authentication",
-                      "api_disabled",
-                      "access_denied",
-                    ].includes(error.category)
-                      ? 300000
-                      : 30000,
-                  ),
-              ),
+              nextAttemptAt,
               updatedAt: new Date(),
             })
             .where(
@@ -285,7 +299,10 @@ export class GmailSyncService {
             );
           await tx
             .update(mailAccounts)
-            .set({ imapStatus: "error", imapError: error.message })
+            .set({
+              imapStatus: error.category === "quota" ? "untested" : "error",
+              imapError: error.category === "quota" ? null : error.message,
+            })
             .where(eq(mailAccounts.id, accountId));
         });
         return;
@@ -529,6 +546,110 @@ export class GmailSyncService {
       );
     }
     return work.length > 0;
+  }
+  /** Independent, resumable P0 observation; never advances a history receipt. */
+  private async inbox(
+    db: Database,
+    client: GmailClient,
+    state: State,
+    revision: string,
+  ) {
+    const started = state.inboxStartedAt ?? new Date();
+    if (!state.inboxStartedAt)
+      await this.update(db, state, revision, { inboxStartedAt: started });
+    const observe = async (id: string) => {
+      let remote;
+      try {
+        remote = await client.message(id);
+      } catch (error) {
+        if (!(error instanceof GmailApiError && error.category === "not_found"))
+          throw error;
+        remote = null;
+      }
+      // Existing idempotent projection, revision fence and account authority.
+      await projectGmailMessage(db, state.accountId, revision, id, remote);
+    };
+    if (!state.inboxPagesComplete) {
+      let page;
+      try {
+        page = await client.messages(
+          "in:inbox",
+          state.inboxNextPageToken ?? undefined,
+          12,
+        );
+      } catch (error) {
+        if (!(
+          error instanceof GmailApiError && error.category === "cursor_expired"
+        ))
+          throw error;
+        // Only this observation restarts; applied/discovery history stays intact.
+        await this.update(db, state, revision, {
+          inboxStartedAt: null,
+          inboxNextPageToken: null,
+          inboxPagesComplete: false,
+        });
+        return;
+      }
+      if (
+        page.messages.length > 12 ||
+        (page.nextPageToken && page.nextPageToken === state.inboxNextPageToken)
+      )
+        throw new GmailApiError("invalid_response");
+      for (const item of page.messages) await observe(item.id);
+      // Failed GETs leave this cursor unchanged; successful projections may be replayed.
+      await this.update(db, state, revision, {
+        inboxNextPageToken: page.nextPageToken ?? null,
+        inboxPagesComplete: !page.nextPageToken,
+      });
+      return;
+    }
+    // Absence from a listing is not deletion evidence. Exact GETs reconcile
+    // old local placements, including moves that history has not reached yet.
+    const stale = await db
+      .select({ id: messages.providerMessageId })
+      .from(mailboxMessages)
+      .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+      .where(
+        and(
+          eq(messages.accountId, state.accountId),
+          eq(mailboxes.providerMailboxId, "INBOX"),
+          lt(mailboxMessages.lastSynchronizedAt, started),
+        ),
+      )
+      .orderBy(asc(mailboxMessages.lastSynchronizedAt), asc(messages.id))
+      .limit(12);
+    for (const item of stale) if (item.id) await observe(item.id);
+    if (stale.length) return;
+    const [box] = await db
+      .select()
+      .from(mailboxes)
+      .where(
+        and(
+          eq(mailboxes.accountId, state.accountId),
+          eq(mailboxes.providerMailboxId, "INBOX"),
+          eq(mailboxes.lifecycleStatus, "active"),
+        ),
+      );
+    if (box) await this.counter(db, client, state.accountId, revision, box);
+    await this.update(db, state, revision, {
+      inboxStartedAt: null,
+      inboxNextPageToken: null,
+      inboxPagesComplete: false,
+      inboxSyncedAt: new Date(),
+      errorCategory:
+        state.errorCategory === "quota" ? null : state.errorCategory,
+      nextAttemptAt: null,
+    });
+    // An unrelated history/provider failure still needs its own successful retry.
+    if (state.errorCategory && state.errorCategory !== "quota") return;
+    await db.transaction(async (tx) => {
+      await assertGmailPublication(tx, state.accountId, revision);
+      await tx
+        .update(mailAccounts)
+        .set({ imapStatus: "success", imapError: null })
+        .where(eq(mailAccounts.id, state.accountId));
+    });
   }
   private async inventory(
     db: Database,

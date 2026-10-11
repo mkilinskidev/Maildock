@@ -110,6 +110,12 @@ export class GmailApiError extends Error {
     readonly category: GmailFailure,
     readonly retryAfterMs = 0,
     readonly status?: number,
+    readonly details?: {
+      source: "local_budget" | "gmail_http";
+      reasons?: string[];
+      retryAfter?: string | null;
+      budget?: Record<string, number | string>;
+    },
   ) {
     super(`Gmail API: ${category}.`);
     this.name = "GmailApiError";
@@ -311,6 +317,7 @@ export class GmailClient {
                           : "invalid_response",
               Number.isFinite(seconds) ? Math.max(0, seconds) : 0,
               status,
+              { source: "gmail_http", reasons, retryAfter: retryHeader },
             );
           }
           let parsed;
@@ -385,13 +392,13 @@ export class GmailClient {
       labelSchema,
     );
   }
-  messages(query?: string, pageToken?: string) {
+  messages(query?: string, pageToken?: string, maxResults = 100) {
     return this.request(
       "messages.list",
       "messages",
       z.object({ ...page, messages: z.array(reference).max(500).default([]) }),
       {
-        maxResults: "100",
+        maxResults: String(z.number().int().min(1).max(100).parse(maxResults)),
         includeSpamTrash: "true",
         ...(query ? { q: query } : {}),
         ...(pageToken ? { pageToken } : {}),

@@ -124,6 +124,8 @@ describe("Gmail Phase 3b targeted review on disposable PostgreSQL", () => {
     await database.client`analyze gmail_sync_work`;
     await database.client`analyze gmail_account_sync_state`;
     await database.client`analyze mail_accounts`;
+    // These fixtures exercise drain/discovery admission after a fresh INBOX observation.
+    await database.client`update gmail_account_sync_state set inbox_synced_at=now()`;
     await database.client`analyze pgboss.job_common`;
     return ids;
   }
@@ -179,6 +181,38 @@ describe("Gmail Phase 3b targeted review on disposable PostgreSQL", () => {
       .map(([value]) => value)
       .find((value) => value.event === "mail.gmail_priority_slice");
     expect(slice.priorityClass).toBe(`P${result.rows[0].class}`);
+  });
+  it("admits a due INBOX observation as P0 even when historical fairness would select P2", async () => {
+    const [id] = await seed(1, 30, false);
+    await database.client`update gmail_account_sync_state set inbox_synced_at=null,priority_burst=8,last_lower_priority=1 where account_id=${id}`;
+    const admission = await boss
+      .getDb()
+      .executeSql(syncCandidatesSql, [[...SYNC_QUEUES], 2]);
+    expect(admission.rows[0].class).toBe(0);
+    expect((await readGmailPriorityDecision(database.db, id)).action).toBe(
+      "inbox_reconcile",
+    );
+    const w = await worker(id);
+    for (const message of w.remote.messages.values())
+      message.labelIds = ["Label_one"];
+    w.remote.fixture("new-current", ["INBOX", "UNREAD"]);
+    await w.service.run(id, "1", undefined, false, 0);
+    expect(w.remote.requests.map((r) => r.path)).toEqual([
+      "messages",
+      "messages/new-current",
+    ]);
+    expect(
+      w.debug.mock.calls.some(
+        ([v]) => v.event === "mail.gmail_priority_changed",
+      ),
+    ).toBe(false);
+    await database.client`update gmail_account_sync_state set error_category='invalid_response' where account_id=${id}`;
+    expect((await readGmailPriorityDecision(database.db, id)).action).toBe(
+      "drain",
+    );
+    expect(
+      (await readGmailPriorityDecision(database.db, id)).priority_class,
+    ).toBe(2);
   });
   it.each([
     ["mixed fresh P0", 0, 1, false, 0],

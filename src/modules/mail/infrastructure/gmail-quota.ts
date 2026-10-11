@@ -45,6 +45,7 @@ export async function reserveGmailQuota(
   limits: GmailQuotaConfig,
   now?: number,
 ) {
+  let budget: Record<string, number | string> | undefined;
   const admitted = await db.transaction(async (tx) => {
     const [account] = await tx
       .select()
@@ -120,8 +121,15 @@ export async function reserveGmailQuota(
     const dailyLimit = BigInt(
       Math.floor(limits.MAILDOCK_GMAIL_DAILY_UNITS * fraction),
     );
-    if (daily + BigInt(units) > dailyLimit)
+    if (daily + BigInt(units) > dailyLimit) {
+      budget = {
+        scope: "project_day",
+        used: Number(daily),
+        ceiling: Number(dailyLimit),
+        requested: units,
+      };
       return 86400000 - (admittedAt % 86400000);
+    }
     let retryAfter = 0;
     for (const [scope, limit] of [
       [user, limits.MAILDOCK_GMAIL_USER_UNITS_PER_MINUTE],
@@ -132,6 +140,13 @@ export async function reserveGmailQuota(
         .sort((a, b) => (a.bucket < b.bucket ? -1 : 1));
       let usage = buckets.reduce((sum, r) => sum + r.units, 0n);
       const ceiling = BigInt(Math.floor(limit * fraction));
+      if (usage + BigInt(units) > ceiling)
+        budget = {
+          scope: scope === "project" ? "project_minute" : "user_minute",
+          used: Number(usage),
+          ceiling: Number(ceiling),
+          requested: units,
+        };
       for (const bucket of buckets) {
         if (usage + BigInt(units) <= ceiling) break;
         usage -= bucket.units;
@@ -185,5 +200,9 @@ export async function reserveGmailQuota(
       );
     return 0;
   });
-  if (admitted) throw new GmailApiError("quota", admitted);
+  if (admitted)
+    throw new GmailApiError("quota", admitted, undefined, {
+      source: "local_budget",
+      budget,
+    });
 }

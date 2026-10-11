@@ -675,7 +675,16 @@ export function AccountSettings({
             {account.gmailSync && (
               <>
                 <dt>Gmail synchronization</dt>
-                <dd>{account.gmailSync.status}</dd>
+                <dd>
+                  {account.gmailSync.status === "blocked" ||
+                  account.gmailSync.status === "reconcile_required"
+                    ? "Sync needs attention"
+                    : account.gmailSync.errorCategory === "quota"
+                      ? "Waiting to retry"
+                      : account.gmailSync.errorCategory
+                        ? "Sync needs attention"
+                        : "Synchronizing"}
+                </dd>
                 <dt>Recent messages</dt>
                 <dd>{account.gmailSync.recentReady ? "Ready" : "Importing"}</dd>
                 <dt>Historical coverage</dt>
@@ -698,7 +707,11 @@ export function AccountSettings({
                 <dd>{date(account.gmailSync.nextAttemptAt)}</dd>
                 {account.gmailSync.errorCategory && (
                   <>
-                    <dt>Gmail failure</dt>
+                    <dt>
+                      {account.gmailSync.errorCategory === "quota"
+                        ? "Temporary delay"
+                        : "Gmail failure"}
+                    </dt>
                     <dd>{account.gmailSync.errorCategory}</dd>
                   </>
                 )}

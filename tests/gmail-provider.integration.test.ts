@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -42,6 +42,7 @@ import type { MailProvider } from "@/modules/accounts/domain/mail-provider";
 import { SyntheticGmail } from "./helpers/gmail-fixture";
 import { reserveGmailQuota } from "@/modules/mail/infrastructure/gmail-quota";
 import { GmailSyncRepository } from "@/modules/mail/infrastructure/gmail-sync-repository";
+import { projectGmailMessage } from "@/modules/mail/infrastructure/gmail-projector";
 import { PgBoss } from "pg-boss";
 import { installSyncAdmission } from "@/modules/mail/infrastructure/sync-admission";
 import {
@@ -171,12 +172,155 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       status: "ready",
     });
   });
+  it("converges seven INBOX identities during 20k historical work and quota backoff", async () => {
+    const t = await setup();
+    for (let n = 0; n < 20000; n++) {
+      const id = `historical-${String(n).padStart(5, "0")}`;
+      t.remote.fixture(id, ["Label_one"], Date.now() - 90 * 86400000);
+      t.remote.change(id);
+    }
+    for (let n = 0; n < 7; n++) {
+      t.remote.fixture(`current-${n}`, n < 3 ? ["INBOX", "UNREAD"] : ["INBOX"]);
+      t.remote.change(`current-${n}`);
+    }
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1"); // Bootstrap labels before seeding historical work.
+    for (let n = 3; n < 7; n++)
+      await projectGmailMessage(
+        database.db,
+        t.id,
+        "1",
+        `current-${n}`,
+        t.remote.messages.get(`current-${n}`)!,
+      );
+    const historyRun = randomUUID(),
+      inventoryRun = randomUUID();
+    await database.db
+      .update(mailboxes)
+      .set({ reportedMessageCount: 4n, reportedUnseenCount: 0n })
+      .where(
+        and(
+          eq(mailboxes.accountId, t.id),
+          eq(mailboxes.providerMailboxId, "INBOX"),
+        ),
+      );
+    await database.client`update gmail_account_sync_state set status='ready',recent_ready=true,
+      baseline_history_id='100',history_id='100',history_run_id=${historyRun},history_start_id='100',
+      inventory_run_id=${inventoryRun},inventory_phase='historical',recent_cutoff=now(),history_discovered_at=now(),
+      history_drain_due=true,inbox_synced_at=now()+interval '1 day' where account_id=${t.id}`;
+    await database.client`insert into gmail_sync_work(account_id,account_revision,run_id,purpose,gmail_message_id,priority_class)
+      select ${t.id}::uuid,1,${inventoryRun}::uuid,'inventory','historical-'||lpad(n::text,5,'0'),2 from generate_series(0,19999) n`;
+    await database.client`insert into gmail_sync_work(account_id,account_revision,run_id,purpose,gmail_message_id,priority_class)
+      select ${t.id}::uuid,1,${historyRun}::uuid,'history','historical-'||lpad(n::text,5,'0'),0 from generate_series(0,4999) n`;
+    // Reproduce the previous path with observation suppressed: ambiguous old P0
+    // work drains ahead of the yet-undiscovered current identities.
+    const start = performance.now();
+    const baselineStartCalls = t.remote.requests.length;
+    for (let n = 0; n < 12; n++) await t.sync.run(t.id, "1");
+    const [before] =
+      await database.client`select count(*)::int as count from messages where account_id=${t.id} and provider_message_id like 'current-%'`;
+    expect(before.count).toBe(4);
+    const baselineCalls = t.remote.requests.length;
+    const afterStart = performance.now();
+    await database.client`update gmail_account_sync_state set inbox_synced_at=null where account_id=${t.id}`;
+    t.remote.failures.set("messages", 429);
+    await t.sync.run(t.id, "1");
+    expect((await t.state()).errorCategory).toBe("quota");
+    const callsAtBackoff = t.remote.requests.length;
+    await t.sync.run(t.id, "1");
+    expect(t.remote.requests).toHaveLength(callsAtBackoff);
+    // Model the existing 30-second retry deadline without sleeping or altering live state.
+    await database.client`update gmail_account_sync_state set next_attempt_at=now()-interval '1 second' where account_id=${t.id}`;
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    const [inbox] = await database.client`select count(*)::int as count,
+      count(*) filter(where not ('\\Seen'=any(mm.flags)))::int as unread
+      from mailbox_messages mm join mailboxes b on b.id=mm.mailbox_id where b.account_id=${t.id} and b.provider_mailbox_id='INBOX'`;
+    expect(inbox).toEqual({ count: 7, unread: 3 });
+    expect(
+      (await new MailboxService(database.db).listForAccount(t.id)).find(
+        (b) => b.providerMailboxId === "INBOX",
+      ),
+    ).toMatchObject({
+      synchronizedMessageCount: "7",
+      unseenCount: "3",
+      remoteUnseenCount: "3",
+    });
+    const state = await t.state();
+    expect(state.historyId).toBe("100");
+    expect(state.historyRunId).toBe(historyRun);
+    expect(state.inventoryRunId).toBe(inventoryRun);
+    expect(state.inboxSyncedAt).not.toBeNull();
+    expect(state.errorCategory).toBeNull();
+    const [pending] =
+      await database.client`select count(*)::int as count from gmail_sync_work where account_id=${t.id} and status='pending'`;
+    expect(pending.count).toBeGreaterThan(20000);
+    const observation = t.remote.requests.slice(baselineCalls);
+    expect(
+      observation.filter((r) => r.path.startsWith("messages/")).length,
+    ).toBe(7);
+    expect(observation.every((r) => r.method === "GET")).toBe(true);
+    const measurement = {
+      scenario: "inbox-freshness-20k",
+      wallMs: Math.round(performance.now() - start),
+      baselineWallMs: Math.round(afterStart - start),
+      afterWallMs: Math.round(performance.now() - afterStart),
+      baselinePasses: 12,
+      baselineCalls: baselineCalls - baselineStartCalls,
+      afterCalls: observation.length,
+      afterUnits: 151,
+      modeledConvergenceMs: 32000,
+      pending: pending.count,
+    };
+    expect(observation).toHaveLength(10);
+    if (process.env.MAILDOCK_FRESHNESS_MEASUREMENT_PATH)
+      await writeFile(
+        process.env.MAILDOCK_FRESHNESS_MEASUREMENT_PATH,
+        JSON.stringify(measurement, null, 2),
+      );
+  });
   async function pendingWork(accountId: string) {
     return database.db
       .select()
       .from(gmailSyncWork)
       .where(eq(gmailSyncWork.accountId, accountId));
   }
+  it("resumes INBOX pages after partial GET failure and removes only remotely confirmed placements", async () => {
+    const t = await setup();
+    t.remote.fixture("moved", ["INBOX"]);
+    await t.finish();
+    // Remote move has no history event: membership reconciliation must handle it.
+    t.remote.messages.get("moved")!.labelIds = ["Label_one"];
+    for (let n = 0; n < 15; n++)
+      t.remote.fixture(`page-${n}`, ["INBOX", "UNREAD"]);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ inboxSyncedAt: null, nextAttemptAt: null })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    t.remote.failures.set("messages/page-3", 429);
+    await t.sync.run(t.id, "1");
+    expect((await t.state()).inboxNextPageToken).toBeNull();
+    expect((await t.state()).inboxStartedAt).not.toBeNull();
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ nextAttemptAt: null })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.sync.run(t.id, "1");
+    expect((await t.state()).inboxNextPageToken).toBe("12");
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1"); // Exact GET of old local INBOX placement.
+    await t.sync.run(t.id, "1"); // Counter and completion.
+    const [result] =
+      await database.client`select count(*)::int as count from mailbox_messages mm join mailboxes b on b.id=mm.mailbox_id where b.account_id=${t.id} and b.provider_mailbox_id='INBOX'`;
+    expect(result.count).toBe(15);
+    const [canonical] =
+      await database.client`select count(*)::int as count from messages where account_id=${t.id} and provider_message_id='moved'`;
+    expect(canonical.count).toBe(1);
+    expect((await t.state()).inboxStartedAt).toBeNull();
+    expect(t.remote.requests.some((r) => r.path === "messages/moved")).toBe(
+      true,
+    );
+  });
   async function stageBacklog(
     t: Awaited<ReturnType<typeof setup>>,
     count = 300,
@@ -935,6 +1079,9 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
           if ((await t.state()).recentReady) break;
         }
         expect((await t.state()).inventoryComplete).toBe(false);
+        // Observe INBOX before this test changes flags to exercise history counters.
+        for (let i = 0; i < 3 && !(await t.state()).inboxSyncedAt; i++)
+          await t.sync.run(t.id, "1");
       } else await t.finish();
       const service = new MailboxService(database.db);
       expect(
@@ -1916,7 +2063,10 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
         { ...limits, MAILDOCK_GMAIL_DAILY_UNITS: 1000 },
         now,
       ),
-    ).rejects.toMatchObject({ category: "quota" });
+    ).rejects.toMatchObject({
+      category: "quota",
+      details: { source: "local_budget" },
+    });
     await expect(
       reserveGmailQuota(database.db, b.id, 1n, 41, true, limits, now + 180000),
     ).rejects.toMatchObject({ category: "quota" });

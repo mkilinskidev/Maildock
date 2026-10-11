@@ -1488,6 +1488,12 @@ export const gmailAccountSyncState = pgTable(
       withTimezone: true,
     }),
     priorityBurst: integer("priority_burst").default(0).notNull(),
+    inboxStartedAt: timestamp("inbox_started_at", { withTimezone: true }),
+    inboxNextPageToken: text("inbox_next_page_token"),
+    inboxPagesComplete: boolean("inbox_pages_complete")
+      .default(false)
+      .notNull(),
+    inboxSyncedAt: timestamp("inbox_synced_at", { withTimezone: true }),
     lastLowerPriority: integer("last_lower_priority").default(1).notNull(),
     needsWork: boolean("needs_work").default(true).notNull(),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),

@@ -302,6 +302,13 @@
       "when": 1791701706125,
       "tag": "0042_mail_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791705994579,
+      "tag": "0043_gmail_inbox_freshness",
+      "breakpoints": true
     }
   ]
 }

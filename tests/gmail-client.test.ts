@@ -105,6 +105,10 @@ describe("native Gmail bounded HTTP", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(GmailApiError);
         expect(error).toMatchObject({ category });
+        expect(error).toMatchObject({
+          status,
+          details: { source: "gmail_http", reasons: [reason] },
+        });
         expect(String(error)).not.toContain("secret-mail");
       }
     },

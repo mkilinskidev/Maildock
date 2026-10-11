@@ -116,15 +116,19 @@ export class SyntheticGmail {
         .filter(
           (m) =>
             !q ||
-            (q.startsWith("after:")
-              ? Number(m.internalDate) > cutoff
-              : Number(m.internalDate) < cutoff),
+            (q === "in:inbox"
+              ? m.labelIds.includes("INBOX")
+              : q.startsWith("after:")
+                ? Number(m.internalDate) > cutoff
+                : Number(m.internalDate) < cutoff),
         )
         .map((m) => ({ id: m.id }));
       const offset = Number(url.searchParams.get("pageToken") ?? 0);
-      const next = offset + 100 < ids.length ? String(offset + 100) : undefined;
+      const limit = Number(url.searchParams.get("maxResults") ?? 100);
+      const next =
+        offset + limit < ids.length ? String(offset + limit) : undefined;
       return response({
-        messages: ids.slice(offset, offset + 100),
+        messages: ids.slice(offset, offset + limit),
         nextPageToken: this.loop ? "repeat" : next,
       });
     }
