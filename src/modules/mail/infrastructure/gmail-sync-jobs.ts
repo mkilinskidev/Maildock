@@ -101,6 +101,8 @@ export async function registerGmailWorker(
     { localConcurrency: Math.max(2, concurrency), includeMetadata: true },
     safeJobHandler("delta-sync", async (batch) => {
       const request = payload.parse(batch[0]?.data);
+      const priority = (batch[0] as { priority?: number } | undefined)
+        ?.priority;
       await observeSyncDelivery(
         logger,
         batch[0],
@@ -110,7 +112,20 @@ export async function registerGmailWorker(
           phase: "account_sync",
           reason: "unknown",
         },
-        () => service.run(request.accountId, request.accountRevision, signal),
+        () =>
+          service.run(
+            request.accountId,
+            request.accountRevision,
+            signal,
+            false,
+            priority === 100
+              ? 0
+              : priority === 10
+                ? 1
+                : priority === -10
+                  ? 2
+                  : undefined,
+          ),
       );
     }),
   );

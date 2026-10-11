@@ -22,10 +22,7 @@ import {
   assertGmailPublication,
 } from "../infrastructure/gmail-provider";
 import type { GmailAccountLock } from "../infrastructure/gmail-account-lock";
-import {
-  GmailSyncRepository,
-  GMAIL_HISTORY_PENDING_HIGH_WATER,
-} from "../infrastructure/gmail-sync-repository";
+import { GmailSyncRepository } from "../infrastructure/gmail-sync-repository";
 import {
   projectGmailMessage,
   projectGmailBatch,
@@ -33,6 +30,11 @@ import {
 } from "../infrastructure/gmail-projector";
 import { MailboxRoleService } from "./mailbox-role-service";
 import { classifyGmailHistory } from "../domain/gmail-history-priority";
+
+import {
+  readGmailPriorityDecision,
+  type GmailPriorityDecision,
+} from "../infrastructure/gmail-priority-decision";
 
 type State = typeof gmailAccountSyncState.$inferSelect;
 const resetHistory = {
@@ -88,6 +90,7 @@ export class GmailSyncService {
     revision: string,
     signal?: AbortSignal,
     refreshed = false,
+    admittedPriority?: number,
   ): Promise<void> {
     // OAuth's DB-backed refresh happens before reserving execution authority.
     const lease = await this.provider.lease(accountId, revision);
@@ -169,34 +172,41 @@ export class GmailSyncService {
           });
           return;
         }
-        if (!state.baselineHistoryId || state.status === "reconcile_required") {
+        const decision = await readGmailPriorityDecision(db, accountId);
+        // Admission reserves capacity for one frozen class. A changed state or
+        // elapsed fairness deadline must be admitted again before doing work.
+        if (
+          admittedPriority !== undefined &&
+          decision.priority_class !== admittedPriority
+        ) {
+          bestEffortDiagnostic(() =>
+            this.logger?.debug(
+              {
+                event: "mail.gmail_priority_changed",
+                accountId,
+                admittedPriority,
+                priorityClass: decision.priority_class,
+              },
+              "Gmail priority changed before execution",
+            ),
+          );
+          return;
+        }
+        if (decision.action === "bootstrap") {
           await this.bootstrap(db, client, state, revision);
           return;
         }
         if (state.historyRunId) {
-          await this.history(db, client, state, revision);
+          await this.history(db, client, state, revision, decision);
           return;
         }
-        if (state.inventoryRunId) {
-          // Existing rows predate the discovery clock. Establish a durable
-          // deadline once, without promoting every legacy inventory delivery.
-          if (!state.historyDiscoveredAt) {
-            await this.update(db, state, revision, {
-              historyDiscoveredAt: new Date(),
-            });
-            return;
-          }
-          // Use the existing history polling cadence even while one inventory
-          // page takes many deliveries to drain. No extra poller is introduced.
-          if (Date.now() - state.historyDiscoveredAt.getTime() >= 60000) {
-            await this.update(db, state, revision, {
-              ...resetHistory,
-              historyRunId: randomUUID(),
-              historyStartId: state.historyId ?? state.baselineHistoryId,
-              needsWork: true,
-            });
-            return;
-          }
+        if (decision.action === "inventory_clock") {
+          await this.update(db, state, revision, {
+            historyDiscoveredAt: new Date(),
+          });
+          return;
+        }
+        if (decision.action === "inventory") {
           await this.inventory(db, client, state, revision);
           return;
         }
@@ -224,7 +234,7 @@ export class GmailSyncService {
         );
         // HTTP work has released authority. Refresh once outside a pool=1 lease.
         if (error.category === "authentication" && !refreshed)
-          return this.run(accountId, revision, signal, true);
+          return this.run(accountId, revision, signal, true, admittedPriority);
         await this.db.transaction(async (tx) => {
           await assertGmailPublication(tx, accountId, revision);
           const category =
@@ -397,6 +407,7 @@ export class GmailSyncService {
     state: State,
     revision: string,
     purpose: "inventory" | "history",
+    decision?: GmailPriorityDecision,
   ) {
     const runId = (
       purpose === "inventory" ? state.inventoryRunId : state.historyRunId
@@ -440,17 +451,8 @@ export class GmailSyncService {
       .groupBy(gmailSyncWork.priorityClass);
     if (!pending.length) return false;
     const lower = pending.filter((p) => p.priority > 0);
-    const due =
-      state.priorityBurst >= 8 ||
-      (state.priorityBurst > 0 &&
-        lower.some((p) => Date.now() - new Date(p.oldest).getTime() >= 60000));
-    const selected =
-      due && lower.length
-        ? (
-            lower.find((p) => p.priority !== state.lastLowerPriority) ??
-            lower[0]
-          ).priority
-        : Math.min(...pending.map((p) => p.priority));
+    const due = purpose === "history" ? decision!.lower_due : false;
+    const selected = purpose === "history" ? decision!.priority_class : 2;
     const work = await db
       .select()
       .from(gmailSyncWork)
@@ -663,40 +665,22 @@ export class GmailSyncService {
     client: GmailClient,
     state: State,
     revision: string,
+    decision: GmailPriorityDecision,
   ) {
-    const [highWater] =
-      !state.historyPagesComplete && !state.historyDrainDue
-        ? await db
-            .select({ id: gmailSyncWork.gmailMessageId })
-            .from(gmailSyncWork)
-            .where(
-              and(
-                eq(gmailSyncWork.accountId, state.accountId),
-                eq(gmailSyncWork.runId, state.historyRunId!),
-                eq(gmailSyncWork.purpose, "history"),
-                ne(gmailSyncWork.status, "complete"),
-              ),
-            )
-            .offset(GMAIL_HISTORY_PENDING_HIGH_WATER - 1)
-            .limit(1)
-        : [];
-    if (state.historyDrainDue || state.historyPagesComplete || highWater) {
-      // Once every response page is durably staged, a new unfiltered sweep may
-      // start from that discovery cursor while the applied checkpoint stays put.
-      if (
-        state.historyPagesComplete &&
-        state.historyDiscoveredAt &&
-        Date.now() - state.historyDiscoveredAt.getTime() >= 60000
-      ) {
-        await this.update(db, state, revision, {
-          ...resetHistory,
-          historyRunId: state.historyRunId,
-          historyStartId: state.historyCandidateId,
-        });
-        return;
-      }
-      if (await this.drain(db, client, state, revision, "history")) return;
+    if (decision.action === "history_probe") {
+      // Probe the durable discovery cursor without advancing the applied checkpoint.
+      await this.update(db, state, revision, {
+        ...resetHistory,
+        historyRunId: state.historyRunId,
+        historyStartId: state.historyCandidateId,
+      });
+      return;
     }
+    if (
+      decision.action === "drain" &&
+      (await this.drain(db, client, state, revision, "history", decision))
+    )
+      return;
     if (!state.historyPagesComplete) {
       const page = await client.history(
         state.historyStartId!,
