@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.2 — Initial Inbox Window decisions approved; other sections pending review**
+Status: **Draft 0.3 — Initial Inbox Window and continuous server-side freshness policy approved; latency and architecture pending review**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
@@ -86,7 +86,7 @@ Test both IMAP and native Gmail REST, using realistic provider-backed and fault-
 
 1. Exact provider-appropriate ordering and meaning of the 30-day window (internal timestamp versus received date), and tie-breaking.
 2. Bootstrap reference, consistent paging semantics, and how to detect changes during enumeration.
-3. Inbox Freshness targets, polling/wakeup strategy, measurement points and realistic SLA by provider.
+3. Inbox Freshness measurement thresholds, polling/wakeup strategy and realistic SLA by provider (continuous server sync policy approved).
 4. Capacity reservation/fairness under provider limits, multiple accounts and recovery.
 5. Exact meaning and UI representation of history coverage, retry and status.
 6. Migration and compatibility strategy; preserve existing data, stable identifiers and other product features unless explicitly approved otherwise.
@@ -101,3 +101,66 @@ Test both IMAP and native Gmail REST, using realistic provider-backed and fault-
 6. Implement only after review and approval.
 
 Documentation-only change; no implementation authorized.
+
+## Approved: Continuous Inbox Freshness (IF)
+
+Decision (2026-10-11): **Synchronization runs continuously on the server regardless of whether a browser is open or a user is active.** Browser activity, tab visibility and UI sessions MUST NOT gate or determine baseline receive synchronization. The browser displays locally materialized data; browser-side refresh/notifications are a separate presentation concern. The system is not allowed to wait for a web request to start routine incoming-mail work.
+
+### Product invariants
+
+- **IF-001 — Independence:** Current INBOX synchronization is autonomous and continuous per enabled, connected account, including during initial bootstrap and historical backfill.
+- **IF-002 — Bounded service opportunity:** No Maildock-controlled historical import, mass reconciliation, batch deletion, job backlog, DB transaction or provider-request concurrency may monopolize the resources required by current INBOX work indefinitely. Priority must be effective at execution/resource admission, not only in queue names. This is a fairness requirement, not preemption of every in-flight provider request.
+- **IF-003 — Durable wake and recovery:** Events, IDLE, timers and eventual push notifications are wake-up hints, not authoritative checkpoints. Lost wakeups, worker restarts and transient disconnects are repaired by persisted eligible work plus periodic reconciliation.
+- **IF-004 — Safe state:** A checkpoint may advance only after covered changes are durably applied. Retries or overlapping runs must not resurrect deleted mail, override newer authoritative flags or duplicate logical messages. Remote provider remains authoritative except for explicitly pending local commands.
+- **IF-005 — Account isolation:** An unavailable or heavily backfilling account must not indefinitely block healthy accounts; shared provider-level quotas, DB pool pressure and global worker resources also require fairness and limits.
+- **IF-006 — Resource-aware providers:** Respect provider backoff/Retry-After, IMAP connection limits, and Gmail REST weighted user/project quota. Reserve appropriate Maildock-controlled capacity for freshness and commands while preventing history from starving permanently. Provider-wide external throttling/outages cannot be overridden or hidden.
+- **IF-007 — Observability:** Record separately last attempted check, last confirmed successful reconciliation, detected-change time, durable materialization time, pending-work age, effective provider backoff, bootstrap and history status. Stale/error states must remain visible; do not present a success timestamp based solely on enqueue or failed polling.
+- **IF-008 — UI independence:** Once a message is committed to PostgreSQL, an active UI must make it visible without requiring full page reload, subject to a separately tested UI propagation target. Offline browser does not stop server sync; reopening shows persisted latest known state.
+- **IF-009 — Manual refresh:** Owner-initiated refresh requests high-priority reconciliation, coalesces redundant requests, and reports pending/throttled/errors transparently. It must not bypass external provider rate limits, displace already pending user mutations unsafely, or spawn unbounded duplicate jobs.
+- **IF-010 — Progress during continuous arrivals:** New messages continue to be processed during bootstrap. A fixed initial window can reach INBOX READY despite continuing arrivals; the ongoing freshness stream does not require a quiet mailbox to complete.
+- **IF-011 — No false guarantee:** Account status distinguishes healthy, degraded, retry/backoff, reconnect/authentication required and stale; the status may not imply zero lag simply because a watcher is connected.
+
+### Semantics and measurement
+
+Measure separately (1) **detection latency** from the provider-observable change to Maildock detection, (2) **materialization latency** to durable database commit and (3) **UI propagation latency** from DB commit to visibility in an active client. End-to-end time from actual remote delivery is a useful live-test measure where a trustworthy injection/delivery timestamp exists, but cannot always be inferred from provider message headers. Monitor both typical and tail latency during idle and large backfill.
+
+An IMAP IDLE notification is not proof of reconciliation and Gmail history polling is not a push subscription. Where supported, low-latency provider hints should wake work; fallback polling/reconciliation is required regardless.
+
+Provisional **targets to validate, not approved SLAs** under healthy providers and configured budgets:
+- IMAP with a functioning IDLE signal: typically up to 5 seconds from provider-observable change to local materialization.
+- Gmail REST without push: typically up to 30 seconds, depending on configured polling interval and provider limits.
+- Manual refresh: begin eligible work within 2 seconds of acceptance **when internal capacity is available**; completion is a separate metric.
+- A loaded active browser should update promptly after database commit; precise target remains open.
+
+These values require instrumented provider-backed measurement and load tests before they can become release gates. Never claim unconditional sub-second or fixed delivery under outage, provider quota exhaustion, network failure or unavailable workers.
+
+### Provider and browser policy
+
+- IMAP: use IDLE where supported as a change hint, accompanied by delta reconciliation and polling fallback. Do not treat the IMAP connection as a durable event log.
+- Native Gmail REST: use history checkpoints and bounded periodic checks. Google Pub/Sub push is **not a required dependency** of the self-hosted app; any future optional push must preserve the same correctness and recovery contract.
+- Continuous server synchronization policy is fixed across browser-open, browser-closed, foreground and background states. UI activity may initiate an explicit manual refresh but does not silently tune baseline polling.
+
+### Acceptance scenarios (proposed, testable; time thresholds pending benchmarks)
+
+| ID | Scenario | Pass condition |
+| --- | --- | --- |
+| IF-A01 | Close all browser tabs for an extended interval | Server continues reconciling enabled accounts and persists received messages. |
+| IF-A02 | Backfill tens of thousands of historical messages | New INBOX changes are serviced within the same measured freshness envelope as without backfill, within an agreed tolerance. |
+| IF-A03 | One account fails auth or is offline while another is healthy | Healthy account continues receiving; failing account shows actionable status and controlled retry. |
+| IF-A04 | Restart worker just before or after receiving a signal | Periodic durable recovery eventually schedules reconciliation; no lost eligible work or false success checkpoint. |
+| IF-A05 | Gmail quota 429/403 or IMAP disconnect | Respect provider retry constraints, avoid retry storms, preserve checkpoint and surface stale/backoff status. |
+| IF-A06 | 15,000 historical deletions or flag changes | Reconciliation is chunked/fair and does not starve fresh INBOX work. |
+| IF-A07 | Repeat or overlap wakeups | No unbounded duplicate provider activity or duplicate logical messages. |
+| IF-A08 | New message arrives while initial window materializes | It receives priority without moving the frozen window indefinitely. |
+| IF-A09 | Active UI, new message persisted | UI eventually displays it without reload and within separately defined propagation target. |
+| IF-A10 | Manual refresh during quota backoff | Respect backoff, give truthful feedback, do not bypass remote limits. |
+
+### Open for next review
+
+- Quantitative p50/p95/p99 or worst-case service-opportunity targets, measured with and without backfill.
+- Provider-specific polling cadence, jitter and backoff strategy; live-connection scaling for IMAP.
+- Shared-budget reservation and cross-account fairness policy; progress guarantees for history.
+- UI propagation contract and diagnostic vocabulary (last successful reconciliation versus newest known message).
+- Provider-specific deltas, cursor expiry and reconciliation boundaries under deletions and changed flags.
+
+This section is product scope and acceptance criteria, not permission to implement a scheduler or change runtime.
