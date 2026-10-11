@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.3 — Initial Inbox Window and continuous server-side freshness policy approved; latency and architecture pending review**
+Status: **Draft 0.4 — Initial Inbox Window, continuous server-side freshness and Inbox-first resource policy approved; latency and architecture pending review**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
@@ -159,8 +159,37 @@ These values require instrumented provider-backed measurement and load tests bef
 
 - Quantitative p50/p95/p99 or worst-case service-opportunity targets, measured with and without backfill.
 - Provider-specific polling cadence, jitter and backoff strategy; live-connection scaling for IMAP.
-- Shared-budget reservation and cross-account fairness policy; progress guarantees for history.
+- Concrete shared-budget reservation and cross-account fairness mechanisms; quantitative history-progress targets (the Inbox-first policy is approved).
 - UI propagation contract and diagnostic vocabulary (last successful reconciliation versus newest known message).
 - Provider-specific deltas, cursor expiry and reconciliation boundaries under deletions and changed flags.
 
 This section is product scope and acceptance criteria, not permission to implement a scheduler or change runtime.
+
+## Approved: Resource allocation — Inbox First, History With Leftovers
+
+Decision (2026-10-11): **Within the capacity controlled by Maildock, serve current INBOX synchronization across all enabled accounts first. Allocate capacity remaining after that demand to other folders, maintenance, and historical backfill.** This policy applies during bootstrap as well as steady state, and does not depend on browser activity.
+
+- **RI-001 — Current-INBOX first:** Admit eligible current-INBOX detection and materialization work ahead of historical and bulk maintenance work. Treat its required provider, worker and database capacity as protected, not merely its queue label.
+- **RI-002 — Fairness among accounts:** All healthy enabled accounts must have bounded opportunities to synchronize their current INBOX. A busy account must not monopolize shared capacity or indefinitely starve another.
+- **RI-003 — Leftover capacity:** When current-INBOX demand is satisfied or waiting for the next provider check, other work can consume available capacity. Do not reserve idle capacity unnecessarily. History must progress when usable resources remain.
+- **RI-004 — Work already in progress:** Existing bounded operations need not be forcibly cancelled. History must run in bounded units and yield at admission boundaries so fresh INBOX work can start promptly.
+- **RI-005 — Provider-specific budgets:** Gmail REST quota units and time windows, IMAP connection/concurrency limits, worker slots, database contention, and any shared quotas all constrain actual available work. Never invent a single universal 'units per session' measure or bypass external backoff and limits.
+- **RI-006 — Failure isolation and recovery:** 403/429, IMAP disconnects, unavailable accounts, restarts or duplicate wakeups must not create unbounded retries, exhaust shared capacity, or lose committed progress.
+- **RI-007 — Truthful degraded behavior:** If the provider or shared resource cap makes it impossible to fully satisfy every INBOX immediately, allocate fairly, show staleness/backoff and recover automatically when capacity returns. Priority is not an unconditional latency guarantee.
+
+The initial bootstrap gate remains in force: for a newly configured account, its first INBOX window must materialize before that account begins historical import; freshness signals during bootstrap remain eligible for priority service. Other existing accounts continue to receive their normal INBOX opportunities.
+
+**Design deferred:** concrete scheduler structure, logical/physical execution pools, reservation percentages, poll cadence, fairness algorithm, per-provider resource accounting, and quantitative latency bounds. Do not implement complexity solely to realize a priority label; assess the simplest mechanism that satisfies the invariants.
+
+### Resource-isolation acceptance cases
+
+| ID | Situation | Required result |
+| --- | --- | --- |
+| RI-T01 | Account A imports 80,000 older messages and reconciles 15,000 historical deletions; account B receives 10 new messages | Account B's INBOX receives timely access to resources; history need not finish first. |
+| RI-T02 | Two or more accounts receive new INBOX messages simultaneously | Each account gets a bounded service opportunity; no single account monopolizes a shared budget. |
+| RI-T03 | No INBOX work is currently eligible | History can consume available capacity subject to provider and worker limits. |
+| RI-T04 | New INBOX work arrives during history | At the next bounded scheduling/admission point, capacity is preferentially assigned to INBOX. |
+| RI-T05 | One account is throttled/offline | Its retries are controlled and other healthy accounts continue. |
+| RI-T06 | Global/provider shared quota is exhausted | Do not violate restrictions or claim freshness; surface backoff and resume fairly. |
+
+This is an approved product-level resource policy, not an approval of a particular implementation.
