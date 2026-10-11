@@ -45,7 +45,7 @@ Examples:
 - Prioritization must apply to actual execution resources (provider access, concurrency, rate-limit budget and database work), not merely queue labels.
 - Work that has already started need not be interrupted, but high-priority work must have a bounded opportunity to execute under resources controlled by Maildock.
 - During bootstrap, new arrivals are tracked and reconciled without repeatedly resetting the fixed initial window.
-- History may progress using available capacity; it must not permanently starve, and it must not exhaust all Maildock-controlled provider capacity needed to service current INBOX.
+- History may progress only using capacity left after eligible current-INBOX work and individual interactive user actions. If they continuously consume all available capacity, history may legitimately remain paused without a completion-time guarantee.
 - External provider outages/quotas mean no unconditional wall-clock delivery guarantee is promised.
 - Detecting changes and fully materializing them are distinct stages; both need observability.
 
@@ -112,7 +112,7 @@ Decision (2026-10-11): **Synchronization runs continuously on the server regardl
 - **IF-003 — Durable wake and recovery:** Events, IDLE, timers and eventual push notifications are wake-up hints, not authoritative checkpoints. Lost wakeups, worker restarts and transient disconnects are repaired by persisted eligible work plus periodic reconciliation.
 - **IF-004 — Safe state:** A checkpoint may advance only after covered changes are durably applied. Retries or overlapping runs must not resurrect deleted mail, override newer authoritative flags or duplicate logical messages. Remote provider remains authoritative except for explicitly pending local commands.
 - **IF-005 — Account isolation:** An unavailable or heavily backfilling account must not indefinitely block healthy accounts; shared provider-level quotas, DB pool pressure and global worker resources also require fairness and limits.
-- **IF-006 — Resource-aware providers:** Respect provider backoff/Retry-After, IMAP connection limits, and Gmail REST weighted user/project quota. Reserve appropriate Maildock-controlled capacity for freshness and commands while preventing history from starving permanently. Provider-wide external throttling/outages cannot be overridden or hidden.
+- **IF-006 — Resource-aware providers:** Respect provider backoff/Retry-After, IMAP connection limits, and Gmail REST weighted user/project quota. Protect service opportunities for current-INBOX freshness and individual interactive actions; history advances only when capacity remains and has no unconditional progress guarantee under sustained foreground demand. Provider-wide external throttling/outages cannot be overridden or hidden.
 - **IF-007 — Observability:** Record separately last attempted check, last confirmed successful reconciliation, detected-change time, durable materialization time, pending-work age, effective provider backoff, bootstrap and history status. Stale/error states must remain visible; do not present a success timestamp based solely on enqueue or failed polling.
 - **IF-008 — UI independence:** Once a message is committed to PostgreSQL, an active UI must make it visible without requiring full page reload, subject to a separately tested UI propagation target. Offline browser does not stop server sync; reopening shows persisted latest known state.
 - **IF-009 — Manual refresh:** Owner-initiated refresh requests high-priority reconciliation, coalesces redundant requests, and reports pending/throttled/errors transparently. It must not bypass external provider rate limits, displace already pending user mutations unsafely, or spawn unbounded duplicate jobs.
@@ -168,10 +168,10 @@ This section is product scope and acceptance criteria, not permission to impleme
 
 Decision (2026-10-11): **Within the capacity controlled by Maildock, serve current INBOX synchronization across all enabled accounts first. Allocate capacity remaining after that demand to other folders, maintenance, and historical backfill.** This policy applies during bootstrap as well as steady state, and does not depend on browser activity.
 
-- **RI-001 — Current-INBOX first:** Admit eligible current-INBOX detection and materialization work ahead of historical and bulk maintenance work. Treat its required provider, worker and database capacity as protected, not merely its queue label.
+- **RI-001 — Current-INBOX first:** Admit eligible current-INBOX detection and materialization **and individual interactive user actions/content requests** ahead of historical and bulk maintenance work. Treat its required provider, worker and database capacity as protected, not merely its queue label.
 - **RI-002 — Fairness among accounts:** All healthy enabled accounts must have bounded opportunities to synchronize their current INBOX. A busy account must not monopolize shared capacity or indefinitely starve another.
-- **RI-003 — Leftover capacity:** When current-INBOX demand is satisfied or waiting for the next provider check, other work can consume available capacity. Do not reserve idle capacity unnecessarily. History must progress when usable resources remain.
-- **RI-004 — Work already in progress:** Existing bounded operations need not be forcibly cancelled. History must run in bounded units and yield at admission boundaries so fresh INBOX work can start promptly.
+- **RI-003 — Leftover capacity:** When current-INBOX demand is satisfied or waiting for the next provider check, other work can consume available capacity. Do not reserve idle capacity unnecessarily. History must make progress when capacity is genuinely left over after current-INBOX and individual interactive demand; its liveness is conditional on such leftover capacity.
+- **RI-004 — Work already in progress:** Existing bounded operations need not be forcibly cancelled. History must run in bounded units and yield at admission boundaries so protected current-INBOX and individual interactive work can start promptly.
 - **RI-005 — Provider-specific budgets:** Gmail REST quota units and time windows, IMAP connection/concurrency limits, worker slots, database contention, and any shared quotas all constrain actual available work. Never invent a single universal 'units per session' measure or bypass external backoff and limits.
 - **RI-006 — Failure isolation and recovery:** 403/429, IMAP disconnects, unavailable accounts, restarts or duplicate wakeups must not create unbounded retries, exhaust shared capacity, or lose committed progress.
 - **RI-007 — Truthful degraded behavior:** If the provider or shared resource cap makes it impossible to fully satisfy every INBOX immediately, allocate fairly, show staleness/backoff and recover automatically when capacity returns. Priority is not an unconditional latency guarantee.
@@ -345,3 +345,30 @@ No provider-specific query, scan ceiling, SLA, schema, queue or algorithm is app
 | BR-T06 | Full history still has tens of thousands of messages after T1 | READY is possible; history coverage remains separately incomplete. |
 
 No scheduler algorithm, quota split, batch size, exact T1 provider method, code change or schema change is approved by this clarification.
+
+## Approved: C-03 foreground resource policy (RA)
+
+Decision (2026-10-11): **Current INBOX work and individual user-initiated operations have equally protected service opportunities.** Historical synchronization, old bulk reconciliation and bulk user operations may use *only leftover* provider, worker and database capacity. When no capacity remains, background progress may pause without a completion-time guarantee.
+
+- **RA-01 — Protected foreground opportunities:** Current-INBOX detection/materialization and individual user requests such as read/unread, archive/move/trash and on-demand message body/attachment retrieval must each have a bounded opportunity to start work under resources controlled by Maildock. Neither foreground category may monopolize shared capacity and starve the other.
+- **RA-02 — No full-INBOX wait for actions:** An accepted individual user action must not wait for complete INBOX bootstrap, current-folder sweep or historical import merely to obtain execution capacity; provider-specific prerequisites and legitimate remote limits still apply.
+- **RA-03 — Background only with leftovers:** Historical backfill, old large-scale reconciliation and bulk mutations consume capacity remaining after eligible foreground demand; bulk work is not assigned unlimited interactive priority merely because a user triggered it.
+- **RA-04 — Conditional history progress:** With sustained foreground load exhausting the available budget, history can remain paused indefinitely without violating the product contract. If residual capacity is available and provider conditions permit, it should be used for eligible background work.
+- **RA-05 — Bounded execution:** Long work is divided into bounded units with yield/admission points. This is cooperative scheduling, not a promise to cancel already-started provider requests.
+- **RA-06 — Shared real resource constraints:** Account/provider and project quota windows (including local Gmail daily ceilings), IMAP connection constraints, worker capacity and database connections/locks all affect the effective budget. External throttling/backoff is always respected.
+- **RA-07 — Cross-account fairness:** Foreground work of one healthy account must not indefinitely monopolize Maildock-controlled capacity to the detriment of another eligible healthy account.
+- **RA-08 — Provider-dependent detection:** Provider-wide Gmail history reads that are necessary to detect fresh INBOX changes are foreground detection work when appropriately scoped, not automatically labeled historical import merely because the API operation is named `history.list`. Large subsequent cleanup is still bounded/background.
+- **RA-09 — No premature implementation policy:** Equal protection means mutual non-starvation and bounded service opportunities, **not** mandatory 50/50 quotas, a specific queue topology, or identical wall-clock durations. Exact fairness and capacity reservations are future design/validation questions.
+
+### Resource acceptance additions
+
+| ID | Situation | Expected result |
+| --- | --- | --- |
+| RA-T01 | Long current-INBOX reconciliation, user opens a message and marks another read | Both user actions receive bounded service opportunity before the entire sweep finishes. |
+| RA-T02 | User generates a large bulk operation while new mail arrives | Bulk execution yields; fresh INBOX work is not starved. |
+| RA-T03 | INBOX work and individual actions continuously exhaust provider quota | No unconditional historical progress/completion is promised; no external quota is bypassed. |
+| RA-T04 | Foreground demand subsides | Available residual capacity is usable by historical work. |
+| RA-T05 | Two accounts share a constrained Gmail project budget | Healthy foreground work is fairly admitted; another account cannot consume all available capacity indefinitely. |
+| RA-T06 | Provider imposes rate limits or account is in backoff | User sees pending/degraded status, no false success and no retry storm. |
+
+This resolves independent-review C-03 at the **product policy level**. It does not establish concrete quotas, queue scheduling, worker concurrency, measured latency, or implementation authority.
