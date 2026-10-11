@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.6 — Initial Inbox Window, freshness, resources, checkpoints/recovery and optimistic reconciliation approved; technical design pending**
+Status: **Draft 0.7 — Fresh-install-only v2 scope approved; other technical design decisions pending**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
@@ -283,3 +283,27 @@ Decision (2026-10-11): **Use immediate optimistic UI updates, backed by durable 
 Transport-specific command semantics (including whether an operation is safe to retry), persistence layout, conflict guards/versions, execution serialization and coalescing, reconciler algorithms, precise identity across IMAP moves, counter coverage and UI state terminology must be designed and validated separately. Provider checkpoints and failure recovery must satisfy CR-001–CR-006. Existing sending/draft semantics must not be rewritten as a side effect.
 
 This section is an approved product contract only: no code, schema, deployment or migration changes are authorized.
+
+## Approved: Installation baseline and migration scope (MI)
+
+Decision (2026-10-11): **Sync Engine v2 is intended exclusively for new Maildock installations, initialized with a fresh PostgreSQL database.** No existing installation is an authorized in-place data-migration source for the v2 launch. This resolves independent review C-04's product scope; it does not by itself resolve schema, bootstrap or deployment design.
+
+- **MI-001 — New installation only:** v2 bootstraps into a newly initialized, empty Maildock database, using a coherent versioned schema and corresponding application binaries.
+- **MI-002 — No v1 data upgrade:** Migration/conversion from stable `main` v1.0.0, experimental native Gmail v1-final, or other existing Maildock databases is out of scope. Do not build legacy UID/label identity conversion or preserve v1 local UUIDs across a separate new installation.
+- **MI-003 — No implied data preservation by reinstall:** Remote mail can be re-synchronized if still present on the provider. Local-only drafts, outgoing state, command state, cache, local UUID links and other installation-bound data are **not** automatically transferable. Never represent a fresh install as a lossless migration.
+- **MI-004 — Preserve product functionality, not legacy data:** The new receiving engine must preserve supported Maildock UI, authentication/OAuth, local drafts, SMTP sending, content and attachments, user commands, search, conversations and existing security controls as working capabilities in the new installation.
+- **MI-005 — Forward upgrades within v2:** From the first released v2 installation onward, ordinary updates require supported non-destructive schema/data evolution and recovery compatibility. Fresh-only launch scope is not permission to reset an already initialized v2 database for each release.
+- **MI-006 — Safe coexistence and release boundaries:** v2 must not silently take over or overwrite an existing v1 database or blob directory. Existing guard/compatibility checks remain protective until a reviewed v2-specific initialization/version check exists. Do not bypass a guard merely to boot v2 against an incompatible database.
+- **MI-007 — No automatic conversion/rollback claim:** Rolling back the application binary must be compatible with the exact schema and persistent state. Do not promise downgrade between v1 and v2 or automatic restoration of old local data; document restore prerequisites for supported v2 releases.
+
+### Installation acceptance cases
+
+| ID | Situation | Required result |
+| --- | --- | --- |
+| MI-T01 | New v2 deployment with empty database and clean storage | Initializes supported v2 schema and begins account onboarding without legacy conversion steps. |
+| MI-T02 | v2 binary is pointed at pre-existing v1 database | Fails safely with actionable incompatibility explanation; does not rewrite, wipe or opportunistically migrate it. |
+| MI-T03 | New account connects to an existing remote mailbox | Pulls remote messages according to IIW/backfill; does not claim to restore old local-only application state. |
+| MI-T04 | A subsequent supported v2 application release upgrades a populated v2 database | Preserves supported data and runs reviewed forward migrations safely. |
+| MI-T05 | Administrator requests downgrade to v1 | No automatic binary/schema downgrade is promised; supply clear incompatibility/restore guidance. |
+
+**Deferred:** exact version markers, migration filenames, schema initialization procedure, bootstrap release checks, backup/restore runbook and v2-to-v2 compatibility matrix. This decision authorizes documentation only, not reset operations or deployment changes.
