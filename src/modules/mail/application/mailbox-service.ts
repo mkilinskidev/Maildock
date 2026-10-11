@@ -13,6 +13,7 @@ import type { Database } from "../../../shared/infrastructure/database/database"
 import {
   mailboxMessages,
   mailboxes,
+  messages,
 } from "../../../shared/infrastructure/database/schema";
 
 type MailboxRow = typeof mailboxes.$inferSelect;
@@ -31,10 +32,13 @@ export type MailboxView = Readonly<{
   uidNext: string | null;
   highestModseq: string | null;
   messageCount: string | null;
+  /** Distinct locally materialized unread messages in the active mailbox. */
   unseenCount: string | null;
+  /** Remote provider observation, never the visible badge source. */
+  remoteUnseenCount?: string | null;
   unseenCountObservedAt: string | null;
   synchronizedMessageCount: string;
-  /** Additive Phase 1 observation; legacy badge fields await coherent refresh. */
+  /** Local materialized counts and separate remote diagnostics. */
   counterObservation?: MailboxCounterObservation;
   lifecycleStatus: "active" | "missing";
   firstDiscoveredAt: string;
@@ -91,15 +95,13 @@ function view(
     uidNext: row.uidNext?.toString() ?? null,
     highestModseq: row.highestModseq?.toString() ?? null,
     messageCount: row.reportedMessageCount?.toString() ?? null,
-    unseenCount: row.reportedUnseenCount?.toString() ?? null,
-    // Native label projection preserves updatedAt until labels.get publishes
-    // counters; a history checkpoint alone does not confirm this observation.
-    unseenCountObservedAt:
-      row.receiveTransport === "gmail"
-        ? row.reportedUnseenCount !== null
-          ? row.updatedAt.toISOString()
-          : null
-        : (row.lastSuccessfulDeltaSyncAt?.toISOString() ?? null),
+    unseenCount:
+      row.selectable && row.lifecycleStatus === "active"
+        ? counterObservation.local.unreadCount
+        : "0",
+    remoteUnseenCount: row.reportedUnseenCount?.toString() ?? null,
+    // Dates the local query snapshot, never a provider observation.
+    unseenCountObservedAt: counterObservation.local.sampledAt,
     synchronizedMessageCount,
     counterObservation,
     lifecycleStatus: row.lifecycleStatus as "active" | "missing",
@@ -167,8 +169,8 @@ export class MailboxService {
     accountId: string,
     includeMissing = false,
   ): Promise<MailboxView[]> {
-    // One SQL statement gives mailbox observations and local aggregates the
-    // same DB snapshot. It does not coordinate the separate message-list API.
+    // Counts and observations share a SQL snapshot. The publication envelope
+    // additionally coordinates this query with message rows and reader flags.
     const counts = this.database
       .select({
         mailboxId: mailboxMessages.mailboxId,
@@ -183,7 +185,13 @@ export class MailboxService {
           ),
       })
       .from(mailboxMessages)
-      .where(eq(mailboxMessages.accountId, accountId))
+      .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
+      .where(
+        and(
+          eq(mailboxMessages.accountId, accountId),
+          sql`${messages.remoteMissingAt} is null`,
+        ),
+      )
       .groupBy(mailboxMessages.mailboxId)
       .as("local_counts");
     const rows = await this.database
@@ -210,8 +218,14 @@ export class MailboxService {
         row.mailbox,
         row.count ?? "0",
         mailboxCounterObservation({
-          localMessageCount: row.visibleCount ?? "0",
-          localUnreadCount: row.unreadCount ?? "0",
+          localMessageCount:
+            row.mailbox.selectable && row.mailbox.lifecycleStatus === "active"
+              ? (row.visibleCount ?? "0")
+              : "0",
+          localUnreadCount:
+            row.mailbox.selectable && row.mailbox.lifecycleStatus === "active"
+              ? (row.unreadCount ?? "0")
+              : "0",
           remoteMessageCount:
             row.mailbox.reportedMessageCount?.toString() ?? null,
           remoteUnreadCount:

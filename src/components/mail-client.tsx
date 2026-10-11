@@ -30,12 +30,6 @@ import { MailOpen, Plus, RefreshCw, Settings2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
-import {
-  applyMailboxCounterSnapshot,
-  projectedUnreadCount,
-  type CountAdjustment,
-  type UnreadCounterState,
-} from "@/modules/mail/domain/unread-counters";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
 import type {
   MessageListItem,
@@ -108,6 +102,21 @@ export function MailClient({
   const conversationView = initialConversationView;
   const listModeRef = useRef(conversationView);
   const [listReloadNonce, setListReloadNonce] = useState(0);
+  const [publicationNonce, setPublicationNonce] = useState(0);
+  // All Inboxes must use the deduplicated aggregate supplied by the envelope.
+  const [allInboxesUnread, setAllInboxesUnread] = useState("0");
+  const [syncCoverage, setSyncCoverage] = useState<
+    import("@/modules/mail/application/mail-publication-service").MailPublication["coverage"]
+  >({});
+  const postingActions = useRef(new Set<string>());
+  const publicationRequestEpoch = useRef(0);
+  const snapshotReader = useRef<{
+    scope: string;
+    id: string;
+    seen: boolean;
+    flagged: boolean;
+  } | null>(null);
+  const publishedRevision = useRef<string | undefined>(undefined);
   const [memberSelection, setMemberSelection] = useState<{
     message: MessageListItem & { mailboxId: string };
     location: string;
@@ -202,23 +211,10 @@ export function MailClient({
   const [accountId, setAccountId] = useState(
     initialNotification?.accountId ?? first?.id ?? "",
   );
-  // Counts and their optimistic overlays must change in the same state update.
-  const [counterState, setCounterState] = useState<UnreadCounterState>({
-    boxes: mailboxesByAccount,
-    adjustments: [],
-  });
-  const liveMailboxesByAccount = counterState.boxes;
-  const countAdjustments = counterState.adjustments;
-  const setCountAdjustments = useCallback(
-    (update: (current: CountAdjustment[]) => CountAdjustment[]) => {
-      setCounterState((current) => {
-        const adjustments = update(current.adjustments);
-        return adjustments === current.adjustments
-          ? current
-          : { ...current, adjustments };
-      });
-    },
-    [],
+  const [liveMailboxesByAccount, setLiveMailboxesByAccount] =
+    useState(mailboxesByAccount);
+  const [enabledAccountIds, setEnabledAccountIds] = useState(
+    accounts.filter((a) => a.enabled).map((a) => a.id),
   );
   const [liveRolesByAccount, setLiveRolesByAccount] = useState(rolesByAccount);
   const [folderReloadNonce, setFolderReloadNonce] = useState(0);
@@ -267,7 +263,6 @@ export function MailClient({
       {
         accountId: string;
         mailboxId: string;
-        adjustmentKey: string | null;
         targetKey: string;
         feedbackId?: string;
         target: ActionTarget;
@@ -331,10 +326,6 @@ export function MailClient({
         .join(" · "),
     );
   }
-  const hasGmail = accounts.some(
-    (item) => item.enabled && item.receiveTransport === "gmail",
-  );
-
   const folder = folders.find((item) => item.id === mailboxId);
   const base = allInboxes
     ? "/api/mail/all-inboxes"
@@ -357,6 +348,7 @@ export function MailClient({
       location,
     });
     setSelectedId(message.id);
+    snapshotReader.current = null;
     setDetail(null);
     setReaderError("");
     setLoadingDetail(true);
@@ -500,23 +492,6 @@ export function MailClient({
       (action === "archive" &&
         (targetAccount?.receiveTransport !== "gmail" ||
           targetMailbox?.providerMailboxId === "INBOX"));
-    const countDelta =
-      action === "mark_read" && !target.seen
-        ? -1
-        : action === "mark_unread" && target.seen
-          ? 1
-          : 0;
-    const adjustmentKey = countDelta === 0 ? null : crypto.randomUUID();
-    if (adjustmentKey)
-      setCountAdjustments((current) => [
-        ...current,
-        {
-          key: adjustmentKey,
-          mailboxId: target.mailboxId,
-          delta: countDelta,
-          completedAt: null,
-        },
-      ]);
     const flags = {
       seen:
         action === "mark_read"
@@ -578,6 +553,8 @@ export function MailClient({
             targetKey(item) === key ? { ...item, ...flags } : item,
           ),
     );
+    postingActions.current.add(key);
+    publicationRequestEpoch.current++;
     try {
       const response = await fetch(
         `/api/accounts/${target.accountId}/mailboxes/${target.mailboxId}/messages/${targetId}/actions`,
@@ -595,7 +572,6 @@ export function MailClient({
         [result.id!]: {
           accountId: target.accountId,
           mailboxId: target.mailboxId,
-          adjustmentKey,
           targetKey: key,
           feedbackId,
           target,
@@ -604,14 +580,15 @@ export function MailClient({
           location: selectionLocation,
         },
       }));
+      postingActions.current.delete(key);
+      publicationRequestEpoch.current++;
+      setFolderReloadNonce((n) => n + 1);
       if (searchActive) setSearchRefresh((n) => n + 1);
     } catch (failure) {
+      postingActions.current.delete(key);
+      publicationRequestEpoch.current++;
       activeActions.current.delete(key);
       finishFeedback(feedbackId, false);
-      if (adjustmentKey)
-        setCountAdjustments((current) =>
-          current.filter((item) => item.key !== adjustmentKey),
-        );
       if (activeLocationRef.current === requestLocation) {
         // Restore only this item: other queued commands retain their projection.
         if (!searchActive && !conversationView && previous)
@@ -928,17 +905,6 @@ export function MailClient({
                 }
               }
             }
-            setCountAdjustments((current) =>
-              current.flatMap((adjustment) => {
-                const match = finished.find(
-                  (item) =>
-                    pendingCommands[item.id]?.adjustmentKey === adjustment.key,
-                );
-                if (!match) return [adjustment];
-                if (match.status === "failed") return [];
-                return [{ ...adjustment, completedAt: match.completedAt }];
-              }),
-            );
             setPendingCommands((current) => {
               const next = { ...current };
               for (const item of finished) delete next[item.id];
@@ -981,7 +947,6 @@ export function MailClient({
     actionAccountId,
     allInboxes,
     selectionLocation,
-    setCountAdjustments,
   ]);
 
   const applyFirstPage = useCallback((page: MessagePage) => {
@@ -1004,87 +969,93 @@ export function MailClient({
   }, []);
 
   useEffect(() => {
-    if (!accountId) return;
-    let cancelled = false;
-    let busy = false;
-    const lastPolled = new Map<string, number>();
-    const load = (force = true) => {
-      if (document.visibilityState !== "visible" || busy) return;
-      busy = true;
-      void Promise.allSettled(
-        accounts
-          .filter((account) => {
-            const interval =
-              account.receiveTransport === "gmail" ? 10_000 : 20_000;
-            return (
-              force ||
-              Date.now() - (lastPolled.get(account.id) ?? 0) >= interval
-            );
-          })
-          .map(async ({ id: pollAccountId }) => {
-            lastPolled.set(pollAccountId, Date.now());
-            return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
-              cache: "no-store",
-            })
-              .then(async (response) => {
-                if (!response.ok)
-                  throw new Error("Mailboxes could not be loaded.");
-                return response.json() as Promise<{
-                  mailboxes: MailboxView[];
-                  roles: MailboxRoleView[];
-                }>;
-              })
-              .then((result) => {
-                if (!cancelled) {
-                  setCounterState((current) =>
-                    applyMailboxCounterSnapshot(
-                      current,
-                      pollAccountId,
-                      result.mailboxes,
-                    ),
-                  );
-                  setLiveRolesByAccount((current) =>
-                    JSON.stringify(current[pollAccountId]) ===
-                    JSON.stringify(result.roles)
-                      ? current
-                      : { ...current, [pollAccountId]: result.roles },
-                  );
-                }
-              })
-              .catch(() => {
-                // Keep the last known counts; the next poll retries.
-              });
-          }),
-      ).finally(() => {
-        busy = false;
-      });
-    };
-    load();
-    // Reuse the existing visible-tab DB poll; this never requests Gmail APIs.
-    const timer = setInterval(() => load(false), hasGmail ? 10_000 : 20_000);
-    const visible = () => load();
-    document.addEventListener("visibilitychange", visible);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", visible);
-    };
-  }, [accounts, accountId, folderReloadNonce, hasGmail]);
-
-  useEffect(() => {
     if (!allInboxes && (!accountId || !mailboxId)) return;
     let cancelled = false;
     let busy = false;
+    let revision: string | undefined;
+    const controller = new AbortController();
     const load = () => {
-      if (document.visibilityState !== "visible" || busy) return;
+      if (
+        document.visibilityState !== "visible" ||
+        busy ||
+        postingActions.current.size
+      )
+        return;
       busy = true;
-      fetch(`${base}?pageSize=50`, { cache: "no-store" })
+      const requestEpoch = publicationRequestEpoch.current;
+      const query = new URLSearchParams({ pageSize: "50", coherent: "1" });
+      if (revision) query.set("revision", revision);
+      if (selectedId && actionAccountId && actionMailboxId) {
+        query.set("readerId", selectedId);
+        query.set("readerAccountId", actionAccountId);
+        query.set("readerMailboxId", actionMailboxId);
+      }
+      fetch(`${base}?${query}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
         .then(async (response) => {
           if (!response.ok) throw new Error("Messages could not be loaded.");
-          return response.json() as Promise<MessagePage>;
+          return response.json() as Promise<
+            MessagePage & { unchanged?: boolean }
+          >;
         })
         .then((result) => {
-          if (!cancelled) {
+          if (
+            !cancelled &&
+            activeLocationRef.current === location &&
+            !postingActions.current.size &&
+            requestEpoch === publicationRequestEpoch.current
+          ) {
+            if (result.unchanged) return;
+            if (result.publication) {
+              const publication = result.publication;
+              revision = publication.revision;
+              publishedRevision.current = revision;
+              // React batches these updates: badge, list, scopes and reader flags
+              // all come from the same committed database snapshot.
+              setLiveMailboxesByAccount(publication.boxes);
+              setEnabledAccountIds(publication.enabledAccountIds);
+              setLiveRolesByAccount(publication.roles);
+              setAllInboxesUnread(publication.allInboxesUnread);
+              setSyncCoverage(publication.coverage);
+              setPublicationNonce((n) => n + 1);
+              loadedMoreRef.current = false;
+              pageRequestIdRef.current++;
+              loadingPageRef.current = false;
+              setLoadingMore(false);
+              setPaginationError("");
+              snapshotReader.current = publication.reader
+                ? {
+                    ...publication.reader,
+                    scope: `${actionAccountId}:${actionMailboxId}`,
+                  }
+                : null;
+              if (publication.reader) {
+                const flags = publication.reader;
+                setDetail((current) =>
+                  current?.id === flags.id
+                    ? { ...current, seen: flags.seen, flagged: flags.flagged }
+                    : current,
+                );
+                setMemberSelection((current) =>
+                  current?.message.id === flags.id
+                    ? {
+                        ...current,
+                        message: {
+                          ...current.message,
+                          seen: flags.seen,
+                          flagged: flags.flagged,
+                        },
+                      }
+                    : current,
+                );
+              } else if (selectedId && !searchActive) {
+                setSelectedId("");
+                setMemberSelection(undefined);
+                setDetail(null);
+              }
+            }
             if (listModeRef.current !== conversationView) {
               listModeRef.current = conversationView;
               loadedMoreRef.current = false;
@@ -1111,10 +1082,11 @@ export function MailClient({
         });
     };
     load();
-    const timer = setInterval(load, 20_000);
+    const timer = setInterval(load, 10_000);
     document.addEventListener("visibilitychange", load);
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(timer);
       document.removeEventListener("visibilitychange", load);
     };
@@ -1126,6 +1098,12 @@ export function MailClient({
     allInboxes,
     conversationView,
     listReloadNonce,
+    folderReloadNonce,
+    location,
+    selectedId,
+    actionAccountId,
+    actionMailboxId,
+    searchActive,
   ]);
 
   useEffect(() => {
@@ -1140,7 +1118,13 @@ export function MailClient({
         loadingPageRef.current = true;
         const requestId = ++pageRequestIdRef.current;
         setLoadingMore(true);
-        fetch(`${base}?pageSize=50&cursor=${encodeURIComponent(nextCursor)}`, {
+        const expectedRevision = publishedRevision.current;
+        const query = new URLSearchParams({
+          pageSize: "50",
+          cursor: nextCursor,
+          coherent: "1",
+        });
+        fetch(`${base}?${query}`, {
           cache: "no-store",
         })
           .then(async (response) => {
@@ -1150,6 +1134,13 @@ export function MailClient({
           })
           .then((page) => {
             if (cancelled || pageRequestIdRef.current !== requestId) return;
+            if (
+              page.publication &&
+              page.publication.revision !== expectedRevision
+            ) {
+              setFolderReloadNonce((n) => n + 1);
+              return;
+            }
             loadedMoreRef.current = true;
             setMessages((current) => {
               const existingIds = new Set(current.map((item) => item.id));
@@ -1207,7 +1198,13 @@ export function MailClient({
       if (!response.ok) throw new Error("Message could not be loaded.");
       const value = (await response.json()) as MessageDetail;
       if (cancelled) return;
-      setDetail(value);
+      const metadata = snapshotReader.current;
+      setDetail(
+        metadata?.id === value.id &&
+          metadata.scope === `${actionAccountId}:${actionMailboxId}`
+          ? { ...value, seen: metadata.seen, flagged: metadata.flagged }
+          : value,
+      );
       setLoadingDetail(false);
       if (value.content.status === "not_fetched") {
         const queued = await fetch(`${url}/content`, {
@@ -1249,6 +1246,8 @@ export function MailClient({
     contentPollIntervalMs,
     searchActive,
     showDrafts,
+    actionAccountId,
+    actionMailboxId,
   ]);
 
   async function retryContent() {
@@ -1345,7 +1344,8 @@ export function MailClient({
     setAllInboxes(all);
   }
   function unread(item: MailboxView) {
-    return projectedUnreadCount(item, countAdjustments);
+    const count = BigInt(item.unseenCount ?? "0");
+    return count > 0n ? count.toString() : null;
   }
 
   return (
@@ -1427,7 +1427,10 @@ export function MailClient({
           <MaildockBrand />
         </div>
         <MailboxTree
-          accounts={accounts}
+          accounts={accounts.map((a) => ({
+            ...a,
+            enabled: enabledAccountIds.includes(a.id),
+          }))}
           boxes={liveMailboxesByAccount}
           roles={liveRolesByAccount}
           accountId={accountId}
@@ -1437,6 +1440,7 @@ export function MailClient({
           searchActive={searchActive}
           unread={unread}
           onSelect={navigate}
+          allInboxesUnread={allInboxesUnread}
           onDrafts={() => {
             setSearchQuery("");
             setSearchSelection(undefined);
@@ -1488,11 +1492,39 @@ export function MailClient({
                 : showDrafts
                   ? "Saved in Maildock · Not synced to your email provider"
                   : allInboxes
-                    ? "Enabled accounts · Inbox mailboxes"
+                    ? "Messages available locally · Enabled accounts"
                     : folder
                       ? formatCount(folder.synchronizedMessageCount) +
                         " synchronized messages"
                       : "Select a mailbox"}
+              {!searchActive &&
+              !showDrafts &&
+              Object.entries(syncCoverage).some(
+                ([id, coverage]) =>
+                  (allInboxes
+                    ? enabledAccountIds.includes(id)
+                    : id === accountId) && coverage.blocked,
+              )
+                ? " · Sync needs attention"
+                : !searchActive &&
+                    !showDrafts &&
+                    Object.entries(syncCoverage).some(
+                      ([id, coverage]) =>
+                        (allInboxes
+                          ? enabledAccountIds.includes(id)
+                          : id === accountId) && coverage.historyIncomplete,
+                    )
+                  ? " · History import incomplete"
+                  : !searchActive &&
+                      !showDrafts &&
+                      Object.entries(syncCoverage).some(
+                        ([id, coverage]) =>
+                          (allInboxes
+                            ? enabledAccountIds.includes(id)
+                            : id === accountId) && coverage.syncing,
+                      )
+                    ? " · Synchronizing"
+                    : ""}
             </small>
           </div>
           <div className="mail-pane-controls">
@@ -1605,7 +1637,12 @@ export function MailClient({
                 onLoaded={registerConversationRows}
                 checkedIds={selectedTargets.map(targetKey)}
                 onToggle={toggleSelection}
-                refreshKey={retryNonce + folderReloadNonce + listReloadNonce}
+                refreshKey={
+                  retryNonce +
+                  folderReloadNonce +
+                  listReloadNonce +
+                  publicationNonce
+                }
                 onSelect={(message) =>
                   selectMessage(message, message.mailboxId ?? mailboxId)
                 }

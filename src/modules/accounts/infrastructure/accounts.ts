@@ -14,6 +14,7 @@ import { getConfig } from "@/shared/infrastructure/config/config";
 import { AesGcmSecretEncryption } from "@/shared/infrastructure/crypto/aes-gcm-secret-encryption";
 import { db } from "@/shared/infrastructure/database/runtime-database";
 import { MailboxService } from "@/modules/mail/application/mailbox-service";
+import { MailPublicationService } from "@/modules/mail/application/mail-publication-service";
 import { MailboxRoleService } from "@/modules/mail/application/mailbox-role-service";
 import { PgBossMailboxDiscoveryScheduler } from "@/modules/mail/infrastructure/mailbox-discovery-jobs";
 import { MessageService } from "@/modules/mail/application/message-service";
@@ -31,6 +32,7 @@ import { bindNativeGmail } from "../../mail/infrastructure/gmail-receive-adapter
 import { GmailMessageCommands } from "../../mail/application/gmail-message-commands";
 
 export const transportRouter = new MailTransportRouter();
+export const mailPublicationService = new MailPublicationService(db);
 const config = getConfig();
 const gmailScheduler = new PgBossGmailScheduler(config);
 const outgoingScheduler = new PgBossOutgoingScheduler(config);

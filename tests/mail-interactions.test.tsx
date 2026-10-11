@@ -241,7 +241,7 @@ async function mount(
         }
         accounts={accounts}
         mailboxesByAccount={boxes}
-        rolesByAccount={roles}
+        rolesByAccount={options.noMoveB ? { ...roles, b: [] } : roles}
         initialConversationView={options.conversation}
         initialAutoRead={options.auto}
       />,

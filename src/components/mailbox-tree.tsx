@@ -71,6 +71,7 @@ export function MailboxTree({
   unread,
   onSelect,
   onDrafts,
+  allInboxesUnread,
 }: {
   accounts: MailAccountView[];
   boxes: Record<string, MailboxView[]>;
@@ -83,6 +84,7 @@ export function MailboxTree({
   unread: (box: MailboxView) => string | null;
   onSelect: (accountId: string, mailboxId: string, all?: boolean) => void;
   onDrafts: () => void;
+  allInboxesUnread?: string;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(accounts.map((a) => [`other:${a.id}`, true])),
@@ -170,9 +172,9 @@ export function MailboxTree({
       ),
     );
   const inboxUnread =
-    inboxes.length && inboxes.every((b) => b.unseenCount !== null)
-      ? inboxes.reduce((sum, b) => sum + BigInt(unread(b) ?? "0"), 0n)
-      : 0n;
+    allInboxesUnread !== undefined
+      ? BigInt(allInboxesUnread)
+      : inboxes.reduce((sum, b) => sum + BigInt(unread(b) ?? "0"), 0n);
   return (
     <nav className="mail-folders" aria-label="Mailboxes">
       <div className="sidebar-label">Favorites</div>
@@ -186,7 +188,10 @@ export function MailboxTree({
         <Inbox size={16} />
         <span className="folder-name">All Inboxes</span>
         {inboxUnread > 0n ? (
-          <span className="folder-count unread" title="Unread messages">
+          <span
+            className="folder-count unread"
+            title="Unread messages available locally; synchronization may be incomplete"
+          >
             {new Intl.NumberFormat().format(inboxUnread)}
           </span>
         ) : null}

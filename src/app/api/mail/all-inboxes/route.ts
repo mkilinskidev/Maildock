@@ -1,6 +1,10 @@
 import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { z, ZodError } from "zod";
-import { messageService } from "@/modules/accounts/infrastructure/accounts";
+import {
+  messageService,
+  mailPublicationService,
+} from "@/modules/accounts/infrastructure/accounts";
+import { publicationRequest } from "@/modules/mail/application/publication-request";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 
 export async function GET(request: Request) {
@@ -22,7 +26,13 @@ export async function GET(request: Request) {
         .optional()
         .parse(url.searchParams.get("cursor") ?? undefined);
       return Response.json(
-        await messageService.listAllInboxes(pageSize, cursor),
+        url.searchParams.get("coherent") === "1"
+          ? await mailPublicationService.snapshot({
+              pageSize,
+              cursor,
+              ...publicationRequest(url),
+            })
+          : await messageService.listAllInboxes(pageSize, cursor),
         { headers: { "Cache-Control": "no-store" } },
       );
     } catch (error) {

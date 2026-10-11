@@ -293,7 +293,8 @@ describe("Phase 1E persisted delta state", () => {
     expect(Date.parse(box.counterObservation!.local.sampledAt)).toBeGreaterThan(
       0,
     );
-    expect(box.unseenCount).toBe("80"); // Legacy overlay contract awaits Phase 4.
+    expect(box.unseenCount).toBe("54");
+    expect(box.remoteUnseenCount).toBe("80");
   });
 
   async function arrive(uid: number, boxId?: string, remote = metadata(uid)) {

@@ -1,7 +1,11 @@
 import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { z, ZodError } from "zod";
 
-import { messageService } from "@/modules/accounts/infrastructure/accounts";
+import {
+  messageService,
+  mailPublicationService,
+} from "@/modules/accounts/infrastructure/accounts";
+import { publicationRequest } from "@/modules/mail/application/publication-request";
 import { MailboxNotFoundError } from "@/modules/mail/application/message-service";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
 
@@ -26,7 +30,16 @@ export async function GET(
         .parse(url.searchParams.get("pageSize") ?? undefined);
       const cursor = url.searchParams.get("cursor") ?? undefined;
       return Response.json(
-        await messageService.list(accountId, mailboxId, pageSize, cursor),
+        url.searchParams.get("coherent") === "1"
+          ? await mailPublicationService.snapshot({
+              accountId,
+              mailboxId,
+              pageSize,
+              cursor,
+              ...publicationRequest(url),
+            })
+          : await messageService.list(accountId, mailboxId, pageSize, cursor),
+        { headers: { "Cache-Control": "no-store" } },
       );
     } catch (error) {
       if (error instanceof MailboxNotFoundError)

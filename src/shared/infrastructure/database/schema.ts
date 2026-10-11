@@ -21,6 +21,13 @@ import type { ImapSyncProgress } from "../../../modules/accounts/domain/imap-syn
 import type { OutgoingAddress } from "../../../modules/mail/domain/outgoing-message";
 import type { RichDocument } from "../../../modules/mail/domain/rich-document";
 
+export const mailPublications = pgTable("mail_publications", {
+  accountId: uuid("account_id").primaryKey(),
+  revision: bigint("revision", { mode: "bigint" })
+    .notNull()
+    .default(sql`0`),
+});
+
 export const syncAdmissionPolicy = pgTable(
   "sync_admission_policy",
   {

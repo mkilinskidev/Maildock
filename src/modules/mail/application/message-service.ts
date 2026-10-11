@@ -69,6 +69,7 @@ export type MessageListItem = Readonly<{
 export type MessagePage = Readonly<{
   items: readonly MessageListItem[];
   nextCursor: string | null;
+  publication?: import("./mail-publication-service").MailPublication;
 }>;
 
 function sanitizedSyncError(error: unknown): string {
@@ -683,7 +684,9 @@ export class MessageService {
     pageSize = 50,
     cursor?: string,
   ): Promise<MessagePage> {
-    await this.ownedMailbox(accountId, mailboxId);
+    const mailbox = await this.ownedMailbox(accountId, mailboxId);
+    if (!mailbox.selectable || mailbox.lifecycleStatus !== "active")
+      return { items: [], nextCursor: null };
     const conversations = new ConversationService(this.database);
     if (await conversations.enabled())
       return conversations.list(accountId, mailboxId, pageSize, cursor);
@@ -716,6 +719,10 @@ export class MessageService {
           eq(mailboxMessages.mailboxId, mailboxId),
           eq(messages.accountId, accountId),
           eq(mailboxMessages.actionHidden, false),
+          sql`${messages.remoteMissingAt} is null`,
+          sql`${mailboxMessages.id} = (select p.id from mailbox_messages p
+            where p.message_id = ${messages.id} and p.mailbox_id = ${mailboxId}::uuid
+              and not p.action_hidden order by (p.flags @> ARRAY['\\Seen']::text[]), p.id limit 1)`,
           cursorValue
             ? or(
                 lt(messages.internalDate, cursorValue[0]),
@@ -764,12 +771,17 @@ export class MessageService {
     }
     const rows = await this.database.execute(sql`
       SELECT m.*, a.display_name AS account_name, p.mailbox_id, p.flags, left(c.plain_text, 160) AS snippet
-      FROM messages m JOIN mailbox_messages p ON p.message_id = m.id
+      FROM messages m JOIN LATERAL (
+        SELECT p.* FROM mailbox_messages p JOIN mailboxes b ON b.id = p.mailbox_id
+        WHERE p.message_id = m.id AND b.account_id = m.account_id AND b.selectable
+          AND b.lifecycle_status = 'active' AND upper(b.remote_path) = 'INBOX'
+          AND NOT p.action_hidden ORDER BY (p.flags @> ARRAY['\\Seen']::text[]), p.id LIMIT 1
+      ) p ON true
       JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
       JOIN mail_accounts a ON a.id = m.account_id
       LEFT JOIN message_contents c ON c.message_id = m.id AND c.status = 'ready'
       WHERE a.enabled AND b.selectable AND b.lifecycle_status = 'active'
-        AND upper(b.remote_path) = 'INBOX' AND NOT p.action_hidden
+        AND upper(b.remote_path) = 'INBOX' AND NOT p.action_hidden AND m.remote_missing_at IS NULL
         ${after ? sql`AND (m.internal_date, m.id) < (${after[0].toISOString()}::timestamptz, ${after[1]}::uuid)` : sql``}
       ORDER BY m.internal_date DESC, m.id DESC LIMIT ${limit + 1}`);
     const page = rows.slice(0, limit);

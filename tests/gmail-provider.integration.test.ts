@@ -870,7 +870,8 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
         .every((box) => box.unseenCount !== null),
     ).toBe(true);
     expect(
-      partial.find((box) => box.providerMailboxId === "Label_two")?.unseenCount,
+      partial.find((box) => box.providerMailboxId === "Label_two")
+        ?.remoteUnseenCount,
     ).toBe("102");
     expect(await t.finish()).toMatchObject({
       status: "ready",
@@ -962,7 +963,8 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       const observed = (await service.listForAccount(t.id)).find(
         (b) => b.providerMailboxId === "INBOX",
       )!;
-      expect(observed.unseenCount).toBe("0");
+      expect(observed.remoteUnseenCount).toBe("0");
+      expect(observed.unseenCount).toBe("2"); // Metadata has not drained yet.
       expect(observed.unseenCountObservedAt).not.toBeNull();
       const counterRequests = remote.requests.filter((r) =>
         r.path.startsWith("labels/"),
@@ -1018,7 +1020,7 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
     expect(
       (await service.listForAccount(t.id)).find(
         (b) => b.providerMailboxId === "INBOX",
-      )?.unseenCount,
+      )?.remoteUnseenCount,
     ).toBe("2");
     const requestCount = remote.requests.length;
     await t.sync.wake(t.id);
@@ -1032,12 +1034,18 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
     await t.sync.run(t.id, "1");
     expect((await t.state()).historyId).toBe("101");
     // Even though the fixed history sweep did not include the later event for b,
-    // the authoritative counter already includes both remote read changes.
+    // the diagnostic remote observation already includes both remote reads.
+    // The visible local badge remains one until the later event for b drains.
+    expect(
+      (await service.listForAccount(t.id)).find(
+        (b) => b.providerMailboxId === "INBOX",
+      )?.remoteUnseenCount,
+    ).toBe("0");
     expect(
       (await service.listForAccount(t.id)).find(
         (b) => b.providerMailboxId === "INBOX",
       )?.unseenCount,
-    ).toBe("0");
+    ).toBe("1");
     expect(remote.requests.every((r) => r.method === "GET")).toBe(true);
   });
   it("confirmed Gmail read commands preserve an existing quota retry deadline", async () => {
