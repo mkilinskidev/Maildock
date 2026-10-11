@@ -182,7 +182,7 @@ export function installSyncAdmission(
       await tx.commit();
       // pg-boss maps this adapter result to public job metadata after return.
       // Expose the class actually frozen above, rather than pre-update priority.
-      if (result.rows.length && queue === "gmail-account-sync-v1")
+      if (result.rows.length)
         result.rows[0].priority =
           next.class === 0 ? 100 : next.class === 1 ? 10 : -10;
       if (result.rows.length)

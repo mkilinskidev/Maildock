@@ -21,6 +21,7 @@ import { assertImapPublication } from "../infrastructure/receive-publication-fen
 import { bestEffortDiagnostic } from "../../../shared/infrastructure/logging/diagnostics";
 import type { MessageService } from "./message-service";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
+import type { SyncObservationStore } from "../infrastructure/sync-observation-store";
 
 /** One delivery owns one slice. Progress follows persistence; replay is idempotent. */
 export class ImapSliceSyncService {
@@ -41,6 +42,7 @@ export class ImapSliceSyncService {
     phase: "recent" | "delta",
     revision?: string,
     signal?: AbortSignal,
+    observationStore?: SyncObservationStore,
   ): Promise<boolean> {
     const [mailbox] = await this.database
       .select()
@@ -263,6 +265,7 @@ export class ImapSliceSyncService {
               undefined,
               phase === "delta" && saved!.cutoff === null,
               account.revision,
+              observationStore,
             );
             processed += batch.length;
           },
@@ -284,10 +287,36 @@ export class ImapSliceSyncService {
           },
           flags: async (batch) => {
             check();
-            await this.database.transaction(async (tx) => {
+            const changed = await this.database.transaction(async (tx) => {
               await assertImapPublication(tx, accountId, account.revision);
-              for (const item of batch)
-                await tx
+              const previous =
+                observationStore &&
+                mailbox.remotePath.toUpperCase() === "INBOX" &&
+                batch.length
+                  ? await tx
+                      .select({
+                        uid: mailboxMessages.uid,
+                        flags: mailboxMessages.flags,
+                      })
+                      .from(mailboxMessages)
+                      .where(
+                        and(
+                          eq(mailboxMessages.mailboxId, mailboxId),
+                          eq(
+                            mailboxMessages.uidValidity,
+                            BigInt(saved!.uidValidity),
+                          ),
+                          inArray(
+                            mailboxMessages.uid,
+                            batch.map((item) => BigInt(item.uid)),
+                          ),
+                        ),
+                      )
+                      .for("update")
+                  : [];
+              let changes = 0;
+              for (const item of batch) {
+                const updated = await tx
                   .update(mailboxMessages)
                   .set({
                     flags: [...item.flags],
@@ -307,14 +336,30 @@ export class ImapSliceSyncService {
                         ? sql`(${mailboxMessages.modseq} is null or ${mailboxMessages.modseq} <= ${BigInt(item.modseq)})`
                         : undefined,
                     ),
-                  );
+                  )
+                  .returning({ uid: mailboxMessages.uid });
+                const old = previous.find((p) => p.uid === BigInt(item.uid));
+                if (
+                  updated.length &&
+                  old &&
+                  old.flags.includes("\\Seen") !== item.flags.includes("\\Seen")
+                )
+                  changes++;
+              }
+              return changes;
             });
+            if (changed)
+              await observationStore?.record(
+                "materialized",
+                { readChanges: changed },
+                { materialized: true, running: true },
+              );
             processed += batch.length;
           },
           removed: async (uids) => {
             if (!uids.length) return;
             check();
-            await this.database.transaction(async (tx) => {
+            const removed = await this.database.transaction(async (tx) => {
               await assertImapPublication(tx, accountId, account.revision);
               const [current] = await tx
                 .select({ epoch: mailboxes.recentSyncUidValidity })
@@ -323,7 +368,7 @@ export class ImapSliceSyncService {
                 .for("update");
               if (current?.epoch !== BigInt(saved!.uidValidity))
                 throw new MailboxEpochChangedError();
-              await tx
+              return tx
                 .delete(mailboxMessages)
                 .where(
                   and(
@@ -331,8 +376,15 @@ export class ImapSliceSyncService {
                     eq(mailboxMessages.uidValidity, BigInt(saved!.uidValidity)),
                     inArray(mailboxMessages.uid, uids.map(BigInt)),
                   ),
-                );
+                )
+                .returning({ id: mailboxMessages.id });
             });
+            if (removed.length && mailbox.remotePath.toUpperCase() === "INBOX")
+              await observationStore?.record(
+                "materialized",
+                { count: removed.length },
+                { materialized: true, running: true },
+              );
             processed += uids.length;
           },
           checkpoint: write,
@@ -392,6 +444,22 @@ export class ImapSliceSyncService {
               if (!updated.length) throw new MailboxEpochChangedError();
             });
             saved = value;
+            if (mailbox.remotePath.toUpperCase() === "INBOX") {
+              await observationStore?.record(
+                "completed",
+                { count: Number(observation.messageCount) },
+                { check: true, running: true },
+              );
+              if (
+                mailbox.recentSyncStatus === "failed" ||
+                mailbox.deltaSyncStatus === "failed"
+              )
+                await observationStore?.record(
+                  "recovery",
+                  {},
+                  { running: true },
+                );
+            }
             if (phase === "recent")
               await this.events?.record("mail.recent_sync_completed", {
                 accountId,

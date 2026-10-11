@@ -29,6 +29,12 @@ import {
   projectGmailLabels,
 } from "../infrastructure/gmail-projector";
 import { MailboxRoleService } from "./mailbox-role-service";
+import {
+  SyncObservationStore,
+  diagnosticExecutor,
+} from "../infrastructure/sync-observation-store";
+import type { SyncPhase } from "../domain/sync-observability";
+import { SyncLockContentionError } from "../infrastructure/sync-diagnostics";
 import { classifyGmailHistory } from "../domain/gmail-history-priority";
 
 import {
@@ -94,9 +100,20 @@ export class GmailSyncService {
     admittedPriority?: number,
   ): Promise<void> {
     let workClass: number | undefined = admittedPriority;
+    const observation = new SyncObservationStore(
+      diagnosticExecutor(this.db),
+      accountId,
+      revision,
+    );
+    let phase: SyncPhase = "credentials";
+    let executed = false;
+    let failed = false;
+    let leased = false;
+    await observation.admitted(admittedPriority ?? null);
     // OAuth's DB-backed refresh happens before reserving execution authority.
-    const lease = await this.provider.lease(accountId, revision);
     try {
+      const lease = await this.provider.lease(accountId, revision);
+      leased = true;
       await this.lock(accountId, async (db) => {
         await db.transaction((tx) =>
           assertGmailPublication(tx, accountId, revision),
@@ -195,16 +212,41 @@ export class GmailSyncService {
           );
           return;
         }
+        phase =
+          decision.action === "inbox_reconcile"
+            ? "inbox"
+            : decision.action === "drain"
+              ? "history_drain"
+              : decision.action === "history_checkpoint"
+                ? "history_checkpoint"
+                : decision.action.startsWith("inventory")
+                  ? "inventory"
+                  : decision.action === "bootstrap"
+                    ? "bootstrap"
+                    : "history_discovery";
+        executed = true;
+        if (state.errorCategory === "quota")
+          await observation.record("backoff_exited");
+        await observation.start(phase, decision.priority_class);
         if (decision.action === "bootstrap") {
           await this.bootstrap(db, client, state, revision);
+          if (state.errorCategory)
+            await observation.record("recovery", {}, { running: true });
           return;
         }
         if (decision.action === "inbox_reconcile") {
-          await this.inbox(db, client, state, revision);
+          await this.inbox(db, client, state, revision, observation);
           return;
         }
         if (state.historyRunId) {
-          await this.history(db, client, state, revision, decision);
+          await this.history(
+            db,
+            client,
+            state,
+            revision,
+            decision,
+            observation,
+          );
           return;
         }
         if (decision.action === "inventory_clock") {
@@ -214,7 +256,7 @@ export class GmailSyncService {
           return;
         }
         if (decision.action === "inventory") {
-          await this.inventory(db, client, state, revision);
+          await this.inventory(db, client, state, revision, observation);
           return;
         }
         await this.update(db, state, revision, {
@@ -225,6 +267,13 @@ export class GmailSyncService {
         });
       });
     } catch (error) {
+      failed = true;
+      // Credential acquisition historically bubbles to pg-boss. Preserve its
+      // retry policy rather than applying the service's provider backoff here.
+      if (!leased) {
+        await observation.record("error");
+        throw error;
+      }
       if (error instanceof StaleAccountWorkError) return;
       if (error instanceof GmailApiError) {
         const nextAttemptAt = new Date(
@@ -237,6 +286,26 @@ export class GmailSyncService {
                 ? 300000
                 : 30000,
             ),
+        );
+        await observation.record(
+          error.category === "quota" ? "backoff_entered" : "error",
+          {},
+          {
+            refusal: {
+              at: new Date().toISOString(),
+              category: error.category,
+              source: error.details?.source ?? null,
+              status: error.status ?? null,
+              reasons: error.details?.reasons ?? [],
+              retryAfter: error.details?.retryAfter ?? null,
+              retryAfterMs: error.retryAfterMs,
+              deadline: nextAttemptAt.toISOString(),
+              budget:
+                (error.details
+                  ?.budget as import("../domain/sync-observability").SyncRefusal["budget"]) ??
+                null,
+            },
+          },
         );
         bestEffortDiagnostic(() =>
           (this.logger?.warn ?? this.logger?.debug)?.call(
@@ -307,7 +376,18 @@ export class GmailSyncService {
         });
         return;
       }
+      await observation.finish(
+        error instanceof SyncLockContentionError ? "lock_wait" : "error",
+      );
       throw error;
+    } finally {
+      await observation.finish(
+        failed
+          ? "yield"
+          : executed && observation.currentPhase !== "inbox"
+            ? "completed"
+            : "yield",
+      );
     }
   }
   private async update(
@@ -425,6 +505,7 @@ export class GmailSyncService {
     revision: string,
     purpose: "inventory" | "history",
     decision?: GmailPriorityDecision,
+    observation?: SyncObservationStore,
   ) {
     const runId = (
       purpose === "inventory" ? state.inventoryRunId : state.historyRunId
@@ -500,16 +581,35 @@ export class GmailSyncService {
         }));
       // Each class has one purpose: history P0/P1 or inventory P2.
       const workPurpose = selected === 2 ? "inventory" : "history";
-      await projectGmailBatch(db, state.accountId, revision, successful, {
-        runId:
-          workPurpose === "history"
-            ? state.historyRunId!
-            : state.inventoryRunId!,
-        purpose: workPurpose,
-        generation:
-          workPurpose === "inventory" ? state.inventoryGeneration : undefined,
-        notify: workPurpose === "history" && state.status === "ready",
-      });
+      const changes = await projectGmailBatch(
+        db,
+        state.accountId,
+        revision,
+        successful,
+        {
+          runId:
+            workPurpose === "history"
+              ? state.historyRunId!
+              : state.inventoryRunId!,
+          purpose: workPurpose,
+          generation:
+            workPurpose === "inventory" ? state.inventoryGeneration : undefined,
+          notify: workPurpose === "history" && state.status === "ready",
+        },
+      );
+      if (changes.newMessages || changes.readChanges || changes.removedMessages)
+        await observation?.record(
+          "materialized",
+          {
+            newMessages: changes.newMessages,
+            readChanges: changes.readChanges,
+            count: changes.removedMessages,
+          },
+          {
+            materialized: true,
+            running: true,
+          },
+        );
       const failure = responses.find((r) => r.status === "rejected");
       if (failure) throw failure.reason;
     }
@@ -522,6 +622,12 @@ export class GmailSyncService {
             : Math.min(8, state.priorityBurst + 1),
         ...(selected > 0 ? { lastLowerPriority: selected } : {}),
       });
+      if (purpose === "history")
+        await observation?.record(
+          "history_slice_drained",
+          { count: work.length },
+          { running: true },
+        );
       bestEffortDiagnostic(() =>
         this.logger?.debug(
           {
@@ -553,6 +659,7 @@ export class GmailSyncService {
     client: GmailClient,
     state: State,
     revision: string,
+    observation: SyncObservationStore,
   ) {
     const started = state.inboxStartedAt ?? new Date();
     if (!state.inboxStartedAt)
@@ -567,7 +674,29 @@ export class GmailSyncService {
         remote = null;
       }
       // Existing idempotent projection, revision fence and account authority.
-      await projectGmailMessage(db, state.accountId, revision, id, remote);
+      const changes = await projectGmailMessage(
+        db,
+        state.accountId,
+        revision,
+        id,
+        remote,
+      );
+      totals.newMessages += changes.newMessages;
+      totals.readChanges += changes.readChanges;
+      totals.removedMessages += changes.removedMessages;
+    };
+    const totals = { newMessages: 0, readChanges: 0, removedMessages: 0 };
+    const publishChanges = async () => {
+      if (totals.newMessages || totals.readChanges || totals.removedMessages)
+        await observation.record(
+          "materialized",
+          {
+            newMessages: totals.newMessages,
+            readChanges: totals.readChanges,
+            count: totals.removedMessages,
+          },
+          { materialized: true, running: true },
+        );
     };
     if (!state.inboxPagesComplete) {
       let page;
@@ -595,7 +724,11 @@ export class GmailSyncService {
         (page.nextPageToken && page.nextPageToken === state.inboxNextPageToken)
       )
         throw new GmailApiError("invalid_response");
-      for (const item of page.messages) await observe(item.id);
+      try {
+        for (const item of page.messages) await observe(item.id);
+      } finally {
+        await publishChanges();
+      }
       // Failed GETs leave this cursor unchanged; successful projections may be replayed.
       await this.update(db, state, revision, {
         inboxNextPageToken: page.nextPageToken ?? null,
@@ -619,7 +752,11 @@ export class GmailSyncService {
       )
       .orderBy(asc(mailboxMessages.lastSynchronizedAt), asc(messages.id))
       .limit(12);
-    for (const item of stale) if (item.id) await observe(item.id);
+    try {
+      for (const item of stale) if (item.id) await observe(item.id);
+    } finally {
+      await publishChanges();
+    }
     if (stale.length) return;
     const [box] = await db
       .select()
@@ -641,6 +778,9 @@ export class GmailSyncService {
         state.errorCategory === "quota" ? null : state.errorCategory,
       nextAttemptAt: null,
     });
+    await observation.record("completed", {}, { check: true, running: true });
+    if (state.errorCategory === "quota")
+      await observation.record("recovery", {}, { running: true });
     // An unrelated history/provider failure still needs its own successful retry.
     if (state.errorCategory && state.errorCategory !== "quota") return;
     await db.transaction(async (tx) => {
@@ -656,6 +796,7 @@ export class GmailSyncService {
     client: GmailClient,
     state: State,
     revision: string,
+    observation: SyncObservationStore,
   ) {
     const catalog = await db
       .select({
@@ -681,7 +822,18 @@ export class GmailSyncService {
       )
     )
       await this.labels(db, client, state.accountId, revision);
-    if (await this.drain(db, client, state, revision, "inventory")) return;
+    if (
+      await this.drain(
+        db,
+        client,
+        state,
+        revision,
+        "inventory",
+        undefined,
+        observation,
+      )
+    )
+      return;
     if (!state.inventoryPagesComplete) {
       const query =
         state.inventoryPhase === "recent"
@@ -787,6 +939,7 @@ export class GmailSyncService {
     state: State,
     revision: string,
     decision: GmailPriorityDecision,
+    observation: SyncObservationStore,
   ) {
     if (decision.action === "history_probe") {
       // Probe the durable discovery cursor without advancing the applied checkpoint.
@@ -799,7 +952,15 @@ export class GmailSyncService {
     }
     if (
       decision.action === "drain" &&
-      (await this.drain(db, client, state, revision, "history", decision))
+      (await this.drain(
+        db,
+        client,
+        state,
+        revision,
+        "history",
+        decision,
+        observation,
+      ))
     )
       return;
     if (!state.historyPagesComplete) {
@@ -887,6 +1048,11 @@ export class GmailSyncService {
           more,
         },
       });
+      await observation.record(
+        "history_page_discovered",
+        { count: Math.min(500, ids.length - offset) },
+        { running: true },
+      );
       bestEffortDiagnostic(() =>
         this.logger?.debug(
           {
@@ -979,5 +1145,7 @@ export class GmailSyncService {
         "Gmail applied history checkpoint committed",
       ),
     );
+    if (state.errorCategory)
+      await observation.record("recovery", {}, { running: true });
   }
 }

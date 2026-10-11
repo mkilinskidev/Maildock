@@ -20,6 +20,11 @@ import type { AccountsService } from "@/modules/accounts/application/accounts-se
 import type { MailProvider } from "@/modules/accounts/domain/mail-provider";
 import { StaleAccountWorkError } from "@/modules/accounts/domain/receive-transport";
 import { ImapSliceSyncService } from "@/modules/mail/application/imap-slice-sync-service";
+import {
+  SyncObservationStore,
+  diagnosticExecutor,
+} from "@/modules/mail/infrastructure/sync-observation-store";
+import { readSyncObservability } from "@/modules/mail/infrastructure/read-sync-observability";
 import { MessageService } from "@/modules/mail/application/message-service";
 import { DeltaSyncService } from "@/modules/mail/application/delta-sync-service";
 import { createDatabase } from "@/shared/infrastructure/database/database";
@@ -170,6 +175,55 @@ describe("durable IMAP slices and Phase 2 admission", () => {
       /* drain */
     }
   }
+  it("records aggregate INBOX arrivals, read changes and successful observations", async () => {
+    await database.client`update mailboxes set remote_path='INBOX',name='INBOX' where id=${mailboxId}`;
+    const observation = new SyncObservationStore(
+      diagnosticExecutor(database.db),
+      accountId,
+      "1",
+    );
+    await observation.start("imap_recent", 0);
+    while (
+      await service.run(
+        accountId,
+        mailboxId,
+        "recent",
+        "1",
+        undefined,
+        observation,
+      )
+    ) {
+      /* bounded slices */
+    }
+    let d = await readSyncObservability(database.db, accountId, 60);
+    expect(d?.lastCheckAt).not.toBeNull();
+    expect(
+      d?.events.some((e) => e.kind === "materialized" && !!e.newMessages),
+    ).toBe(true);
+    server.add(1, ["\\Seen"], 20n);
+    server.state.modseq = 20n;
+    await observation.start("imap_delta", 0);
+    while (
+      await service.run(
+        accountId,
+        mailboxId,
+        "delta",
+        "1",
+        undefined,
+        observation,
+      )
+    ) {
+      /* bounded slices */
+    }
+    await observation.finish();
+    d = await readSyncObservability(database.db, accountId, 60);
+    expect(
+      d?.events.some((e) => e.kind === "materialized" && e.readChanges === 1),
+    ).toBe(true);
+    expect(d?.lastMaterializedAt).not.toBeNull();
+    expect(d?.pending.unit).toBe("jobs");
+    expect(d?.nextCheckAt).toBeNull(); // Global IMAP poll timer has no durable tick deadline.
+  });
   async function deltaComplete() {
     while (await service.run(accountId, mailboxId, "delta", "1")) {
       /* drain */

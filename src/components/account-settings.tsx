@@ -13,6 +13,7 @@ import { AccountIdentityFields } from "./account-identity-fields";
 import { accountConnectionPayload } from "./account-connection-payload";
 import { AccountConnectionFields } from "./account-connection-fields";
 import { SentCopyPolicyFields } from "./sent-copy-settings";
+import { SyncDiagnosticsCard } from "./sync-diagnostics-card";
 import type { ConnectionReport } from "@/modules/accounts/domain/mail-provider";
 
 const folderLabels = {
@@ -52,10 +53,10 @@ function friendlyStatus(value: string) {
     queued: "Waiting",
     running: "In progress",
     syncing: "Synchronizing",
-    complete: "Up to date",
-    completed: "Up to date",
-    ready: "Up to date",
-    succeeded: "Up to date",
+    complete: "Completed previously",
+    completed: "Completed previously",
+    ready: "Initialized",
+    succeeded: "Succeeded previously",
     failed: "Needs attention",
     idle: "Idle",
     not_started: "Not started",
@@ -633,8 +634,15 @@ export function AccountSettings({
         role="tabpanel"
         aria-labelledby="tab-Diagnostics"
       >
-        <section className="settings-section">
-          <h3>Connection and synchronization</h3>
+        <SyncDiagnosticsCard
+          key={account.id}
+          accountId={account.id}
+          name={account.displayName}
+          email={account.email}
+          visible={tab === "Diagnostics"}
+        />
+        <details className="settings-section">
+          <summary>Technical details: connection and synchronization</summary>
           <a
             className="button-link secondary"
             href={`/accounts?section=application-logs&account=${encodeURIComponent(account.id)}`}
@@ -678,12 +686,12 @@ export function AccountSettings({
                 <dd>
                   {account.gmailSync.status === "blocked" ||
                   account.gmailSync.status === "reconcile_required"
-                    ? "Sync needs attention"
+                    ? "Recorded reconciliation or provider issue"
                     : account.gmailSync.errorCategory === "quota"
-                      ? "Waiting to retry"
+                      ? "Last recorded category: quota"
                       : account.gmailSync.errorCategory
-                        ? "Sync needs attention"
-                        : "Synchronizing"}
+                        ? "Recorded provider issue"
+                        : "See current INBOX activity above"}
                 </dd>
                 <dt>Recent messages</dt>
                 <dd>{account.gmailSync.recentReady ? "Ready" : "Importing"}</dd>
@@ -771,9 +779,11 @@ export function AccountSettings({
           >
             Refresh mailboxes
           </button>
-        </section>
-        <section className="settings-section">
-          <h3>Mailbox synchronization</h3>
+        </details>
+        <details className="settings-section">
+          <summary>
+            Technical details: historical mailbox synchronization
+          </summary>
           {mailboxes.length === 0 ? (
             <p>
               {account.enabled
@@ -811,7 +821,7 @@ export function AccountSettings({
               ))}
             </div>
           )}
-        </section>
+        </details>
         <details className="settings-section">
           <summary>Protocol details</summary>
           {mailboxes.map((m) => (

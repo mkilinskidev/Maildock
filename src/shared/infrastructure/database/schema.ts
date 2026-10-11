@@ -1442,6 +1442,29 @@ export const gmailQuotaBuckets = pgTable(
   ],
 );
 
+export const syncObservations = pgTable("sync_observations", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => mailAccounts.id, { onDelete: "cascade" }),
+  accountRevision: bigint("account_revision", { mode: "bigint" }).notNull(),
+  operationToken: uuid("operation_token"),
+  phase: text("phase"),
+  priority: integer("priority"),
+  activeUntil: timestamp("active_until", { withTimezone: true }),
+  lastCheckAt: timestamp("last_check_at", { withTimezone: true }),
+  lastMaterializedAt: timestamp("last_materialized_at", { withTimezone: true }),
+  lastRefusal:
+    jsonb("last_refusal").$type<
+      import("../../../modules/mail/domain/sync-observability").SyncRefusal
+    >(),
+  events: jsonb("events")
+    .$type<
+      import("../../../modules/mail/domain/sync-observability").SyncEvent[]
+    >()
+    .default([])
+    .notNull(),
+});
+
 export const gmailAccountSyncState = pgTable(
   "gmail_account_sync_state",
   {

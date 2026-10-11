@@ -11,6 +11,7 @@ import {
   type MailboxRoleView,
 } from "./mailbox-role-service";
 import { MessageService, type MessagePage } from "./message-service";
+import { gmailNeedsAttention } from "../domain/sync-observability";
 
 export type MailPublication = {
   revision: string;
@@ -80,7 +81,7 @@ export class MailPublicationService {
         const roles: MailPublication["roles"] = {};
         const coverage: MailPublication["coverage"] = {};
         const gmailStates = await tx.execute(
-          sql`select account_id, inventory_complete, status, error_category from gmail_account_sync_state`,
+          sql`select s.account_id,s.inventory_complete,s.status,s.error_category,s.next_attempt_at,statement_timestamp() as sampled_at from gmail_account_sync_state s join mail_accounts a on a.id=s.account_id and a.work_revision=s.account_revision`,
         );
         for (const account of accounts) {
           boxes[account.id] = await new MailboxService(database).listForAccount(
@@ -96,7 +97,20 @@ export class MailPublicationService {
             account.transport === "gmail"
               ? {
                   historyIncomplete: !gmail?.inventory_complete,
-                  blocked: reconnectRequired || Boolean(gmail?.error_category),
+                  blocked:
+                    reconnectRequired ||
+                    gmailNeedsAttention(
+                      gmail?.status as string | null,
+                      gmail?.error_category as string | null,
+                      gmail?.next_attempt_at
+                        ? new Date(
+                            gmail.next_attempt_at as string,
+                          ).toISOString()
+                        : null,
+                      new Date(
+                        (gmail?.sampled_at as string) ?? Date.now(),
+                      ).getTime(),
+                    ),
                   syncing:
                     account.enabled &&
                     gmail?.status !== "ready" &&

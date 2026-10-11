@@ -60,6 +60,12 @@ export class ApplicationEventService {
   }
   async cleanup(): Promise<void> {
     try {
+      // Reuse the worker's hourly retention job, including inactive accounts.
+      await this.db.execute(sql`update public.sync_observations o set events=(
+        select coalesce(jsonb_agg(e order by ord),'[]'::jsonb)
+        from jsonb_array_elements(o.events) with ordinality as entries(e,ord)
+        where (e->>'at')::timestamptz>now()-interval '24 hours')
+        where exists(select 1 from jsonb_array_elements(o.events) e where (e->>'at')::timestamptz<=now()-interval '24 hours')`);
       await this.db
         .delete(applicationEvents)
         .where(

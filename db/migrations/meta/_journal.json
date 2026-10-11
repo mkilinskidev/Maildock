@@ -309,6 +309,13 @@
       "when": 1791705994579,
       "tag": "0043_gmail_inbox_freshness",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1791708031311,
+      "tag": "0044_sync_observability",
+      "breakpoints": true
     }
   ]
 }

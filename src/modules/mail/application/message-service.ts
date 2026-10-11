@@ -5,6 +5,7 @@ import {
   StaleAccountWorkError,
 } from "../../accounts/domain/receive-transport";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
+import type { SyncObservationStore } from "../infrastructure/sync-observation-store";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import { ConversationService } from "./conversation-service";
@@ -249,6 +250,7 @@ export class MessageService {
     mailboxId: string,
     expectedRevision?: string,
     signal?: AbortSignal,
+    observation?: SyncObservationStore,
   ): Promise<boolean | void> {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Recent sync worker dependencies are unavailable.");
@@ -266,7 +268,14 @@ export class MessageService {
         this.config.initialSyncDays,
         this.syncLogger,
         this.events,
-      ).run(accountId, mailboxId, "recent", expectedRevision, signal);
+      ).run(
+        accountId,
+        mailboxId,
+        "recent",
+        expectedRevision,
+        signal,
+        observation,
+      );
       if (!more && this.backfillScheduler)
         await this.backfillScheduler.schedule(accountId, mailboxId);
       return more;
@@ -434,8 +443,10 @@ export class MessageService {
     backfillProgress?: { frontier: bigint; nextFrontier: bigint },
     deltaArrival = false,
     revision?: string,
+    observation?: SyncObservationStore,
   ): Promise<void> {
     if (batch.length === 0 && !backfillProgress) return;
+    const changes = { newMessages: 0, readChanges: 0 };
     await this.database.transaction(async (tx) => {
       // Offline metadata projection is also used by local maintenance. Receive
       // workers always pass their captured account revision.
@@ -474,6 +485,13 @@ export class MessageService {
             remote.modseq !== undefined &&
             placement.modseq !== null &&
             BigInt(remote.modseq) < placement.modseq;
+          if (
+            mailbox.remotePath.toUpperCase() === "INBOX" &&
+            !staleFlags &&
+            placement.flags.includes("\\Seen") !==
+              remote.flags.includes("\\Seen")
+          )
+            changes.readChanges++;
           await tx
             .update(mailboxMessages)
             .set({
@@ -531,6 +549,7 @@ export class MessageService {
           createdAt: synchronizedAt,
           updatedAt: synchronizedAt,
         });
+        if (mailbox.remotePath.toUpperCase() === "INBOX") changes.newMessages++;
         if (publishArrival) {
           // Known command destinations use UID/epoch. Servers without COPYUID
           // (including uncertain outcomes) use the source's metadata identity.
@@ -676,6 +695,11 @@ export class MessageService {
           );
       }
     });
+    if (changes.newMessages || changes.readChanges)
+      await observation?.record("materialized", changes, {
+        materialized: true,
+        running: true,
+      });
   }
 
   async list(

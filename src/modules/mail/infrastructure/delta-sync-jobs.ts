@@ -121,17 +121,23 @@ export async function registerDeltaWorker(
           phase: "delta",
           reason: payload.reason,
         },
-        async () => {
+        async (observation) => {
           await assertImapJob(boss, payload);
           let more: boolean | void = false;
           await withLock(payload.mailboxId, async () => {
+            await observation?.start(
+              "imap_delta",
+              (job as { priority?: number }).priority === 100 ? 0 : 1,
+            );
             more = await service.run(
               payload.accountId,
               payload.mailboxId,
               payload.reason,
               payload.accountRevision,
               job.signal,
+              observation,
             );
+            await observation?.record("completed", {}, { running: true });
           });
           job.signal?.throwIfAborted();
           if (more)
@@ -142,6 +148,8 @@ export async function registerDeltaWorker(
               logger,
             );
         },
+        (statement, parameters) =>
+          boss.getDb().executeSql(statement, parameters),
       );
     }),
   );

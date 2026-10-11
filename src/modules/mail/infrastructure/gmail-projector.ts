@@ -180,6 +180,12 @@ type ProjectionContext = {
   state: typeof gmailAccountSyncState.$inferSelect;
   boxes: (typeof mailboxes.$inferSelect)[];
   envelope: Awaited<ReturnType<typeof gmailEnvelope>> | null;
+  inboxPlacements: Map<string, string[]>;
+};
+export type InboxProjectionChanges = {
+  newMessages: number;
+  readChanges: number;
+  removedMessages: number;
 };
 export async function projectGmailBatch(
   db: Database,
@@ -196,7 +202,7 @@ export async function projectGmailBatch(
       envelope: item.remote ? await gmailEnvelope(item.remote) : null,
     })),
   );
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await assertGmailPublication(tx, accountId, revision);
     const [state] = await tx
       .select()
@@ -212,16 +218,48 @@ export async function projectGmailBatch(
           eq(mailboxes.lifecycleStatus, "active"),
         ),
       );
-    for (const item of prepared)
-      await projectGmailMessage(
+    const changes: InboxProjectionChanges = {
+      newMessages: 0,
+      readChanges: 0,
+      removedMessages: 0,
+    };
+    const placements = items.length
+      ? await tx
+          .select({
+            nativeId: messages.providerMessageId,
+            flags: mailboxMessages.flags,
+          })
+          .from(mailboxMessages)
+          .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
+          .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+          .where(
+            and(
+              eq(messages.accountId, accountId),
+              eq(mailboxes.providerMailboxId, "INBOX"),
+              inArray(
+                messages.providerMessageId,
+                items.map((item) => item.nativeId),
+              ),
+            ),
+          )
+      : [];
+    const inboxPlacements = new Map(
+      placements.map((p) => [p.nativeId!, p.flags]),
+    );
+    for (const item of prepared) {
+      const itemChanges = await projectGmailMessage(
         db,
         accountId,
         revision,
         item.nativeId,
         item.remote,
         receipt,
-        { tx, state, boxes, envelope: item.envelope },
+        { tx, state, boxes, envelope: item.envelope, inboxPlacements },
       );
+      changes.newMessages += itemChanges.newMessages;
+      changes.readChanges += itemChanges.readChanges;
+      changes.removedMessages += itemChanges.removedMessages;
+    }
     if (items.length) {
       await tx
         .update(gmailSyncWork)
@@ -245,6 +283,7 @@ export async function projectGmailBatch(
         })
         .where(eq(gmailAccountSyncState.accountId, accountId));
     }
+    return changes;
   });
 }
 export async function projectGmailMessage(
@@ -291,6 +330,28 @@ export async function projectGmailMessage(
       )
       .for("update");
     const fresh = !local;
+    const changes: InboxProjectionChanges = {
+      newMessages: 0,
+      readChanges: 0,
+      removedMessages: 0,
+    };
+    const [previousInbox] = context
+      ? context.inboxPlacements.has(nativeId)
+        ? [{ flags: context.inboxPlacements.get(nativeId)! }]
+        : []
+      : local
+        ? await tx
+            .select({ flags: mailboxMessages.flags })
+            .from(mailboxMessages)
+            .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+            .where(
+              and(
+                eq(mailboxMessages.messageId, local.id),
+                eq(mailboxes.providerMailboxId, "INBOX"),
+              ),
+            )
+            .limit(1)
+        : [];
     const now = new Date();
     if (remote && envelope) {
       const date = new Date(Number(remote.internalDate));
@@ -384,6 +445,17 @@ export async function projectGmailMessage(
                 ? !remote.labelIds.some((l) => ["TRASH", "SPAM"].includes(l))
                 : remote.labelIds.includes(b.providerMailboxId ?? ""),
             );
+        const inInbox = memberships.some(
+          (box) => box.providerMailboxId === "INBOX",
+        );
+        changes.newMessages = inInbox && !previousInbox ? 1 : 0;
+        changes.removedMessages = !inInbox && previousInbox ? 1 : 0;
+        changes.readChanges =
+          inInbox &&
+          previousInbox &&
+          previousInbox.flags.includes("\\Seen") !== flags.includes("\\Seen")
+            ? 1
+            : 0;
         await tx.delete(mailboxMessages).where(
           and(
             eq(mailboxMessages.messageId, local.id),
@@ -518,6 +590,7 @@ export async function projectGmailMessage(
         }
       }
     } else if (local) {
+      changes.removedMessages = previousInbox ? 1 : 0;
       await tx
         .update(messages)
         .set({ remoteMissingAt: now, updatedAt: now })
@@ -546,7 +619,8 @@ export async function projectGmailMessage(
         })
         .where(eq(gmailAccountSyncState.accountId, accountId));
     }
+    return changes;
   };
-  if (context) await publish(context.tx);
-  else await db.transaction(publish);
+  if (context) return publish(context.tx);
+  return db.transaction(publish);
 }

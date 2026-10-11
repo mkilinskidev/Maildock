@@ -88,7 +88,7 @@ export async function registerBackfillWorker(
           phase: "backfill",
           reason: "unknown",
         },
-        async () => {
+        async (observation) => {
           await assertImapJob(boss, payload);
           const [recent, delta] = await Promise.all([
             boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
@@ -114,11 +114,13 @@ export async function registerBackfillWorker(
               }),
             ]);
             if (hasEligibleWork(recent) || hasEligibleWork(delta)) return;
+            await observation?.start("imap_backfill", 2);
             more = await service.run(
               payload.accountId,
               payload.mailboxId,
               payload.accountRevision,
             );
+            await observation?.record("completed", {}, { running: true });
           });
           // The active singleton still owns its key. A fresh key permits exactly one
           // continuation; the poller repairs a crash between commit and enqueue.
@@ -134,6 +136,8 @@ export async function registerBackfillWorker(
               },
             );
         },
+        (statement, parameters) =>
+          boss.getDb().executeSql(statement, parameters),
       );
     }),
   );

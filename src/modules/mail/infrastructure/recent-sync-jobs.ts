@@ -109,16 +109,22 @@ export async function registerRecentSyncWorker(
           phase: "recent",
           reason: "unknown",
         },
-        async () => {
+        async (observation) => {
           await assertImapJob(boss, payload);
           let more: boolean | void = false;
           await withLock(payload.mailboxId, async () => {
+            await observation?.start(
+              "imap_recent",
+              (job as { priority?: number }).priority === 100 ? 0 : 1,
+            );
             more = await service.runRecentSync(
               payload.accountId,
               payload.mailboxId,
               payload.accountRevision,
               job.signal,
+              observation,
             );
+            await observation?.record("completed", {}, { running: true });
           });
           job.signal?.throwIfAborted();
           if (more)
@@ -129,6 +135,8 @@ export async function registerRecentSyncWorker(
               logger,
             );
         },
+        (statement, parameters) =>
+          boss.getDb().executeSql(statement, parameters),
       );
     }),
   );

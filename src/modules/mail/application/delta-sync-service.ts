@@ -7,6 +7,7 @@ import {
   measureStage,
 } from "../../../shared/infrastructure/logging/performance";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
+import type { SyncObservationStore } from "../infrastructure/sync-observation-store";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 
@@ -46,6 +47,7 @@ export class DeltaSyncService {
     reason: DeltaReason,
     expectedRevision?: string,
     signal?: AbortSignal,
+    observation?: SyncObservationStore,
   ): Promise<boolean | void> {
     if (this.provider.synchronizeMailboxSlice)
       return new ImapSliceSyncService(
@@ -61,7 +63,14 @@ export class DeltaSyncService {
         30,
         this.logger,
         this.events,
-      ).run(accountId, mailboxId, "delta", expectedRevision, signal);
+      ).run(
+        accountId,
+        mailboxId,
+        "delta",
+        expectedRevision,
+        signal,
+        observation,
+      );
     return withPerformance("delta", () =>
       this.runImpl(accountId, mailboxId, reason, expectedRevision),
     );
