@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.5 — Initial Inbox Window, continuous freshness, resource allocation, and checkpoint/recovery principles approved; implementation design pending**
+Status: **Draft 0.6 — Initial Inbox Window, freshness, resources, checkpoints/recovery and optimistic reconciliation approved; technical design pending**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
@@ -241,3 +241,45 @@ Decision (2026-10-11): **Persist completed synchronization work in bounded batch
 Batch sizing, persisted work model, transaction/CAS or fencing mechanism, per-provider cursor semantics, cadence of repair scans, measured replay overhead, and quantitative recovery objectives are deliberately **not yet selected**.
 
 This section is approved as a product contract only. No implementation, migration, scheduler rewrite or provider changes are authorized.
+
+## Approved: Reconciliation & Consistency (RC)
+
+Decision (2026-10-11): **Use immediate optimistic UI updates, backed by durable user intents and later remote confirmation.** Remote provider state is authoritative for received mail, except that explicitly pending user intents control what the UI temporarily presents. This decision must preserve existing Maildock behavior and must not imply that a queued action has already succeeded remotely.
+
+### Product requirements
+
+- **RC-001 — Authority:** The remote provider is the source of truth for message presence, membership and remote flags. Local cached data is a potentially delayed projection; local drafts and outgoing state retain their distinct existing authority.
+- **RC-002 — Durable optimistic intents:** Before reporting an accepted user mutation, persist its intended outcome durably. UI may immediately project that intent as pending; crash/reload must not silently lose it. On rejection before persistence, do not show it as accepted.
+- **RC-003 — Protection from stale reads:** In-flight or replayed provider snapshots must not silently overwrite outstanding local intent. Use guards reflecting message/property, run and source version semantics as appropriate; simple arrival-time last-write-wins is insufficient.
+- **RC-004 — Observable lifecycle:** Each accepted command has an actionable state such as pending, confirmed, failed or uncertain/reconciling. The UI must not silently treat an unconfirmed remote operation as completed. Failures must have an understandable resolution/retry path.
+- **RC-005 — Idempotent projection and execution:** Replayed sync pages and retries do not multiply logical messages or duplicate memberships. Mutations must use provider-appropriate desired-state/idempotency checks when safe; uncertain results must be observed before any potentially non-idempotent retry.
+- **RC-006 — Correct remote conflicts:** When local and another client change the same property concurrently, do not blindly assert that local or remote "wins." Preserve pending local intent until resolved and reconcile to the subsequently confirmed remote state; identify irreconcilable or unobservable outcomes rather than inventing an ordering guarantee.
+- **RC-007 — Correct deletion semantics:** Removing INBOX or a Gmail label is not equivalent to permanent message deletion. A partial listing or interrupted inventory cannot authorize deletion. Confirm true remote absence in a provider-appropriate way; do not resurrect remote-deleted messages through stale work.
+- **RC-008 — Identity and content preservation:** Remote moves, Gmail label changes and IMAP UID changes must not spuriously duplicate logical messages or discard valid local MIME/attachments. Gmail account-scoped message identity and IMAP mailbox/UIDVALIDITY identity require distinct provider-aware handling; do not assume universally stable identity across IMAP moves.
+- **RC-009 — Sequential intents:** Multiple accepted actions on the same message/property must resolve deterministically in user-intent order or be safely coalesced where semantics permit. An earlier remote response cannot override a newer accepted intent. Independent properties should not be blocked needlessly.
+- **RC-010 — Bulk work does not starve freshness:** Large-scale changes (e.g. 15,000 deletions, moves or read/unread updates) must be bounded, resumable, and scheduled below ongoing INBOX detection/materialization as defined by Inbox First, History With Leftovers; an individual interactive action must not act as unlimited interactive-priority work.
+- **RC-011 — Honest counters and search:** Partially synchronized folders must distinguish server-reported totals from local covered/known counts where available. Search and conversations must not duplicate messages because of Gmail labels or replay. Incomplete local search coverage must not masquerade as full remote coverage.
+- **RC-012 — Recovery and UI convergence:** After restart, disconnect or an uncertain remote outcome, reconstruct the visible pending state from durable data, re-observe provider state when needed, and eventually show the authoritative remote outcome or a visible unresolved state. Never indefinitely retain a falsely confirmed optimistic state.
+
+### Examples and expected results
+
+| ID | Situation | Expected behavior |
+| --- | --- | --- |
+| RC-T01 | Mark read in Maildock, delayed older unread snapshot arrives | UI retains accepted pending read intent; snapshot cannot silently revert it. |
+| RC-T02 | Mark read, then unread before first command confirms | Final projection reflects newest intent; old confirmation cannot overwrite newer intent, and remote changes are handled safely. |
+| RC-T03 | Maildock and another client set opposing read states | Observe/resolve the remote result after local command processing; do not claim cross-client total ordering. |
+| RC-T04 | Archive in Gmail | Remove INBOX membership but preserve message identity, content and unrelated labels. |
+| RC-T05 | Move message between IMAP folders | Track provider-specific identity change where provably possible; avoid manufacturing identity equivalence; preserve valid local cached content. |
+| RC-T06 | Message deleted remotely while a local action is pending | Do not recreate it; surface a resolved missing/failed outcome and reconcile local projection. |
+| RC-T07 | Repeated remote history/page, duplicate jobs or repeated command | No duplicate canonical Gmail message or placement; safe idempotent execution and projection. |
+| RC-T08 | Incomplete inventory or network failure during deletion scan | No mass tombstoning/removal from partial evidence. |
+| RC-T09 | 15,000 remote deletes/flag changes during concurrent INBOX arrivals | Progresses in bounded batches without starving fresh messages. |
+| RC-T10 | Restart after optimistic action accepted but before provider reply | Pending intent reappears correctly, provider outcome is rechecked before unsafe retry. |
+| RC-T11 | Provider confirms action then a newer local action is pending | Earlier confirmation cannot clear or overwrite newer intent. |
+| RC-T12 | Provider applies action but acknowledgement is lost | Report uncertainty/reconcile; do not claim failure or blindly replay a non-idempotent operation. |
+
+### Explicitly deferred to architecture
+
+Transport-specific command semantics (including whether an operation is safe to retry), persistence layout, conflict guards/versions, execution serialization and coalescing, reconciler algorithms, precise identity across IMAP moves, counter coverage and UI state terminology must be designed and validated separately. Provider checkpoints and failure recovery must satisfy CR-001–CR-006. Existing sending/draft semantics must not be rewritten as a side effect.
+
+This section is an approved product contract only: no code, schema, deployment or migration changes are authorized.
