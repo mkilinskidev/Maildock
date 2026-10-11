@@ -49,27 +49,26 @@ Examples:
 - External provider outages/quotas mean no unconditional wall-clock delivery guarantee is promised.
 - Detecting changes and fully materializing them are distinct stages; both need observability.
 
-### INBOX READY semantics
+### INBOX USABLE, INBOX READY and history semantics
 
-`INBOX READY` may be published only when:
-1. The initial selection has been determined with provider-appropriate, documented ordering and a stable bootstrap reference.
-2. Required metadata, flags and INBOX memberships for selected messages are durably stored.
-3. No selected message remains unresolved without a controlled recovery path.
-4. Changes observed since the bootstrap reference have undergone the required reconciliation.
-5. Continued current-INBOX synchronization is durably arranged.
-6. Deferred history remains eligible and resumable.
+**Approved (2026-10-11):** `INBOX USABLE` and `INBOX READY` are separate milestones. Neither requires full mailbox history, a globally exact newest-200 sort, full MIME nor a moment when the remote mailbox stops changing.
 
-`INBOX READY` **does not mean** the entire INBOX/history, MIME bodies or attachments have been downloaded, nor that the remote mailbox cannot have changed a moment later.
+- **USABLE** means some valid selected INBOX data has been durably published and can be browsed. It may occur before initial selection completes; show incomplete coverage honestly.
+- **READY** means the finite, provider-appropriate initial selection has reached its defined completion rule, selected messages have been reconciled to the permitted terminal outcomes, a **fixed logical cut-over boundary T1** has been safely resolved, and ongoing current-INBOX synchronization is durably arranged. T1 can be a provider cursor/snapshot boundary rather than a wall-clock timestamp.
+- All changes up to the fixed T1 relevant to the initial selection must be applied or conclusively accounted for. Changes after T1 are owned by continuous synchronization and **must not move the READY gate**. Do not wait for a quiet INBOX.
+- A selected message deleted or removed from INBOX before fetch must not be resurrected merely to satisfy selection. Permitted terminal outcomes are: the current remote state was durably projected, or remote absence/membership removal was reliably confirmed. An unresolved transient fetch/error **blocks READY** and remains visible/retryable; merely recording a recovery path is not sufficient to declare READY.
+- Initial-window exact membership and the finite provider selection stopping rule are transport-specific design gates. Provisional first-screen content can be USABLE but cannot be presented as definitively READY until those conditions are met.
+- **History may begin after the finite initial INBOX selection is completed and safely materialized**, even if the T1 reconciliation needed for READY is still underway, but *only* with leftover capacity and without delaying current INBOX or the remaining READY work. History is not gated on the READY label. Other accounts continue independently.
+- Current-INBOX messages arriving during bootstrap are eligible for priority service independently of the frozen selection. A normal current change after T1 does not revoke a legitimately reached READY milestone. Freshness health and history coverage are tracked separately from bootstrap completion.
+- A provider outage, quota backoff, or unreconciled selected item cannot be reported as successful READY. Display incomplete/degraded state truthfully.
 
-Track **bootstrap phase**, **Inbox Freshness** (last successfully confirmed reconciliation and lag/error), and **History Coverage** separately. Display incomplete history honestly rather than implying an empty remote INBOX.
-
-Candidate bootstrap phases: `PENDING`, `DISCOVERING`, `MATERIALIZING`, `RECONCILING`, `INBOX_READY`; transient recovery and actionable failures must be represented. These phase names are provisional and do not dictate database schema.
+`INBOX READY` is **a completed bootstrap milestone**, not an always-current status assertion. Display bootstrap progress, current Inbox Freshness (including last confirmed reconciliation/backoff), and History Coverage independently. Proposed phase labels remain implementation details.
 
 ### IIW acceptance scenarios
 
 | ID | Scenario | Expected outcome |
 | --- | --- | --- |
-| IIW-01 | New account / empty database | Initial INBOX work begins before historical ingestion. Historical work does not start before initial materialization and readiness. |
+| IIW-01 | New account / empty database | Initial INBOX work begins before historical ingestion. History may start once the bounded initial selection is completed and safely materialized, even before READY, using only leftover capacity. |
 | IIW-02 | 20,000 messages in INBOX | Initial selection respects the hybrid 30-day / 200 / 50 bounds. |
 | IIW-03 | New arrivals while bootstrapping | New messages are detected and processed with priority and are not lost or delayed behind history. |
 | IIW-04 | Worker restart mid-bootstrap | Durable completed work is preserved, unfinished work resumes safely. |
@@ -177,7 +176,7 @@ Decision (2026-10-11): **Within the capacity controlled by Maildock, serve curre
 - **RI-006 — Failure isolation and recovery:** 403/429, IMAP disconnects, unavailable accounts, restarts or duplicate wakeups must not create unbounded retries, exhaust shared capacity, or lose committed progress.
 - **RI-007 — Truthful degraded behavior:** If the provider or shared resource cap makes it impossible to fully satisfy every INBOX immediately, allocate fairly, show staleness/backoff and recover automatically when capacity returns. Priority is not an unconditional latency guarantee.
 
-The initial bootstrap gate remains in force: for a newly configured account, its first INBOX window must materialize before that account begins historical import; freshness signals during bootstrap remain eligible for priority service. Other existing accounts continue to receive their normal INBOX opportunities.
+The initial bootstrap gate remains in force: for a newly configured account, its bounded initial INBOX selection must complete and be safely materialized before that account begins historical import; INBOX READY is not required; freshness signals during bootstrap remain eligible for priority service. Other existing accounts continue to receive their normal INBOX opportunities.
 
 **Design deferred:** concrete scheduler structure, logical/physical execution pools, reservation percentages, poll cadence, fairness algorithm, per-provider resource accounting, and quantitative latency bounds. Do not implement complexity solely to realize a priority label; assess the simplest mechanism that satisfies the invariants.
 
@@ -321,7 +320,7 @@ Decision (2026-10-11): **A promptly usable INBOX takes precedence over globally 
 
 ### Important unresolved design trade-off
 
-The existing IIW contract says `INBOX READY` requires a determined selection and all selected messages durably resolved. IS-004 forbids pretending bounded partial discovery is complete. Therefore **this decision does not yet define a specific moment when a provisional fast first-screen selection may become INBOX READY**. C-01 still needs a provider-specific finite selection/termination rule and C-02 needs a finite READY boundary. Do not silently equate 'first useful messages visible' with READY, do not assume newest UID is newest by date, and do not weaken the historical 50-message fallback without an explicit follow-up product decision.
+The bootstrap policy now distinguishes USABLE from READY and fixes a finite logical cut-over T1; READY does not require mailbox quietness or historical completion. **Still open:** exact provider-specific finite initial selection stopping rules and T1 construction/reconciliation for Gmail REST and IMAP. Do not equate first visible messages with READY, assume UID recency equals date recency, or silently weaken the 50-message fallback.
 
 ### Acceptance cases to design
 
@@ -333,3 +332,16 @@ The existing IIW contract says `INBOX READY` requires a determined selection and
 | IS-T04 | New INBOX message during selection | Prioritized independently without restarting the fixed bootstrap window. |
 
 No provider-specific query, scan ceiling, SLA, schema, queue or algorithm is approved by this statement.
+
+## Approved: Finite bootstrap cut-over acceptance additions (BR)
+
+| ID | Situation | Expected result |
+| --- | --- | --- |
+| BR-T01 | 50,000 messages in INBOX; first small batch persisted | USABLE can be shown without READY or complete history. |
+| BR-T02 | Continuous arrivals while initial work completes | Freeze finite provider-aware T1; bootstrap reaches READY without awaiting a quiet mailbox; later arrivals remain active freshness work. |
+| BR-T03 | Selected message removed from INBOX or deleted during bootstrap | Confirm absence/membership change; do not resurrect it or block READY forever on a no-longer-existing item. |
+| BR-T04 | Selected message cannot be resolved because of transient errors | Keep READY withheld and degraded/retry status visible until resolved. |
+| BR-T05 | Initial selection safely materialized, T1 reconciliation still underway | History may use remaining capacity without blocking INBOX freshness or READY completion. |
+| BR-T06 | Full history still has tens of thousands of messages after T1 | READY is possible; history coverage remains separately incomplete. |
+
+No scheduler algorithm, quota split, batch size, exact T1 provider method, code change or schema change is approved by this clarification.
