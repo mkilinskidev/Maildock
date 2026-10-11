@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.7 — Fresh-install-only v2 scope approved; other technical design decisions pending**
+Status: **Draft 0.8 — Fresh-install-only scope and fast, bounded Initial Inbox Window selection approved; provider algorithms pending**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
@@ -307,3 +307,29 @@ Decision (2026-10-11): **Sync Engine v2 is intended exclusively for new Maildock
 | MI-T05 | Administrator requests downgrade to v1 | No automatic binary/schema downgrade is promised; supply clear incompatibility/restore guidance. |
 
 **Deferred:** exact version markers, migration filenames, schema initialization procedure, bootstrap release checks, backup/restore runbook and v2-to-v2 compatibility matrix. This decision authorizes documentation only, not reset operations or deployment changes.
+
+## Approved: Initial Inbox Window selection objective (IS)
+
+Decision (2026-10-11): **A promptly usable INBOX takes precedence over globally perfect chronological top-200 ordering if achieving the latter requires expensive unbounded discovery.** This supplements, and does not silently erase, the existing 30-day / 200 / fallback-to-50 IIW rule.
+
+- **IS-001 — Speed and bounded cost first:** On a newly connected account, select an initial useful INBOX population with bounded provider discovery and metadata cost. Do not require scanning an arbitrarily large mailbox merely to prove absolute top-200 order.
+- **IS-002 — Provider-aware recency:** Select recent messages using provider-supported, documented ordering/date and pagination. IMAP UID ordering must not be represented as equivalent to INTERNALDATE order; Gmail listing order/pagination must not be claimed to provide a stable global snapshot without evidence.
+- **IS-003 — Retain the product window:** Aim to materialize up to 200 eligible recent INBOX messages from the last 30 days, and if fewer than 50 qualify, supplement with older INBOX messages up to 50 total where available. The window is an *initial materialization objective*, not permission to perform unbounded scans before showing useful mail.
+- **IS-004 — Partial selection honesty:** If bounded discovery cannot yet establish the exact newest set or minimum fallback count, do not falsely declare the selection complete. Record outstanding selection/fallback work and keep progressing safely; UI must not misrepresent provisional coverage or freshness.
+- **IS-005 — Fixed bootstrap reference and continued arrivals:** Hold a stable initial selection horizon so live arrivals do not endlessly shift bootstrap. Service newly arriving INBOX messages independently and preferentially, including while selection continues.
+- **IS-006 — Eventually complete coverage:** All skipped or deferred older INBOX and other-folder mail remains eligible for historical backfill, including imported/backdated mail and messages outside the initial approximation. History must not replace current INBOX work priority.
+
+### Important unresolved design trade-off
+
+The existing IIW contract says `INBOX READY` requires a determined selection and all selected messages durably resolved. IS-004 forbids pretending bounded partial discovery is complete. Therefore **this decision does not yet define a specific moment when a provisional fast first-screen selection may become INBOX READY**. C-01 still needs a provider-specific finite selection/termination rule and C-02 needs a finite READY boundary. Do not silently equate 'first useful messages visible' with READY, do not assume newest UID is newest by date, and do not weaken the historical 50-message fallback without an explicit follow-up product decision.
+
+### Acceptance cases to design
+
+| ID | Scenario | Required outcome |
+| --- | --- | --- |
+| IS-T01 | 50,000-message INBOX with old imports/backdated dates | User sees useful recent mail without waiting for global exact chronological ranking; selection limitations are visible/recorded. |
+| IS-T02 | Gmail or IMAP pages are inconsistent or change during bootstrap | Stable initial horizon, replay-safe projection, no arbitrary total-order claim. |
+| IS-T03 | Fewer than 50 recent messages | Older-message fallback progresses toward up to 50 without an unbounded pre-display scan. |
+| IS-T04 | New INBOX message during selection | Prioritized independently without restarting the fixed bootstrap window. |
+
+No provider-specific query, scan ceiling, SLA, schema, queue or algorithm is approved by this statement.
