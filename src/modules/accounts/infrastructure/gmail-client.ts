@@ -53,8 +53,15 @@ const labelSchema = z.object({
   messagesUnread: z.number().int().nonnegative().optional(),
 });
 export type GmailLabel = z.infer<typeof labelSchema>;
-const reference = z.object({ id });
-const change = z.object({ message: reference });
+const reference = z.object({
+  id,
+  threadId: id.optional(),
+  labelIds: z.array(id).max(1000).optional(),
+});
+const change = z.object({
+  message: reference,
+  labelIds: z.array(id).max(1000).optional(),
+});
 const historySchema = z.object({
   ...page,
   historyId,
@@ -72,6 +79,7 @@ const historySchema = z.object({
     .max(500)
     .default([]),
 });
+export type GmailHistory = z.infer<typeof historySchema>;
 
 /** Published endpoint costs, verified 2026-10-10. Each retry is charged. */
 export const GMAIL_QUOTA_COST = {

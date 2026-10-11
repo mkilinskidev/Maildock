@@ -41,6 +41,13 @@ import { DEFAULT_ATTACHMENT_LIMITS } from "@/modules/mail/domain/attachments";
 import type { MailProvider } from "@/modules/accounts/domain/mail-provider";
 import { SyntheticGmail } from "./helpers/gmail-fixture";
 import { reserveGmailQuota } from "@/modules/mail/infrastructure/gmail-quota";
+import { GmailSyncRepository } from "@/modules/mail/infrastructure/gmail-sync-repository";
+import { PgBoss } from "pg-boss";
+import { installSyncAdmission } from "@/modules/mail/infrastructure/sync-admission";
+import {
+  ensureGmailQueue,
+  GMAIL_SYNC_QUEUE,
+} from "@/modules/mail/infrastructure/gmail-sync-jobs";
 
 describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () => {
   let container: StartedTestContainer;
@@ -163,6 +170,661 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       inventoryComplete: true,
       status: "ready",
     });
+  });
+  async function pendingWork(accountId: string) {
+    return database.db
+      .select()
+      .from(gmailSyncWork)
+      .where(eq(gmailSyncWork.accountId, accountId));
+  }
+  async function stageBacklog(
+    t: Awaited<ReturnType<typeof setup>>,
+    count = 300,
+  ) {
+    const runId = randomUUID();
+    const ids = Array.from({ length: count }, (_, i) => `historical-${i}`);
+    for (const id of ids) t.remote.fixture(id, ["Label_one"], 1);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({
+        inventoryRunId: runId,
+        inventoryPhase: "historical",
+        inventoryComplete: false,
+        inventoryPagesComplete: false,
+        historyDiscoveredAt: new Date(0),
+        nextAttemptAt: null,
+      })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await new GmailSyncRepository(database.db).stagePage({
+      accountId: t.id,
+      revision: 1n,
+      runId,
+      purpose: "inventory",
+      messageIds: ids,
+      expectedPageToken: null,
+      nextPageToken: null,
+    });
+  }
+  it("persists a new INBOX arrival before a staged 300-item P2 page and resumes after staging", async () => {
+    const t = await setup();
+    await t.finish();
+    await stageBacklog(t);
+    t.remote.fixture("arrival");
+    t.remote.change("arrival");
+    await t.sync.run(t.id, "1"); // Due discovery starts without draining P2.
+    await t.sync.run(t.id, "1"); // Durable history intake.
+    expect((await t.state()).historyId).toBe("100");
+    expect(
+      (await pendingWork(t.id)).filter((w) => w.priorityClass === 2),
+    ).toHaveLength(300);
+    const restarted = new GmailSyncService(database.db, t.provider, t.lock);
+    await restarted.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).find((w) => w.gmailMessageId === "arrival")
+        ?.status,
+    ).toBe("complete");
+    expect(
+      (await pendingWork(t.id)).filter(
+        (w) => w.priorityClass === 2 && w.status === "complete",
+      ),
+    ).toHaveLength(0);
+    // Crash after projection/receipt commit, before checkpoint: no repeated GET.
+    const gets = t.remote.requests.filter(
+      (r) => r.path === "messages/arrival",
+    ).length;
+    await new GmailSyncService(database.db, t.provider, t.lock).run(t.id, "1");
+    expect((await t.state()).historyId).toBe("101");
+    expect(
+      t.remote.requests.filter((r) => r.path === "messages/arrival"),
+    ).toHaveLength(gets);
+    await t.finish();
+    expect((await t.state()).inventoryComplete).toBe(true);
+  });
+  it.each(["read", "archive", "old-enters-inbox", "delete"])(
+    "prioritizes %s over unrelated staged P1 changes",
+    async (transition) => {
+      const remote = new SyntheticGmail();
+      remote.fixture(
+        "target",
+        transition === "old-enters-inbox" ? ["Label_one"] : ["INBOX", "UNREAD"],
+        1,
+      );
+      const t = await setup(remote);
+      await t.finish();
+      const outside = Array.from({ length: 60 }, (_, i) => `outside-${i}`);
+      for (const id of outside) remote.fixture(id, ["Label_one"]);
+      remote.head++;
+      remote.events.push({
+        id: remote.head.toString(),
+        messagesAdded: outside.map((id) => ({
+          message: { id, labelIds: ["Label_one"] },
+        })),
+      });
+      await t.sync.wake(t.id);
+      await t.sync.run(t.id, "1");
+      await t.sync.run(t.id, "1");
+      // Force the unchanged 60-second catch-up deadline, without sleeping.
+      if (transition === "delete") remote.messages.delete("target");
+      else
+        remote.messages.get("target")!.labelIds =
+          transition === "archive" ? ["Label_one"] : ["INBOX"];
+      remote.head++;
+      remote.events.push({
+        id: remote.head.toString(),
+        ...(transition === "delete"
+          ? { messagesDeleted: [{ message: { id: "target" } }] }
+          : transition === "old-enters-inbox"
+            ? {
+                labelsAdded: [
+                  {
+                    message: { id: "target", labelIds: ["INBOX"] },
+                    labelIds: ["INBOX"],
+                  },
+                ],
+              }
+            : {
+                labelsRemoved: [
+                  {
+                    message: {
+                      id: "target",
+                      labelIds: remote.messages.get("target")!.labelIds,
+                    },
+                    labelIds: [transition === "archive" ? "INBOX" : "UNREAD"],
+                  },
+                ],
+              }),
+      });
+      if (remote.messages.has("target"))
+        remote.messages.get("target")!.historyId = remote.head.toString();
+      await database.db
+        .update(gmailAccountSyncState)
+        .set({ historyDiscoveredAt: new Date(0) })
+        .where(eq(gmailAccountSyncState.accountId, t.id));
+      await t.sync.run(t.id, "1"); // Reopen discovery within the same durable run.
+      await t.sync.run(t.id, "1"); // Stage the later event, retaining all P1.
+      expect(
+        (await pendingWork(t.id)).filter(
+          (w) => w.priorityClass === 1 && w.status === "pending",
+        ),
+      ).toHaveLength(60);
+      expect(
+        (await pendingWork(t.id)).find((w) => w.gmailMessageId === "target")
+          ?.priorityClass,
+      ).toBe(0);
+      remote.requests.length = 0;
+      await t.sync.run(t.id, "1");
+      expect(
+        remote.requests
+          .filter((r) => r.path.startsWith("messages/"))
+          .map((r) => r.path),
+      ).toEqual(["messages/target"]);
+      expect((await t.state()).historyId).toBe("100");
+      for (let i = 0; i < 10 && (await t.state()).historyRunId; i++)
+        await t.sync.run(t.id, "1");
+      expect((await t.state()).historyId).toBe("102");
+      const [local] = await database.db
+        .select()
+        .from(messages)
+        .where(
+          and(
+            eq(messages.accountId, t.id),
+            eq(messages.providerMessageId, "target"),
+          ),
+        );
+      expect(local.remoteMissingAt !== null).toBe(transition === "delete");
+      const placements = await database.db
+        .select()
+        .from(mailboxMessages)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+        .where(
+          and(
+            eq(mailboxMessages.messageId, local.id),
+            eq(mailboxes.providerMailboxId, "INBOX"),
+          ),
+        );
+      expect(placements).toHaveLength(
+        transition === "archive" || transition === "delete" ? 0 : 1,
+      );
+      if (transition === "read")
+        expect(placements[0].mailbox_messages.flags).toContain("\\Seen");
+    },
+  );
+  it("discovers a later-page P0 before draining P1 and cannot checkpoint across an interrupted drain", async () => {
+    const t = await setup();
+    await t.finish();
+    for (let i = 0; i < 101; i++) {
+      const id = i === 100 ? "later-inbox" : `other-${i}`;
+      const labelIds = i === 100 ? ["INBOX"] : ["Label_one"];
+      t.remote.fixture(id, labelIds);
+      t.remote.head++;
+      t.remote.events.push({
+        id: t.remote.head.toString(),
+        messagesAdded: [{ message: { id, labelIds } }],
+      });
+    }
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1"); // Just 12 P1, not the page.
+    expect((await t.state()).historyId).toBe("100");
+    await t.sync.run(t.id, "1"); // Second page staged while 88 P1 remain.
+    await new GmailSyncService(database.db, t.provider, t.lock).run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).find((w) => w.gmailMessageId === "later-inbox")
+        ?.status,
+    ).toBe("complete");
+    expect(
+      (await pendingWork(t.id)).filter((w) => w.status === "pending"),
+    ).toHaveLength(88);
+    expect((await t.state()).historyId).toBe("100");
+    for (let i = 0; i < 12 && (await t.state()).historyRunId; i++)
+      await t.sync.run(t.id, "1");
+    expect((await t.state()).historyId).toBe("201");
+  });
+  it("retains staged P0 and Retry-After without any early retry", async () => {
+    const t = await setup();
+    await t.finish();
+    t.remote.fixture("limited");
+    t.remote.change("limited");
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    const original = t.remote.fetch;
+    let limited = true;
+    t.remote.fetch = async (url, options) => {
+      if (
+        limited &&
+        new URL(String(url)).pathname.endsWith("/messages/limited")
+      ) {
+        limited = false;
+        return new Response(
+          JSON.stringify({
+            error: { errors: [{ reason: "rateLimitExceeded" }] },
+          }),
+          { status: 429, headers: { "Retry-After": "120" } },
+        );
+      }
+      return original(url, options);
+    };
+    const provider = new GmailProvider(
+      database.db,
+      t.accounts,
+      t.remote.fetch,
+      t.provider.limits,
+    );
+    const sync = new GmailSyncService(database.db, provider, t.lock);
+    const before = Date.now();
+    await sync.run(t.id, "1");
+    const blocked = await t.state();
+    expect(blocked.nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(
+      before + 120000,
+    );
+    expect(blocked.historyId).toBe("100");
+    expect(
+      (await pendingWork(t.id)).find((w) => w.gmailMessageId === "limited")
+        ?.status,
+    ).toBe("pending");
+    const count = t.remote.requests.length;
+    await sync.wake(t.id);
+    await sync.run(t.id, "1");
+    expect(t.remote.requests).toHaveLength(count);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ nextAttemptAt: null })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await sync.run(t.id, "1");
+    await sync.run(t.id, "1");
+    expect((await t.state()).historyId).toBe("101");
+  });
+  it("gives durable P1/P2 bounded turns under a P0 backlog", async () => {
+    const t = await setup();
+    await t.finish();
+    await stageBacklog(t, 30);
+    const changes = Array.from({ length: 144 }, (_, i) => {
+      const id = `current-${String(i).padStart(3, "0")}`;
+      const labelIds = i < 120 ? ["INBOX"] : ["Label_one"];
+      t.remote.fixture(id, labelIds);
+      return { message: { id, labelIds } };
+    });
+    t.remote.head++;
+    t.remote.events.push({
+      id: t.remote.head.toString(),
+      messagesAdded: changes,
+    });
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    for (let i = 0; i < 8; i++) await t.sync.run(t.id, "1");
+    expect((await t.state()).priorityBurst).toBe(8);
+    await t.sync.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).filter(
+        (w) => w.priorityClass === 2 && w.status === "complete",
+      ),
+    ).toHaveLength(12);
+    expect((await t.state()).lastLowerPriority).toBe(2);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ priorityBurst: 8 })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.sync.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).filter(
+        (w) => w.priorityClass === 1 && w.status === "complete",
+      ),
+    ).toHaveLength(12);
+    expect((await t.state()).historyId).toBe("100");
+    await t.finish();
+  });
+  it("real pg-boss admits staged P0 before another account's P1 and freezes the actual class", async () => {
+    const low = await setup(),
+      high = await setup();
+    for (const t of [low, high]) await t.finish();
+    for (const [t, labelIds] of [
+      [low, ["Label_one"]],
+      [high, ["INBOX"]],
+    ] as const) {
+      t.remote.fixture("current", [...labelIds]);
+      t.remote.head++;
+      t.remote.events.push({
+        id: t.remote.head.toString(),
+        messagesAdded: [
+          { message: { id: "current", labelIds: [...labelIds] } },
+        ],
+      });
+      await t.sync.wake(t.id);
+      await t.sync.run(t.id, "1");
+      await t.sync.run(t.id, "1");
+    }
+    const boss = new PgBoss({
+      connectionString: `postgresql://maildock:test@${container.getHost()}:${container.getMappedPort(5432)}/maildock`,
+    });
+    await boss.start();
+    await ensureGmailQueue(boss);
+    const restore = installSyncAdmission(boss, 2);
+    try {
+      for (const t of [low, high])
+        await boss.send(
+          GMAIL_SYNC_QUEUE,
+          { version: 1, accountId: t.id, accountRevision: "1" },
+          { singletonKey: t.id },
+        );
+      const [first] = await boss.fetch<{ accountId: string }>(GMAIL_SYNC_QUEUE);
+      expect(first.data.accountId).toBe(high.id);
+      await high.sync.run(high.id, "1");
+      await boss.complete(GMAIL_SYNC_QUEUE, first.id);
+      const [second] = await boss.fetch<{ accountId: string }>(
+        GMAIL_SYNC_QUEUE,
+      );
+      expect(second.data.accountId).toBe(low.id);
+      const [stored] =
+        await database.client`select priority from pgboss.job where id=${second.id}`;
+      expect(stored.priority).toBe(10);
+      await low.sync.run(low.id, "1");
+      await boss.complete(GMAIL_SYNC_QUEUE, second.id);
+      expect((await pendingWork(low.id))[0].status).toBe("complete");
+    } finally {
+      restore();
+      await boss.stop();
+    }
+  });
+  it("recovers a 404 while earlier work is pending by reconciling from a new baseline", async () => {
+    const t = await setup();
+    await t.finish();
+    for (let i = 0; i < 30; i++)
+      t.remote.fixture(`expired-${i}`, ["Label_one"]);
+    t.remote.head++;
+    t.remote.events.push({
+      id: t.remote.head.toString(),
+      messages: [...t.remote.messages.keys()].map((id) => ({ id })),
+    });
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    t.remote.fixture("after-expiry");
+    t.remote.change("after-expiry");
+    t.remote.expired = true;
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ historyDiscoveredAt: new Date(0) })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    expect((await t.state()).status).toBe("reconcile_required");
+    expect((await t.state()).historyId).toBe("100");
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ nextAttemptAt: null })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.finish();
+    expect((await t.state()).historyId).toBe("102");
+    expect(
+      await database.db
+        .select()
+        .from(messages)
+        .where(eq(messages.accountId, t.id)),
+    ).toHaveLength(31);
+  });
+  it("replays pending identities under a new account revision and refuses stale completion", async () => {
+    const t = await setup();
+    await t.finish();
+    t.remote.fixture("before-revision");
+    t.remote.change("before-revision");
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    const oldRun = (await t.state()).historyRunId!;
+    await database.db
+      .update(mailAccounts)
+      .set({ workRevision: 2n })
+      .where(eq(mailAccounts.id, t.id));
+    await expect(t.sync.run(t.id, "1")).rejects.toThrow(
+      "Account work is stale",
+    );
+    expect(
+      (await pendingWork(t.id)).find((w) => w.runId === oldRun)?.status,
+    ).toBe("pending");
+    for (let i = 0; i < 30; i++) {
+      await t.sync.run(t.id, "2");
+      if (
+        (await t.state()).inventoryComplete &&
+        !(await t.state()).historyRunId
+      )
+        break;
+    }
+    expect(await t.state()).toMatchObject({
+      accountRevision: 2n,
+      inventoryComplete: true,
+      historyId: "101",
+    });
+    expect(
+      await database.db
+        .select()
+        .from(messages)
+        .where(eq(messages.accountId, t.id)),
+    ).toHaveLength(1);
+    expect(
+      (await pendingWork(t.id)).some((w) => w.accountRevision === 1n),
+    ).toBe(false);
+  });
+  it("rolls back failed staging and checkpoint transactions without skipping work", async () => {
+    const t = await setup();
+    await t.finish();
+    t.remote.fixture("transactional");
+    t.remote.change("transactional");
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await database.client`create function phase3b_reject_stage() returns trigger language plpgsql as $$ begin raise exception 'fixture staging failure'; end $$`;
+    await database.client`create trigger phase3b_stage before update on gmail_account_sync_state for each row when (NEW.history_drain_due and not OLD.history_drain_due) execute function phase3b_reject_stage()`;
+    try {
+      await expect(t.sync.run(t.id, "1")).rejects.toMatchObject({
+        cause: { message: "fixture staging failure" },
+      });
+    } finally {
+      await database.client`drop trigger phase3b_stage on gmail_account_sync_state`;
+      await database.client`drop function phase3b_reject_stage()`;
+    }
+    expect(await pendingWork(t.id)).toHaveLength(0);
+    expect(await t.state()).toMatchObject({
+      historyId: "100",
+      historyPagesComplete: false,
+    });
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    expect((await pendingWork(t.id))[0].status).toBe("complete");
+    await database.client`create function phase3b_reject_checkpoint() returns trigger language plpgsql as $$ begin raise exception 'fixture checkpoint failure'; end $$`;
+    await database.client`create trigger phase3b_checkpoint before update on gmail_account_sync_state for each row when (NEW.history_id is distinct from OLD.history_id) execute function phase3b_reject_checkpoint()`;
+    try {
+      await expect(t.sync.run(t.id, "1")).rejects.toMatchObject({
+        cause: { message: "fixture checkpoint failure" },
+      });
+    } finally {
+      await database.client`drop trigger phase3b_checkpoint on gmail_account_sync_state`;
+      await database.client`drop function phase3b_reject_checkpoint()`;
+    }
+    expect((await t.state()).historyId).toBe("100");
+    expect((await pendingWork(t.id))[0].status).toBe("complete");
+    const requests = t.remote.requests.filter(
+      (r) => r.path === "messages/transactional",
+    ).length;
+    await new GmailSyncService(database.db, t.provider, t.lock).run(t.id, "1");
+    expect((await t.state()).historyId).toBe("101");
+    expect(
+      t.remote.requests.filter((r) => r.path === "messages/transactional"),
+    ).toHaveLength(requests);
+  });
+  it("restarts a changed oversized history fragment from the committed cursor", async () => {
+    const t = await setup();
+    await t.finish();
+    for (let i = 0; i < 501; i++)
+      t.remote.fixture(`fragment-${i}`, ["Label_one"]);
+    t.remote.head++;
+    t.remote.events.push({
+      id: t.remote.head.toString(),
+      messages: [...t.remote.messages.keys()].map((id) => ({
+        id,
+        labelIds: ["Label_one"],
+      })),
+    });
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    t.remote.fixture("fragment-inbox");
+    t.remote.change("fragment-inbox");
+    // Re-reading the partial API page now has a different fingerprint.
+    await t.sync.run(t.id, "1");
+    expect(await t.state()).toMatchObject({
+      historyId: "100",
+      historyStartId: "100",
+      historyPageOffset: 0,
+    });
+    for (let i = 0; i < 70 && (await t.state()).historyRunId; i++)
+      await t.sync.run(t.id, "1");
+    expect((await t.state()).historyId).toBe("102");
+    expect(
+      await database.db
+        .select()
+        .from(messages)
+        .where(eq(messages.accountId, t.id)),
+    ).toHaveLength(502);
+  });
+  it("caps pending history intake and resumes discovery once a bounded drain frees room", async () => {
+    const t = await setup();
+    await t.finish();
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    const runId = (await t.state()).historyRunId!;
+    for (let offset = 0; offset < 4500; offset += 500) {
+      const values = Array.from({ length: 500 }, (_, i) => {
+        const gmailMessageId = `ceiling-${String(offset + i).padStart(4, "0")}`;
+        t.remote.fixture(gmailMessageId, ["Label_one"]);
+        return {
+          accountId: t.id,
+          accountRevision: 1n,
+          runId,
+          purpose: "history",
+          gmailMessageId,
+          priorityClass: 1,
+        };
+      });
+      await database.db.insert(gmailSyncWork).values(values);
+    }
+    t.remote.fixture("ceiling-inbox");
+    t.remote.change("ceiling-inbox");
+    t.remote.requests.length = 0;
+    await t.sync.run(t.id, "1");
+    expect(t.remote.requests.some((r) => r.path === "history")).toBe(false);
+    expect(
+      (await pendingWork(t.id)).filter((w) => w.status === "complete"),
+    ).toHaveLength(12);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).find(
+        (w) => w.gmailMessageId === "ceiling-inbox",
+      )?.status,
+    ).toBe("complete");
+    expect((await t.state()).historyId).toBe("100");
+  });
+  it("interleaves current INBOX history before initial recent inventory completes", async () => {
+    const t = await setup();
+    await t.sync.run(t.id, "1");
+    await stageBacklog(t, 30);
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ inventoryPhase: "recent", recentReady: false })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    t.remote.fixture("bootstrap-current");
+    t.remote.change("bootstrap-current");
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).find(
+        (w) => w.gmailMessageId === "bootstrap-current",
+      )?.status,
+    ).toBe("complete");
+    expect(
+      (await pendingWork(t.id)).filter(
+        (w) => w.purpose === "inventory" && w.status === "pending",
+      ),
+    ).toHaveLength(30);
+    expect((await t.state()).recentReady).toBe(false);
+    expect((await t.state()).historyId).toBeNull();
+    await t.finish();
+  });
+  it("gives P2 progress even when all current changes are P1", async () => {
+    const t = await setup();
+    await t.finish();
+    await stageBacklog(t, 30);
+    const changes = Array.from({ length: 120 }, (_, i) => {
+      const id = `p1-${i}`;
+      t.remote.fixture(id, ["Label_one"]);
+      return { message: { id, labelIds: ["Label_one"] } };
+    });
+    t.remote.head++;
+    t.remote.events.push({
+      id: t.remote.head.toString(),
+      messagesAdded: changes,
+    });
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    for (let i = 0; i < 9; i++) await t.sync.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).filter(
+        (w) => w.priorityClass === 2 && w.status === "complete",
+      ),
+    ).toHaveLength(12);
+    expect(
+      (await pendingWork(t.id)).filter(
+        (w) => w.priorityClass === 1 && w.status === "pending",
+      ),
+    ).toHaveLength(24);
+    expect((await t.state()).historyId).toBe("100");
+  });
+  it("promotes an already pending identity and deduplicates overlapping event work", async () => {
+    const t = await setup();
+    await t.finish();
+    const ids = [
+      "promoted",
+      ...Array.from({ length: 20 }, (_, i) => `unrelated-${i}`),
+    ];
+    for (const id of ids) t.remote.fixture(id, ["Label_one"]);
+    t.remote.head++;
+    t.remote.events.push({
+      id: t.remote.head.toString(),
+      messagesAdded: ids.map((id) => ({
+        message: { id, labelIds: ["Label_one"] },
+      })),
+    });
+    await t.sync.wake(t.id);
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    const createdAt = (await pendingWork(t.id)).find(
+      (w) => w.gmailMessageId === "promoted",
+    )!.createdAt;
+    t.remote.change("promoted", ["INBOX"]);
+    t.remote.events[t.remote.events.length - 1].labelsAdded = [
+      { message: { id: "promoted", labelIds: ["INBOX"] }, labelIds: ["INBOX"] },
+    ];
+    await database.db
+      .update(gmailAccountSyncState)
+      .set({ historyDiscoveredAt: new Date(0) })
+      .where(eq(gmailAccountSyncState.accountId, t.id));
+    await t.sync.run(t.id, "1");
+    await t.sync.run(t.id, "1");
+    const work = await pendingWork(t.id);
+    expect(work).toHaveLength(21);
+    expect(work.find((w) => w.gmailMessageId === "promoted")).toMatchObject({
+      priorityClass: 0,
+      status: "pending",
+      createdAt,
+    });
+    await t.sync.run(t.id, "1");
+    expect(
+      (await pendingWork(t.id)).filter((w) => w.status === "complete"),
+    ).toHaveLength(1);
+    expect((await t.state()).historyId).toBe("100");
   });
   it("fills folder counters during blocked backfill and imports paginated MIME with long handles", async () => {
     const remote = new SyntheticGmail();
@@ -972,6 +1634,7 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
     remote.fixture("history");
     const t = await setup(remote);
     await t.finish();
+    remote.requests.length = 0;
     for (let i = 0; i < 230; i++)
       remote.change("history", ["INBOX", "STARRED"]);
     remote.failures.set("history", 500);
@@ -991,6 +1654,10 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
       if (!(await t.state()).historyRunId) break;
     }
     expect((await t.state()).historyId).toBe("330");
+    // The first GET already observes history 330, covering later duplicate pages.
+    expect(
+      remote.requests.filter((r) => r.path === "messages/history"),
+    ).toHaveLength(1);
     expect(
       await database.db
         .select()
@@ -1029,7 +1696,13 @@ describe("complete native Gmail provider on disposable PostgreSQL, pool=1", () =
         .from(notificationEvents)
         .where(eq(notificationEvents.accountId, t.id)),
     ).toHaveLength(0);
-    remote.fixture("live");
+    // Define arrival after the persisted baseline clock, independent of host /
+    // container wall-clock skew. Historical eligibility remains tested above.
+    remote.fixture(
+      "live",
+      ["INBOX", "UNREAD", "Label_one"],
+      (await t.state()).createdAt.getTime() + 1000,
+    );
     remote.change("live");
     await t.delta();
     remote.change("live");

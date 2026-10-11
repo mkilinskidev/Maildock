@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { GmailApiError } from "../../accounts/infrastructure/gmail-client";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -6,6 +6,7 @@ import {
   gmailAccountSyncState,
   gmailSyncWork,
   mailAccounts,
+  messages,
 } from "../../../shared/infrastructure/database/schema";
 import {
   assertAccountWork,
@@ -13,6 +14,8 @@ import {
 } from "../../accounts/domain/receive-transport";
 
 export const GMAIL_WORK_PAGE_LIMIT = 500;
+// Leave room for one complete fragment below the 5,000 pending-item ceiling.
+export const GMAIL_HISTORY_PENDING_HIGH_WATER = 4500;
 
 /** Durable bounded page intake, shared by future inventory/history orchestrators.
  * No remote requests or queue ACKs participate in the authority transaction. */
@@ -59,6 +62,8 @@ export class GmailSyncRepository {
     runId: string;
     purpose: "inventory" | "history";
     messageIds: readonly string[];
+    priorities?: ReadonlyMap<string, number>;
+    eventHistoryIds?: ReadonlyMap<string, string>;
     expectedPageToken: string | null;
     nextPageToken: string | null;
     candidateHistoryId?: string;
@@ -72,7 +77,18 @@ export class GmailSyncRepository {
     const ids = [...new Set(input.messageIds)];
     if (
       input.messageIds.length > GMAIL_WORK_PAGE_LIMIT ||
-      ids.some((id) => !id.length || id.length > 256) ||
+      ids.some(
+        (id) =>
+          !id.length ||
+          id.length > 256 ||
+          (input.priorities?.has(id) &&
+            ![0, 1].includes(input.priorities.get(id)!)),
+      ) ||
+      ids.some(
+        (id) =>
+          input.eventHistoryIds?.has(id) &&
+          !/^[0-9]+$/.test(input.eventHistoryIds.get(id)!),
+      ) ||
       (input.candidateHistoryId !== undefined &&
         !/^[0-9]+$/.test(input.candidateHistoryId))
     )
@@ -135,22 +151,76 @@ export class GmailSyncRepository {
         .from(gmailSyncWork)
         .where(and(scope, ne(gmailSyncWork.status, "complete")))
         .limit(1);
-      if (pending.length)
+      if (inventory && pending.length)
         throw new Error(
           "Drain the current Gmail page before staging the next page.",
         );
       // Completed receipts are redundant after the cursor/projection commit.
-      await tx.delete(gmailSyncWork).where(scope);
+      if (inventory) await tx.delete(gmailSyncWork).where(scope);
+      else
+        await tx.execute(sql`delete from public.gmail_sync_work where ctid in (
+        select ctid from public.gmail_sync_work where account_id=${input.accountId}::uuid
+          and run_id=${input.runId}::uuid and purpose='history' and status='complete' limit 500
+      )`);
+      const observed =
+        !inventory && ids.length && input.eventHistoryIds
+          ? await tx
+              .select({
+                id: messages.providerMessageId,
+                historyId: messages.providerHistoryId,
+                missing: messages.remoteMissingAt,
+              })
+              .from(messages)
+              .where(
+                and(
+                  eq(messages.accountId, input.accountId),
+                  inArray(messages.providerMessageId, ids),
+                ),
+              )
+          : [];
+      const covered = new Set(
+        observed
+          .filter(
+            (m) =>
+              m.id &&
+              m.historyId &&
+              !m.missing &&
+              input.eventHistoryIds?.has(m.id) &&
+              BigInt(m.historyId) >= BigInt(input.eventHistoryIds.get(m.id)!),
+          )
+          .map((m) => m.id),
+      );
       if (ids.length)
-        await tx.insert(gmailSyncWork).values(
-          ids.map((gmailMessageId) => ({
-            accountId: input.accountId,
-            accountRevision: input.revision,
-            runId: input.runId,
-            purpose: input.purpose,
-            gmailMessageId,
-          })),
-        );
+        await tx
+          .insert(gmailSyncWork)
+          .values(
+            ids.map((gmailMessageId) => ({
+              accountId: input.accountId,
+              accountRevision: input.revision,
+              runId: input.runId,
+              purpose: input.purpose,
+              gmailMessageId,
+              status: covered.has(gmailMessageId) ? "complete" : "pending",
+              priorityClass: inventory
+                ? 2
+                : (input.priorities?.get(gmailMessageId) ?? 0),
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [
+              gmailSyncWork.accountId,
+              gmailSyncWork.runId,
+              gmailSyncWork.purpose,
+              gmailSyncWork.gmailMessageId,
+            ],
+            set: {
+              // A later event may invalidate a completed observation. Keep the
+              // strongest relevance and earliest discovery time until checkpoint.
+              status: sql`excluded.status`,
+              priorityClass: sql`least(${gmailSyncWork.priorityClass}, excluded.priority_class)`,
+              updatedAt: new Date(),
+            },
+          });
       const complete = !input.fragment?.more && input.nextPageToken === null;
       if (!inventory && complete && input.candidateHistoryId === undefined)
         throw new Error(
@@ -183,6 +253,8 @@ export class GmailSyncRepository {
                   ? input.fragment.digest
                   : null,
                 historyCandidateId: complete ? input.candidateHistoryId! : null,
+                historyDrainDue: true,
+                historyDiscoveredAt: new Date(),
                 needsWork: true,
                 updatedAt: new Date(),
               },

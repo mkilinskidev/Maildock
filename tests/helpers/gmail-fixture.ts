@@ -1,4 +1,7 @@
-import type { GmailMessage } from "@/modules/accounts/infrastructure/gmail-client";
+import type {
+  GmailMessage,
+  GmailHistory,
+} from "@/modules/accounts/infrastructure/gmail-client";
 export class SyntheticGmail {
   messages = new Map<string, GmailMessage>();
   labels = [
@@ -9,7 +12,8 @@ export class SyntheticGmail {
     { id: "Label_one", name: "Projects", type: "user" },
   ];
   head = 100n;
-  events: { id: string; messages: { id: string }[] }[] = [];
+  events: (Pick<GmailHistory["history"][number], "id"> &
+    Partial<Omit<GmailHistory["history"][number], "id">>)[] = [];
   requests: { method: string; path: string; query: URLSearchParams }[] = [];
   failures = new Map<string, number>();
   expired = false;

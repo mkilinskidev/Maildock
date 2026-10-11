@@ -1,13 +1,14 @@
 import { randomUUID, createHash } from "node:crypto";
 import type { Logger } from "pino";
 import { bestEffortDiagnostic } from "../../../shared/infrastructure/logging/diagnostics";
-import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
+import { and, eq, ne, or, isNull, sql, asc, inArray } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   gmailAccountSyncState,
   gmailSyncWork,
   mailAccounts,
   mailboxes,
+  mailboxMessages,
   messages,
   messageCommands,
 } from "../../../shared/infrastructure/database/schema";
@@ -21,13 +22,17 @@ import {
   assertGmailPublication,
 } from "../infrastructure/gmail-provider";
 import type { GmailAccountLock } from "../infrastructure/gmail-account-lock";
-import { GmailSyncRepository } from "../infrastructure/gmail-sync-repository";
+import {
+  GmailSyncRepository,
+  GMAIL_HISTORY_PENDING_HIGH_WATER,
+} from "../infrastructure/gmail-sync-repository";
 import {
   projectGmailMessage,
   projectGmailBatch,
   projectGmailLabels,
 } from "../infrastructure/gmail-projector";
 import { MailboxRoleService } from "./mailbox-role-service";
+import { classifyGmailHistory } from "../domain/gmail-history-priority";
 
 type State = typeof gmailAccountSyncState.$inferSelect;
 const resetHistory = {
@@ -40,6 +45,7 @@ const resetHistory = {
   historyTokenTrail: [],
   historyPageOffset: 0,
   historyPageDigest: null,
+  historyDrainDue: false,
 };
 const resetInventory = {
   inventoryRunId: null,
@@ -172,6 +178,25 @@ export class GmailSyncService {
           return;
         }
         if (state.inventoryRunId) {
+          // Existing rows predate the discovery clock. Establish a durable
+          // deadline once, without promoting every legacy inventory delivery.
+          if (!state.historyDiscoveredAt) {
+            await this.update(db, state, revision, {
+              historyDiscoveredAt: new Date(),
+            });
+            return;
+          }
+          // Use the existing history polling cadence even while one inventory
+          // page takes many deliveries to drain. No extra poller is introduced.
+          if (Date.now() - state.historyDiscoveredAt.getTime() >= 60000) {
+            await this.update(db, state, revision, {
+              ...resetHistory,
+              historyRunId: randomUUID(),
+              historyStartId: state.historyId ?? state.baselineHistoryId,
+              needsWork: true,
+            });
+            return;
+          }
           await this.inventory(db, client, state, revision);
           return;
         }
@@ -306,6 +331,7 @@ export class GmailSyncService {
       needsWork: true,
       nextAttemptAt: null,
       errorCategory: null,
+      historyDiscoveredAt: new Date(),
       ...resetHistory,
     });
     await this.labels(db, client, state.accountId, revision);
@@ -377,11 +403,60 @@ export class GmailSyncService {
     )!;
     const scope = and(
       eq(gmailSyncWork.accountId, state.accountId),
-      eq(gmailSyncWork.runId, runId),
-      eq(gmailSyncWork.purpose, purpose),
+      eq(gmailSyncWork.accountRevision, BigInt(revision)),
+      purpose === "history" && state.inventoryRunId
+        ? or(
+            and(
+              eq(gmailSyncWork.runId, runId),
+              eq(gmailSyncWork.purpose, "history"),
+            ),
+            and(
+              eq(gmailSyncWork.runId, state.inventoryRunId),
+              eq(gmailSyncWork.purpose, "inventory"),
+            ),
+          )
+        : and(
+            eq(gmailSyncWork.runId, runId),
+            eq(gmailSyncWork.purpose, purpose),
+          ),
       ne(gmailSyncWork.status, "complete"),
     );
-    const work = await db.select().from(gmailSyncWork).where(scope).limit(12);
+    if (purpose === "history") {
+      const [historyPending] = await db
+        .select({ id: gmailSyncWork.gmailMessageId })
+        .from(gmailSyncWork)
+        .where(and(scope, eq(gmailSyncWork.purpose, "history")))
+        .limit(1);
+      if (!historyPending) return false;
+    }
+    const pending = await db
+      .select({
+        priority: gmailSyncWork.priorityClass,
+        count: sql<number>`count(*)::int`,
+        oldest: sql<Date>`min(${gmailSyncWork.createdAt})`,
+      })
+      .from(gmailSyncWork)
+      .where(scope)
+      .groupBy(gmailSyncWork.priorityClass);
+    if (!pending.length) return false;
+    const lower = pending.filter((p) => p.priority > 0);
+    const due =
+      state.priorityBurst >= 8 ||
+      (state.priorityBurst > 0 &&
+        lower.some((p) => Date.now() - new Date(p.oldest).getTime() >= 60000));
+    const selected =
+      due && lower.length
+        ? (
+            lower.find((p) => p.priority !== state.lastLowerPriority) ??
+            lower[0]
+          ).priority
+        : Math.min(...pending.map((p) => p.priority));
+    const work = await db
+      .select()
+      .from(gmailSyncWork)
+      .where(and(scope, eq(gmailSyncWork.priorityClass, selected)))
+      .orderBy(asc(gmailSyncWork.createdAt), asc(gmailSyncWork.gmailMessageId))
+      .limit(12);
     // Four in-flight requests, three waves, bound interactive lock latency.
     for (let offset = 0; offset < work.length; offset += 4) {
       const responses = await Promise.allSettled(
@@ -404,15 +479,52 @@ export class GmailSyncService {
           nativeId: r.value.item.gmailMessageId,
           remote: r.value.remote,
         }));
+      // Each class has one purpose: history P0/P1 or inventory P2.
+      const workPurpose = selected === 2 ? "inventory" : "history";
       await projectGmailBatch(db, state.accountId, revision, successful, {
-        runId,
-        purpose,
+        runId:
+          workPurpose === "history"
+            ? state.historyRunId!
+            : state.inventoryRunId!,
+        purpose: workPurpose,
         generation:
-          purpose === "inventory" ? state.inventoryGeneration : undefined,
-        notify: purpose === "history" && state.status === "ready",
+          workPurpose === "inventory" ? state.inventoryGeneration : undefined,
+        notify: workPurpose === "history" && state.status === "ready",
       });
       const failure = responses.find((r) => r.status === "rejected");
       if (failure) throw failure.reason;
+    }
+    if (work.length) {
+      await this.update(db, state, revision, {
+        historyDrainDue: false,
+        priorityBurst:
+          selected === 2 || (due && selected > 0)
+            ? 0
+            : Math.min(8, state.priorityBurst + 1),
+        ...(selected > 0 ? { lastLowerPriority: selected } : {}),
+      });
+      bestEffortDiagnostic(() =>
+        this.logger?.debug(
+          {
+            event: "mail.gmail_priority_slice",
+            accountId: state.accountId,
+            priorityClass: `P${selected}`,
+            processedItems: work.length,
+            pendingByPriority: pending.map((p) => ({
+              priorityClass: `P${p.priority}`,
+              count: p.count,
+            })),
+            priorityYield: due && lower.length > 0,
+            p0DiscoveryToPersistenceMs:
+              selected === 0
+                ? Math.max(
+                    ...work.map((w) => Date.now() - w.createdAt.getTime()),
+                  )
+                : null,
+          },
+          "Gmail durable priority slice completed",
+        ),
+      );
     }
     return work.length > 0;
   }
@@ -552,7 +664,39 @@ export class GmailSyncService {
     state: State,
     revision: string,
   ) {
-    if (await this.drain(db, client, state, revision, "history")) return;
+    const [highWater] =
+      !state.historyPagesComplete && !state.historyDrainDue
+        ? await db
+            .select({ id: gmailSyncWork.gmailMessageId })
+            .from(gmailSyncWork)
+            .where(
+              and(
+                eq(gmailSyncWork.accountId, state.accountId),
+                eq(gmailSyncWork.runId, state.historyRunId!),
+                eq(gmailSyncWork.purpose, "history"),
+                ne(gmailSyncWork.status, "complete"),
+              ),
+            )
+            .offset(GMAIL_HISTORY_PENDING_HIGH_WATER - 1)
+            .limit(1)
+        : [];
+    if (state.historyDrainDue || state.historyPagesComplete || highWater) {
+      // Once every response page is durably staged, a new unfiltered sweep may
+      // start from that discovery cursor while the applied checkpoint stays put.
+      if (
+        state.historyPagesComplete &&
+        state.historyDiscoveredAt &&
+        Date.now() - state.historyDiscoveredAt.getTime() >= 60000
+      ) {
+        await this.update(db, state, revision, {
+          ...resetHistory,
+          historyRunId: state.historyRunId,
+          historyStartId: state.historyCandidateId,
+        });
+        return;
+      }
+      if (await this.drain(db, client, state, revision, "history")) return;
+    }
     if (!state.historyPagesComplete) {
       const page = await client.history(
         state.historyStartId!,
@@ -562,19 +706,44 @@ export class GmailSyncService {
         throw new GmailApiError("invalid_response");
       if (!state.historyNextPageToken && !state.historyPageOffset)
         await this.labels(db, client, state.accountId, revision);
-      const ids = [
-        ...new Set(
-          page.history.flatMap((h) =>
-            [
-              ...h.messages,
-              ...h.messagesAdded.map((x) => x.message),
-              ...h.messagesDeleted.map((x) => x.message),
-              ...h.labelsAdded.map((x) => x.message),
-              ...h.labelsRemoved.map((x) => x.message),
-            ].map((m) => m.id),
-          ),
-        ),
-      ];
+      const identities = classifyGmailHistory(page.history, new Set()).map(
+        (item) => item.id,
+      );
+      const localInbox = new Set<string>();
+      // Bound SQL identity lists independently of a large history record.
+      if (identities.length > state.historyPageOffset) {
+        const local = await db
+          .select({ id: messages.providerMessageId })
+          .from(messages)
+          .innerJoin(
+            mailboxMessages,
+            eq(mailboxMessages.messageId, messages.id),
+          )
+          .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+          .where(
+            and(
+              eq(messages.accountId, state.accountId),
+              eq(mailboxes.providerMailboxId, "INBOX"),
+              inArray(
+                messages.providerMessageId,
+                identities.slice(
+                  state.historyPageOffset,
+                  state.historyPageOffset + 500,
+                ),
+              ),
+            ),
+          );
+        for (const item of local) if (item.id) localInbox.add(item.id);
+      }
+      const classified = classifyGmailHistory(page.history, localInbox);
+      const ids = classified.map((item) => item.id);
+      const eventHistoryIds = new Map<string, string>();
+      for (const record of page.history) {
+        for (const { id } of classifyGmailHistory([record], new Set())) {
+          if (BigInt(record.id) > BigInt(eventHistoryIds.get(id) ?? "0"))
+            eventHistoryIds.set(id, record.id);
+        }
+      }
       // A single history record can affect more IDs than a work page. Re-read
       // that API page while draining durable fragments. A changed fingerprint
       // restarts from the fixed sweep start instead of skipping a new event.
@@ -585,7 +754,7 @@ export class GmailSyncService {
         await this.update(db, state, revision, {
           ...resetHistory,
           historyRunId: randomUUID(),
-          historyStartId: state.historyStartId,
+          historyStartId: state.historyId ?? state.baselineHistoryId,
         });
         return;
       }
@@ -597,6 +766,10 @@ export class GmailSyncService {
         runId: state.historyRunId!,
         purpose: "history",
         messageIds: ids.slice(offset, offset + 500),
+        priorities: new Map(
+          classified.map((item) => [item.id, item.priorityClass]),
+        ),
+        eventHistoryIds,
         expectedPageToken: state.historyNextPageToken,
         nextPageToken: more
           ? state.historyNextPageToken
@@ -609,6 +782,19 @@ export class GmailSyncService {
           more,
         },
       });
+      bestEffortDiagnostic(() =>
+        this.logger?.debug(
+          {
+            event: "mail.gmail_history_staged",
+            accountId: state.accountId,
+            stagedItems: Math.min(500, ids.length - offset),
+            pagesComplete: !more && !page.nextPageToken,
+            fragmentOffset: offset,
+            checkpointCommitted: false,
+          },
+          "Gmail history discovery durably staged",
+        ),
+      );
       return;
     }
     // Changes can arrive while durable history work is draining, including
@@ -676,5 +862,17 @@ export class GmailSyncService {
         })
         .where(eq(mailboxes.accountId, state.accountId));
     });
+    bestEffortDiagnostic(() =>
+      this.logger?.debug(
+        {
+          event: "mail.gmail_history_checkpoint",
+          accountId: state.accountId,
+          historyPages: state.historyPageCount,
+          checkpointCommitted: true,
+          inventoryPending: !!state.inventoryRunId,
+        },
+        "Gmail applied history checkpoint committed",
+      ),
+    );
   }
 }

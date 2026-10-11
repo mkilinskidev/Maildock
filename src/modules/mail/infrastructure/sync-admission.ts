@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import type { Logger } from "pino";
 import { bestEffortDiagnostic } from "../../../shared/infrastructure/logging/diagnostics";
 import { synchronizationPriority } from "../domain/synchronization-policy";
+import { GMAIL_HISTORY_PENDING_HIGH_WATER } from "./gmail-sync-repository";
 type IDatabase = ReturnType<PgBoss["getDb"]>;
 const pgBossVersion = (
   createRequire(import.meta.url)("pg-boss/package.json") as { version: string }
@@ -17,7 +18,8 @@ export const SYNC_QUEUES = [
 ] as const;
 
 // Eligibility is evaluated at admission, including old jobs and account phase changes.
-// Gmail P0 means conservative account-current work, not decoded INBOX history.
+// Unknown discovery remains conservative; durable Gmail drain work supplies
+// its actual next class, including the same lower-class allowance as the service.
 export const syncCandidatesSql = `
 with candidates as (
   select j.id, j.name, j.data->>'accountId' as account_id,
@@ -25,8 +27,32 @@ with candidates as (
     greatest(j.created_on,j.start_after) as eligible_at,
     case when j.name='mailbox-backfill-sync-v1' then 2
       when j.name='gmail-account-sync-v1' then
-        case when s.baseline_history_id is not null and s.status<>'reconcile_required'
-          and s.inventory_run_id is not null and s.history_run_id is null then 2 else 0 end
+        case when s.baseline_history_id is null or s.status='reconcile_required' then 0
+          when s.history_run_id is not null then
+            case when (not s.history_pages_complete and not s.history_drain_due
+              and not exists(select 1 from public.gmail_sync_work cap_work where cap_work.account_id=s.account_id
+                and cap_work.run_id=s.history_run_id and cap_work.purpose='history' and cap_work.status<>'complete'
+                offset ${GMAIL_HISTORY_PENDING_HIGH_WATER - 1} limit 1))
+              or (s.history_pages_complete and s.history_discovered_at<=now()-interval '60 seconds') then 0
+              else coalesce((
+                select w.priority_class from public.gmail_sync_work w
+                where w.account_id=s.account_id and w.account_revision=s.account_revision and w.status<>'complete'
+                  and ((w.run_id=s.history_run_id and w.purpose='history')
+                    or (w.run_id=s.inventory_run_id and w.purpose='inventory'))
+                  and exists(select 1 from public.gmail_sync_work h where h.account_id=s.account_id
+                    and h.run_id=s.history_run_id and h.purpose='history' and h.status<>'complete')
+                order by case when w.priority_class>0 and (s.priority_burst>=8
+                    or (s.priority_burst>0 and exists(select 1 from public.gmail_sync_work aged
+                      where aged.account_id=s.account_id and aged.status<>'complete' and aged.priority_class>0
+                        and (aged.run_id=s.history_run_id or aged.run_id=s.inventory_run_id)
+                        and aged.created_at<=now()-interval '60 seconds')))
+                  then 0 else w.priority_class+1 end,
+                  case when w.priority_class>0 and w.priority_class<>s.last_lower_priority then 0 else 1 end,
+                  w.priority_class, w.created_at limit 1
+              ),0) end
+          when s.inventory_run_id is not null then
+            case when s.history_discovered_at<=now()-interval '60 seconds' then 0 else 2 end
+          else 0 end
       when j.name='mailbox-discovery-v1' then 0
       when upper(m.remote_path)='INBOX' then 0 else 1 end as class,
     a.last_admitted_at
