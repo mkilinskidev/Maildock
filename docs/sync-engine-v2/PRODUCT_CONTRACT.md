@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.4 — Initial Inbox Window, continuous server-side freshness and Inbox-first resource policy approved; latency and architecture pending review**
+Status: **Draft 0.5 — Initial Inbox Window, continuous freshness, resource allocation, and checkpoint/recovery principles approved; implementation design pending**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
@@ -193,3 +193,51 @@ The initial bootstrap gate remains in force: for a newly configured account, its
 | RI-T06 | Global/provider shared quota is exhausted | Do not violate restrictions or claim freshness; surface backoff and resume fairly. |
 
 This is an approved product-level resource policy, not an approval of a particular implementation.
+
+## Approved: Checkpoints and Crash Recovery (CR)
+
+Decision (2026-10-11): **Persist completed synchronization work in bounded batches, with a separate safe provider checkpoint.** This section defines observable correctness and recovery requirements, not a queue implementation, database schema, or batch size.
+
+- **CR-001 — Safe checkpoint:** Advance the authoritative provider change checkpoint only after *all changes it covers* are durably applied or safely and durably represented as unresolved work with a protocol-valid replay guarantee. Prefer advancing only after complete resolution; never skip partially processed changes.
+- **CR-002 — Idempotency:** Worker restart, duplicate job delivery, page replay or network retry must not create duplicate logical messages or corrupt mailbox memberships.
+- **CR-003 — Efficient resumption:** Resume from the latest safe durable progress. Avoid reimporting completed history when the provider supports this; limited replay of in-flight batches is acceptable and must be safe.
+- **CR-004 — Expired/invalid provider checkpoint:** Perform controlled provider-specific reconciliation rather than resetting the database, discarding good cached content or declaring missing messages deleted based on partial scans.
+- **CR-005 — Stale worker fencing:** Responses from obsolete work generations, workers or account revisions must not overwrite newer state. Concurrent remote user actions and provider changes require guarded publication.
+- **CR-006 — Inbox-first after restart:** Recovery work and historic backlog remain below current INBOX synchronization priority under the approved Inbox First, History With Leftovers resource policy.
+
+### Approved progress model
+
+1. Split long-running ingestion, reconciliation and historical import into **bounded work batches**.
+2. Persist each safely completed batch and its progress marker durably, with idempotent replay for interrupted batches.
+3. Maintain **separate concepts** for (a) ingestion/backfill batch progress and (b) the provider's authoritative change checkpoint.
+4. Only advance the authoritative provider checkpoint when its entire covered change set meets CR-001; batch progress does not imply a safe provider checkpoint.
+5. Queue acknowledgement or an in-memory cursor alone is never proof of committed progress. Durable unfinished work must be rediscoverable after crash, including a crash between database commit and queue acknowledgement.
+6. After recovery, continue current INBOX service promptly and resume other outstanding work from the latest safe state; do not reset the fixed Initial Inbox Window needlessly.
+7. Treat a provider's explicit message-not-found, a missing placement, a transient network failure and an expired change cursor as different conditions. Never infer mass deletion from an incomplete inventory.
+8. Local UUIDs, cached MIME/attachments, pending commands and other product state must be preserved across recovery where still valid. A full provider reconciliation may have to re-enumerate remote metadata; this is not permission to redownload all content.
+
+### Provider-specific considerations (not implementation decisions)
+
+- **Gmail REST:** Account-wide change history and its checkpoint differ from historical message enumeration. History can expire; then carry out full controlled inventory/reconciliation with a new baseline while retaining verified local data.
+- **IMAP:** UIDs are scoped to mailbox and UIDVALIDITY. UIDVALIDITY changes require safe mailbox-specific reconciliation; IMAP sequence numbers are not persistent message identities. CONDSTORE/QRESYNC may optimize but do not substitute for correctness.
+- Failure/backoff waits must not hold scarce database/provider execution resources indefinitely.
+
+### Acceptance scenarios
+
+| ID | Failure case | Required result |
+| --- | --- | --- |
+| CR-T01 | Restart after some batches are committed | Continue from safe durable progress without losing or duplicating messages. |
+| CR-T02 | Crash after provider read but before database commit | Uncommitted work is replayable; provider checkpoint cannot skip it. |
+| CR-T03 | Crash after database commit but before queue acknowledgement | Recovery is idempotent and does not lose completed state. |
+| CR-T04 | Two workers process duplicate or outdated work | Only authorized/current work publishes; no stale overwrite. |
+| CR-T05 | Gmail history checkpoint expires | Controlled reconciliation preserves valid local UUIDs, bodies, attachments and other state. |
+| CR-T06 | IMAP UIDVALIDITY changes | Reconcile affected mailbox without treating old UIDs as valid for the new epoch. |
+| CR-T07 | A provider error occurs mid-batch | Do not commit a false provider checkpoint; safely retry incomplete work. |
+| CR-T08 | A crash occurs during extensive historical recovery | INBOX freshness is still prioritized once service resumes. |
+| CR-T09 | Partial remote inventory omits previously known messages | Never infer deletion solely from the partial inventory. |
+
+### Still open for architecture/validation
+
+Batch sizing, persisted work model, transaction/CAS or fencing mechanism, per-provider cursor semantics, cadence of repair scans, measured replay overhead, and quantitative recovery objectives are deliberately **not yet selected**.
+
+This section is approved as a product contract only. No implementation, migration, scheduler rewrite or provider changes are authorized.
