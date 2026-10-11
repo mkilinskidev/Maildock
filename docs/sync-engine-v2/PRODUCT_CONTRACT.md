@@ -1,6 +1,6 @@
 # Sync Engine v2 — Product Contract
 
-Status: **Draft 0.8 — Fresh-install-only scope and fast, bounded Initial Inbox Window selection approved; provider algorithms pending**
+Status: **Draft 0.10 — Initial Inbox, finite READY, fresh-install-only scope, checkpoint/recovery, optimistic consistency and foreground resource policy approved; provider algorithms and technical design pending**
 Date: 2026-10-11
 Tracking: [Issue #5](https://github.com/mkilinskidev/Maildock/issues/5)
 Working branch: `sync-engine-v2`
