@@ -37,6 +37,7 @@ export async function fixture(
   handler: Handler,
   options: Partial<ImapFlowOptions> = {},
   greeting: "PREAUTH" | "OK" = "PREAUTH",
+  capabilities = "IMAP4rev1 IDLE",
 ) {
   const origin = performance.now();
   const now = () => performance.now() - origin;
@@ -51,7 +52,6 @@ export async function fixture(
     detail?: unknown;
   }[] = [];
   const sockets = new Set<Socket>();
-  const capabilities = "IMAP4rev1 IDLE";
   const accept = (socket: Socket) => {
     sockets.add(socket);
     socket.setNoDelay(true);
@@ -254,7 +254,16 @@ export async function fixture(
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
-  return { now, commands, peers, clients, events, connect, cleanup };
+  return {
+    now,
+    commands,
+    peers,
+    clients,
+    events,
+    connect,
+    cleanup,
+    endpoint: { host: "127.0.0.1", port: address.port, secure: tls },
+  };
 }
 
 export function header(
