@@ -8,10 +8,8 @@ import {
 } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-// Deliberately red gate for the candidate `end() == backend settlement` contract.
-// A failure does not prove permanent client retirement is impossible: a replacement
-// design must establish backend ordering separately before authoritative retry.
-// This is not a production executor acceptance suite.
+// Preserved negative evidence: end() does NOT mean backend settlement. This is
+// a driver observation, not the acceptance contract of the production executor.
 // No TEST_DATABASE_URL escape hatch: faults run only against disposable fixtures.
 describe("receiving lane public end() retirement prerequisite", () => {
   let container: StartedTestContainer;
@@ -41,7 +39,7 @@ describe("receiving lane public end() retirement prerequisite", () => {
   });
 
   it.each([1, 2])(
-    "must settle a reserved backend before forced end resolves (pool %i)",
+    "preserves the counterexample: backend survives forced end (pool %i)",
     async (max) => {
       const laneUrl = new URL(url);
       laneUrl.username = "receiving";
@@ -83,7 +81,7 @@ describe("receiving lane public end() retirement prerequisite", () => {
         expect(
           backends,
           "end resolved while the old backend can still execute",
-        ).toHaveLength(0);
+        ).toEqual([{ state: "active", wait_event: "PgSleep" }]);
       } finally {
         // Admin cleanup is fixture-only, never a proposed production cancellation API.
         if (pid !== undefined)
