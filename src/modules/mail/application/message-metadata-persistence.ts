@@ -49,20 +49,30 @@ export async function persistMessageMetadata(
   publishArrival: boolean,
   pruneEvents = true,
   synchronizedAt = new Date(),
+  // Receiving-only caller preloads an exact distinct bounded set under its
+  // mailbox lock. Legacy callers retain the per-record lookup behavior.
+  receivingPlacements?: ReadonlyMap<
+    bigint,
+    typeof mailboxMessages.$inferSelect
+  >,
 ) {
   for (const remote of batch) {
     const uid = BigInt(remote.uid);
-    const [placement] = await db
-      .select()
-      .from(mailboxMessages)
-      .where(
-        and(
-          eq(mailboxMessages.mailboxId, mailboxId),
-          eq(mailboxMessages.uidValidity, uidValidity),
-          eq(mailboxMessages.uid, uid),
-        ),
-      )
-      .limit(1);
+    const placement = receivingPlacements
+      ? receivingPlacements.get(uid)
+      : (
+          await db
+            .select()
+            .from(mailboxMessages)
+            .where(
+              and(
+                eq(mailboxMessages.mailboxId, mailboxId),
+                eq(mailboxMessages.uidValidity, uidValidity),
+                eq(mailboxMessages.uid, uid),
+              ),
+            )
+            .limit(1)
+        )[0];
     if (placement) {
       const staleFlags =
         remote.modseq !== undefined &&

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type {
   RemoteMessageMetadata,
   RemoteFlagDelta,
@@ -9,7 +9,10 @@ import {
   type ReceivingState,
 } from "../../../shared/infrastructure/database/receiving-authority";
 import type { ReceivingExecutor } from "../../../shared/infrastructure/database/receiving-executor";
-import { mailboxes } from "../../../shared/infrastructure/database/schema";
+import {
+  mailboxes,
+  mailboxMessages,
+} from "../../../shared/infrastructure/database/schema";
 import { persistMessageMetadata } from "./message-metadata-persistence";
 
 const UID_MAX = 4294967295n;
@@ -213,7 +216,24 @@ export class ReceivingPersistence {
           await db.execute(
             sql`update mailbox_messages set flags=ARRAY(select jsonb_array_elements_text(${JSON.stringify([...flag.flags])}::jsonb)),modseq=${flag.modseq ?? null}::bigint where mailbox_id=${mailbox}::uuid and uid_validity=${expected.epoch}::bigint and uid=${flag.uid}::bigint and (${flag.modseq ?? null}::bigint is null or modseq is null or modseq<=${flag.modseq ?? null}::bigint)`,
           );
-      } else
+      } else {
+        // One bounded exact-set lookup replaces 128 serial round trips. claim
+        // already holds the conflicting mailbox lock; identities are unique.
+        const placements = mutation.metadata.length
+          ? await db
+              .select()
+              .from(mailboxMessages)
+              .where(
+                and(
+                  eq(mailboxMessages.mailboxId, mailbox),
+                  eq(mailboxMessages.uidValidity, expected.epoch),
+                  inArray(
+                    mailboxMessages.uid,
+                    mutation.metadata.map((m) => BigInt(m.uid)),
+                  ),
+                ),
+              )
+          : [];
         await persistMessageMetadata(
           db,
           folder.account,
@@ -222,7 +242,10 @@ export class ReceivingPersistence {
           mutation.metadata,
           mutation.kind === "fresh",
           false,
+          new Date(),
+          new Map(placements.map((p) => [p.uid, p])),
         );
+      }
       await db.execute(
         sql`update receiving_mailboxes set epoch=${next.epoch}::bigint,revision=${next.revision}::bigint,fresh_through=${next.freshThrough}::bigint,history_before=${next.historyBefore}::bigint,reconcile_after=${next.reconcileAfter}::bigint where mailbox_id=${mailbox}::uuid`,
       );
