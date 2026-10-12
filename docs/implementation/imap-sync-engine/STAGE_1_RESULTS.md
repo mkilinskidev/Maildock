@@ -1,4 +1,56 @@
-# Stage 1 results — retirement prerequisite blocked
+# Stage 1 results — isolated persistence passed
+
+Date: 2026-10-12. **Stage 1: PASS for the disabled, isolated receiving persistence component.** The executor and persistence API are implemented and validated; they are not connected to IMAP, scheduling, account cutover or worker composition. No Stage 2 work, push, PR or merge was performed. D15 remains **APPROVED: Variant A, logical commit-time authority**.
+
+## Corrected retirement and ordering contract
+
+The original blocker confused local client retirement with server transaction completion. `postgres.end({ timeout: 0 })` can resolve while the PostgreSQL backend is still active in `PgSleep`. That observation is retained as a passing counterexample test; it is not evidence that a replacement may trust an unlocked snapshot.
+
+Each admitted transaction now owns a fresh postgres.js client and a native socket created through the public socket factory. Cancellation revokes the frozen scoped Drizzle facade, rejects late prepared SQL, destroys the owned transport and waits for local transport/driver settlement before closing the client. A retired client is never reused or released into a shared pool. There is no global pool shutdown, private PostgreSQL protocol parser or delayed callback rollback. Capacity and waiting admission are bounded; deadlines cover admission, startup, statements and shutdown. Fresh clients add connection overhead and are an intentional Stage 1 tradeoff.
+
+A development run exposed a separate TLS teardown race: all 30 assertions passed, but Vitest reported an uncaught `EPIPE` and exited 1. Calling `end()` immediately after destroying the underlying TLS transport let the driver write Terminate after its socket listeners had gone. That run was rejected. The fix waits for the owned socket's public `closed` state, reservation settlement and the driver's public `onclose` before `end()`. The subsequent full run exited 0 with no unhandled error. These are local lifetime observations, not proof of synchronous backend disappearance.
+
+PostgreSQL provides the authoritative ordering. Claim takes the coordinator row `FOR SHARE`, locks account lifecycle and mailbox identity, then checks the expected epoch, revision and F/E/R under conflicting locks. Takeover takes the lease `FOR UPDATE`; mailbox recovery takes the same mailbox lock as writers. Account identity is revalidated after acquiring the mailbox lock. The mandatory deferred authority trigger performs its final database-clock expiry check at logical COMMIT point **L**, with all locks held through transaction completion. Expiry before L rejects the transaction. Expiry after valid L permits completion under Variant A while takeover waits. No claim is made that physical WAL durability precedes lease expiry.
+
+Retirement after COMMIT may leave an unresolved outcome. Recovery must acquire these locks and reload durable state; a lock deadline remains unresolved even when an unlocked read shows the old revision. The real lost-acknowledgement test drops server response bytes without parsing the wire protocol, observes durable COMMIT independently, then recovers under the new owner/generation. Replaying the obsolete revision is rejected without duplicates.
+
+## Implemented component
+
+- Append-only migration `0035_receiving_authority.sql`, matching Drizzle schema/snapshot and journal entry: singleton coordinator owner/generation/expiry, per-mailbox epoch/revision/F/E/R, database claim/initialization/recovery functions and mandatory mutation/COMMIT guards. Existing migrations and v1 fields are preserved.
+- `receiving-executor.ts` and `receiving-authority.ts`: bounded dedicated transaction lifetimes, revocable lazy SQL access, explicit transaction control and conservative unresolved recovery.
+- `message-metadata-persistence.ts`: extracted existing metadata, attachment, conversation and notification behavior. The existing `MessageService` continues using its original transaction and recent-success notification gate.
+- `receiving-persistence.ts`: complete bounded fresh/history interval evidence, exact repair keyset evidence, version-aware flags/deletions, epoch replacement and atomic frontier/revision advancement. Empty complete intervals advance correctly; incomplete evidence cannot advance. Each scope handles one mailbox, with a 128-record/2 MiB metadata budget. No external I/O occurs inside persistence transactions.
+- `receiving_current_placements` gates this component's active epoch while retaining old physical rows. Global UI/query routing and body publication are future integration work; body writes on enrolled accounts are rejected until integrated. No v1 account conversion is implemented.
+
+The application uses an ordinary PostgreSQL login owning its migrated schema, not a superuser. SQL guards protect the scoped API and ordinary writes, including both identities of moved placements and mutation without revision advancement. They do not defend against an adversarial schema owner disabling triggers, executing DDL or forging transaction settings outside that API. PUBLIC access to new authority objects is revoked. Existing notification retention deletion remains supported. Populated authority state has no automatic downgrade or reset path.
+
+## Real PostgreSQL validation
+
+The receiving fixtures create disposable PostgreSQL **17.6** containers, migrate the complete real journal and use an ordinary application login. They ignore `TEST_DATABASE_URL`. TLS uses a generated fixture certificate and verifies `pg_stat_ssl`; OpenSSL is required (Git for Windows supplies it in this environment). Fixture-only advisory locks/deferred triggers provide observable race barriers. Administrative backend cleanup occurs only in fixture teardown.
+
+| Scenario                                                        | Verified outcome                                                                                                                                      |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capacity 1 and 2; canceled callback and delayed prepared DELETE | Retired SQL cannot execute; replacement commit contains exactly the expected metadata/frontier; old cleanup cannot roll back replacement.             |
+| Takeover first                                                  | Old generation is rejected before publication; new owner succeeds.                                                                                    |
+| Old valid L first, then expiry and takeover                     | Backend may survive local retirement; recovery deadline is unresolved; takeover waits until old transaction finishes and sees its committed revision. |
+| Expiry before L                                                 | COMMIT rejects; state remains unchanged; takeover succeeds afterward.                                                                                 |
+| Actual lost COMMIT acknowledgement                              | Durable metadata/frontier recovered under conflicting locks and new generation; stale retry cannot duplicate.                                         |
+| Atomic metadata/frontier/conversation/event publication         | Four injected PostgreSQL failures roll back all facts, revision and notification sequence together.                                                   |
+| Fresh/history/repair/epoch                                      | Empty intervals, missing evidence, stale revision/epoch, repair deletion and wrap, stale MODSEQ and active-epoch visibility are covered.              |
+| Startup, TLS, statement deadline, admission and shutdown        | Owned lifetimes close; suspended scopes are revoked; unrelated reader remains usable.                                                                 |
+| Mutation/lifecycle/bounds                                       | Missing authority/revision, moved placement, disabled account, UID maximum and generation overflow are covered.                                       |
+
+Final receiving command: `pnpm exec vitest run tests/receiving-safety.integration.test.ts tests/receiving-retirement-gate.integration.test.ts --maxWorkers=1 --no-file-parallelism` — **30/30 passed** (26 safety cases plus four retained retirement/startup probes). One cold-client 32-record batch measured 373.40 ms in the accepted TLS-fix run; this is a laboratory sample, not an SLA or load proof.
+
+Existing core/incremental/backfill/conversation/attachment/command/provider/lifecycle regression selection: **204 tests passed across 10 files**. Existing outgoing/sent-copy/provider/MIME selection: **85 tests passed across five files**. The core regression fixtures use PostgreSQL **18.6**, validating migration compatibility and preserved v1 behavior there; the receiving race evidence above is from 17.6. `pnpm typecheck`, `pnpm lint`, changed-file formatting and `git diff --check` all passed in final verification. The earlier whole-repository formatting check found 69 pre-existing experiment/runtime files; those unrelated files were left intact.
+
+The isolated Stage 1 blocker is resolved. Remaining scheduler, IMAP/provider, full query routing, body/MIME, process-suspension, multi-folder and production resource/release validation belongs to later authorized stages. This report does not authorize those stages or production cutover.
+
+## Preserved historical report at 725c8c37cbf3d72a308e013ccc017f97bbc912b6
+
+The following report records the initial conclusion and failed prerequisite assumption. Its BLOCKED status and absence-of-implementation statements describe that historical commit, not the current component.
+
+### Original Stage 1 results — retirement prerequisite blocked
 
 Date: 2026-10-12. **Stage 1: BLOCKED at the database lifetime prerequisite.**
 This is an investigation and retained failing gate, not a completed receiving
