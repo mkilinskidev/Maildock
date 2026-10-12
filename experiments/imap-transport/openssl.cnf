@@ -1,0 +1,5 @@
+# Disposable fixture certificate only. No account or production credentials.
+[req]
+distinguished_name = subject
+[subject]
+CN = localhost
