@@ -1,0 +1,21 @@
+name: maildock-imap-experiment
+services:
+  dovecot:
+    image: dovecot/dovecot:2.4.3-dev@sha256:d0db02b4aa9c16bc50c96faad68fcf5724c1453a98a39ada685409227e967898
+    command: [dovecot, -F]
+    cap_add: [SYS_CHROOT]
+    ports:
+      - "127.0.0.1:31993:31993"
+    volumes:
+      - mailbox:/srv/vmail
+      - ./dovecot.conf:/etc/dovecot/dovecot.conf:ro
+      - ./import.sh:/tmp/maildock-import.sh:ro
+      - ./.runtime/tls:/etc/dovecot/ssl:ro
+    networks: [fixture]
+    mem_limit: 1g
+    cpus: 2
+networks:
+  fixture:
+    driver: bridge
+volumes:
+  mailbox:

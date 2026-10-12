@@ -1,0 +1,4 @@
+.runtime/
+fixtures/
+outputs/*.json
+!outputs/summary.json
