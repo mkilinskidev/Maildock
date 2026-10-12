@@ -1,0 +1,8 @@
+{
+  "stamp": "2026-10-12T11-33-22-728Z",
+  "image": "sha256:b2c9dce7a3d7f144f486a1cd2287aa20dc7ad529637d4adf31a238fde09f52a3",
+  "seed": 2403,
+  "before": "qdisc noqueue 0: root refcnt 2 \n",
+  "status": "NOT RUN",
+  "failure": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(owner)\n\n    at <anonymous> (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\packet-loss.ts:23:49)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+}

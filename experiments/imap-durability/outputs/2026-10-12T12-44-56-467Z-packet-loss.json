@@ -1,0 +1,30 @@
+{
+  "stamp": "2026-10-12T12-44-56-467Z",
+  "image": "sha256:b2c9dce7a3d7f144f486a1cd2287aa20dc7ad529637d4adf31a238fde09f52a3",
+  "seed": 2403,
+  "before": "qdisc noqueue 0: root refcnt 2 \n",
+  "qdiscMeasured": "qdisc netem 33: root refcnt 23 limit 1000 delay 20ms loss 3% seed 2403\n Sent 1277235 bytes 1203 pkt (dropped 30, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+  "status": "PASS",
+  "dropped": 30,
+  "rttMs": {
+    "n": 100,
+    "p50": 22.872200000001612,
+    "p95": 23.943100000000413,
+    "p99": 257.8693000000021,
+    "max": 259.1749000000018
+  },
+  "effectiveBytesPerSecond": {
+    "n": 10,
+    "p50": 376623.90070702264,
+    "p95": null,
+    "p99": null,
+    "max": 495967.7636742224
+  },
+  "identities": 1024,
+  "epoch": "1791809097",
+  "history": 1,
+  "fresh": 1024,
+  "missing": 0,
+  "duplicates": 0,
+  "oracleMs": 258.4083000000028
+}

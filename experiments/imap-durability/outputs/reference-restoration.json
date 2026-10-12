@@ -1,0 +1,8 @@
+{
+  "at": "2026-10-12T13:41:17.630Z",
+  "account": "p3-load-0",
+  "before": 36759,
+  "after": 51759,
+  "restored": 15000,
+  "note": "Server-assigned new UIDs; original expunged UID gap retained"
+}

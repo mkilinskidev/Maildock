@@ -1,0 +1,98 @@
+{
+  "stamp": "2026-10-12T11-22-02-734Z",
+  "trace": "2026-10-12T11-22-02-734Z-network.jsonl.gz",
+  "results": [
+    {
+      "name": "local",
+      "delay": 0,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 520.3544999999995,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 30.778199999998833,
+        "p95": 31.60870000000068,
+        "p99": null,
+        "max": 31.86080000000038
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 1077768.4744461542,
+        "p95": null,
+        "p99": null,
+        "max": 1168931.997906229
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 269.1274000000012,
+        "p95": null,
+        "p99": null,
+        "max": 292.96910000000025
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 121.8747999999996,
+        "p95": null,
+        "p99": null,
+        "max": 145.74389999999948
+      },
+      "proxyBytes": 661222,
+      "peakProxyBuffered": 54862,
+      "identities": 394,
+      "epoch": "1791804122",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 95.32879999999932
+    },
+    {
+      "name": "20ms-requested",
+      "delay": 10,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 683.4219000000012,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 31.09979999999996,
+        "p95": 31.79080000000249,
+        "p99": null,
+        "max": 32.188200000000506
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 262412.65912763024,
+        "p95": null,
+        "p99": null,
+        "max": 436250.5480017935
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 327.46670000000086,
+        "p95": null,
+        "p99": null,
+        "max": 333.8140999999996
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 149.40919999999824,
+        "p95": null,
+        "p99": null,
+        "max": 154.41779999999926
+      },
+      "proxyBytes": 683196,
+      "peakProxyBuffered": 51057,
+      "identities": 394,
+      "epoch": "1791804138",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 69.81229999999778
+    },
+    {
+      "status": "FAIL",
+      "failure": "Error: Full operation deadline\n    at Lane.budget (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\client.ts:114:54)\n    at Lane.op (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\client.ts:125:17)\n    at <anonymous> (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\network.ts:31:82)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+    }
+  ]
+}

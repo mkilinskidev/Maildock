@@ -1,0 +1,98 @@
+{
+  "stamp": "2026-10-12T11-25-34-809Z",
+  "trace": "2026-10-12T11-25-34-809Z-network.jsonl.gz",
+  "results": [
+    {
+      "name": "local",
+      "delay": 0,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 523.8035999999993,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 30.532900000000154,
+        "p95": 31.56760000000031,
+        "p99": null,
+        "max": 31.578199999999924
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 1163141.8883490067,
+        "p95": null,
+        "p99": null,
+        "max": 1320237.0348033234
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 287.1857999999993,
+        "p95": null,
+        "p99": null,
+        "max": 313.34469999999965
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 136.41390000000138,
+        "p95": null,
+        "p99": null,
+        "max": 148.45550000000003
+      },
+      "proxyBytes": 661178,
+      "peakProxyBuffered": 51011,
+      "identities": 394,
+      "epoch": "1791804334",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 85.22299999999996
+    },
+    {
+      "name": "20ms-requested",
+      "delay": 10,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 658.5793999999987,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 30.889799999997194,
+        "p95": 32.30710000000181,
+        "p99": null,
+        "max": 32.45860000000175
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 327994.5435710498,
+        "p95": null,
+        "p99": null,
+        "max": 393423.61842472944
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 330.4766000000018,
+        "p95": null,
+        "p99": null,
+        "max": 375.8738999999987
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 151.0067999999992,
+        "p95": null,
+        "p99": null,
+        "max": 175.7270000000026
+      },
+      "proxyBytes": 683246,
+      "peakProxyBuffered": 52104,
+      "identities": 394,
+      "epoch": "1791804350",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 68.90770000000339
+    },
+    {
+      "status": "FAIL",
+      "failure": "Error: {\"status\":\"unresolved\",\"kind\":\"protocol\",\"remoteOutcome\":\"read-only\",\"message\":\"No actual tagged success observed\",\"metrics\":{\"received\":0,\"accepted\":0,\"maxChunk\":0,\"rejectedChunk\":0,\"identities\":0,\"parserAtAbort\":{\"lineBytes\":0,\"responseBytes\":0,\"literalBytes\":0,\"queuedChunks\":0},\"settlementMs\":58.79320000000007,\"closeMs\":58.9684999999954,\"durationMs\":58.983399999997346},\"diagnostics\":[]}\n    at Lane.unwrap (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\client.ts:111:13)\n    at Lane.op (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\client.ts:146:17)\n    at async Lane.close (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\client.ts:266:7)\n    at async <anonymous> (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\network.ts:24:5)"
+    }
+  ]
+}

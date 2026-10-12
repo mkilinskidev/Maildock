@@ -1,0 +1,255 @@
+{
+  "stamp": "2026-10-12T12-37-55-058Z",
+  "trace": "2026-10-12T12-37-55-058Z-network.jsonl.gz",
+  "results": [
+    {
+      "name": "local",
+      "delay": 0,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 167.8151999999991,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 1.3550999999997657,
+        "p95": 2.035599999999249,
+        "p99": null,
+        "max": 2.332800000000134
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 2159030.078090682,
+        "p95": null,
+        "p99": null,
+        "max": 2368905.3584077987
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 86.05040000000008,
+        "p95": null,
+        "p99": null,
+        "max": 113.16320000000087
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 30.44300000000112,
+        "p95": null,
+        "p99": null,
+        "max": 44.60399999999936
+      },
+      "userWireAdmissionMs": {
+        "n": 10,
+        "p50": 25.855199999999968,
+        "p95": null,
+        "p99": null,
+        "max": 37.183100000000195
+      },
+      "proxyBytes": 660924,
+      "peakProxyBuffered": 0,
+      "identities": 394,
+      "epoch": "1791808675",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 83.90090000000055
+    },
+    {
+      "name": "20ms-requested",
+      "delay": 10,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 779.6078999999991,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 31.08400000000256,
+        "p95": 31.6875,
+        "p99": null,
+        "max": 32.0622000000003
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 392184.96389236767,
+        "p95": null,
+        "p99": null,
+        "max": 397690.9014365591
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 352.7920000000013,
+        "p95": null,
+        "p99": null,
+        "max": 377.8234999999986
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 162.56700000000274,
+        "p95": null,
+        "p99": null,
+        "max": 172.68309999999838
+      },
+      "userWireAdmissionMs": {
+        "n": 10,
+        "p50": 93.89089999999851,
+        "p95": null,
+        "p99": null,
+        "max": 109.85559999999896
+      },
+      "proxyBytes": 683372,
+      "peakProxyBuffered": 52645,
+      "identities": 394,
+      "epoch": "1791808684",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 44.85889999999927
+    },
+    {
+      "name": "100ms-requested",
+      "delay": 50,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 2605.293399999995,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 124.25840000000608,
+        "p95": 125.64029999999912,
+        "p99": null,
+        "max": 125.72060000000056
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 79060.55576277108,
+        "p95": null,
+        "p99": null,
+        "max": 106303.92991937895
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 1081.316700000003,
+        "p95": null,
+        "p99": null,
+        "max": 1105.8712000000014
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 519.6851999999999,
+        "p95": null,
+        "p99": null,
+        "max": 535.6324000000022
+      },
+      "userWireAdmissionMs": {
+        "n": 10,
+        "p50": 273.27769999999873,
+        "p95": null,
+        "p99": null,
+        "max": 285.68009999999776
+      },
+      "proxyBytes": 685064,
+      "peakProxyBuffered": 51555,
+      "identities": 394,
+      "epoch": "1791808699",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 59.97929999999906
+    },
+    {
+      "name": "128KiB-per-second",
+      "delay": 10,
+      "bandwidth": 131072,
+      "status": "PASS",
+      "firstMetadataMs": 1326.2268999999942,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 31.13169999999809,
+        "p95": 32.01220000000467,
+        "p99": null,
+        "max": 47.03840000000491
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 90934.9943312266,
+        "p95": null,
+        "p99": null,
+        "max": 96429.06705250875
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 365.2028999999893,
+        "p95": null,
+        "p99": null,
+        "max": 418.8984000000055
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 169.53139999999257,
+        "p95": null,
+        "p99": null,
+        "max": 190.6750000000029
+      },
+      "userWireAdmissionMs": {
+        "n": 10,
+        "p50": 99.71150000000489,
+        "p95": null,
+        "p99": null,
+        "max": 115.36629999999423
+      },
+      "proxyBytes": 690572,
+      "peakProxyBuffered": 53987,
+      "identities": 394,
+      "epoch": "1791808733",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 64.28560000000289
+    },
+    {
+      "name": "hang-after-search",
+      "status": "PASS",
+      "observed": {
+        "durationMs": 10006.096600000004,
+        "inducedError": true
+      },
+      "identities": 128,
+      "epoch": "1791808753",
+      "history": 1,
+      "fresh": 128,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 21.594100000002072
+    },
+    {
+      "name": "reset-after-search",
+      "status": "PASS",
+      "observed": {
+        "durationMs": 86.57300000000396,
+        "inducedError": true
+      },
+      "identities": 128,
+      "epoch": "1791808765",
+      "history": 1,
+      "fresh": 128,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 19.280899999997928
+    },
+    {
+      "name": "temporary-blackout",
+      "status": "PASS",
+      "observed": {
+        "durationMs": 5761.349900000001,
+        "inducedError": false
+      },
+      "identities": 128,
+      "epoch": "1791808767",
+      "history": 1,
+      "fresh": 128,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 15.750199999994948
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "fixture": "existing scripted TLS peer, supplemental to real Dovecot",
+  "results": [
+    {
+      "complete": false,
+      "status": "PASS",
+      "searchResponses": 0,
+      "operations": [
+        {
+          "kind": "incomplete",
+          "uids": [
+            9
+          ],
+          "start": 524.7916,
+          "end": 529.9213,
+          "status": "unresolved",
+          "remoteOutcome": "read-only",
+          "message": "Tagged OK without complete membership SEARCH response",
+          "metrics": {
+            "received": 16,
+            "accepted": 16,
+            "maxChunk": 16,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "parserAtAbort": {
+              "lineBytes": 0,
+              "responseBytes": 0,
+              "literalBytes": 0,
+              "queuedChunks": 0
+            },
+            "settlementMs": 4.254500000000007,
+            "closeMs": 4.874500000000012,
+            "durationMs": 4.885499999999979
+          },
+          "diagnostics": []
+        }
+      ],
+      "commands": [
+        {
+          "connection": 1,
+          "tag": "1",
+          "command": "LIST \"\" \"\"",
+          "startMs": 27.065300000000036,
+          "taggedMs": 27.42339999999996,
+          "bytesSent": 34
+        },
+        {
+          "connection": 1,
+          "tag": "2",
+          "command": "LIST \"\" \"INBOX\"",
+          "startMs": 31.438399999999945,
+          "taggedMs": 31.641999999999996,
+          "bytesSent": 39
+        },
+        {
+          "connection": 1,
+          "tag": "3",
+          "command": "LSUB \"\" \"INBOX\"",
+          "startMs": 33.64489999999995,
+          "taggedMs": 33.78969999999998,
+          "bytesSent": 39
+        },
+        {
+          "connection": 1,
+          "tag": "4",
+          "command": "SELECT INBOX",
+          "startMs": 34.91270000000003,
+          "taggedMs": 35.103999999999985,
+          "bytesSent": 156
+        },
+        {
+          "connection": 1,
+          "tag": "5",
+          "command": "UID SEARCH UID 9",
+          "startMs": 42.22509999999994,
+          "taggedMs": 42.228999999999985,
+          "bytesSent": 16
+        }
+      ]
+    },
+    {
+      "complete": true,
+      "status": "PASS",
+      "searchResponses": 1,
+      "operations": [
+        {
+          "kind": "EXACT MEMBERSHIP",
+          "uids": [
+            9
+          ],
+          "start": 551.3671,
+          "end": 553.3283,
+          "status": "justified",
+          "metrics": {
+            "received": 26,
+            "accepted": 26,
+            "maxChunk": 16,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "maxParsedSearchTokens": 0,
+            "settlementMs": 1.8894000000000233,
+            "durationMs": 1.9198000000000093
+          },
+          "diagnostics": []
+        }
+      ],
+      "commands": [
+        {
+          "connection": 1,
+          "tag": "1",
+          "command": "LIST \"\" \"\"",
+          "startMs": 12.660499999999956,
+          "taggedMs": 12.824200000000019,
+          "bytesSent": 34
+        },
+        {
+          "connection": 1,
+          "tag": "2",
+          "command": "LIST \"\" \"INBOX\"",
+          "startMs": 14.165899999999965,
+          "taggedMs": 14.30219999999997,
+          "bytesSent": 39
+        },
+        {
+          "connection": 1,
+          "tag": "3",
+          "command": "LSUB \"\" \"INBOX\"",
+          "startMs": 15.401200000000017,
+          "taggedMs": 15.545399999999972,
+          "bytesSent": 39
+        },
+        {
+          "connection": 1,
+          "tag": "4",
+          "command": "SELECT INBOX",
+          "startMs": 16.856499999999983,
+          "taggedMs": 17.07269999999994,
+          "bytesSent": 156
+        },
+        {
+          "connection": 1,
+          "tag": "5",
+          "command": "UID SEARCH UID 9",
+          "startMs": 19.262899999999945,
+          "taggedMs": 19.3587,
+          "bytesSent": 26
+        }
+      ]
+    }
+  ]
+}

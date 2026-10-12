@@ -1,0 +1,7138 @@
+{
+  "at": "2026-10-12T14:02:08.864Z",
+  "durability": {
+    "started": "2026-10-12T13-27-12-384Z",
+    "cases": [
+      {
+        "name": "persistence-smoke",
+        "status": "PASS",
+        "identities": 32,
+        "epoch": "1791811632",
+        "history": 1,
+        "fresh": 32,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 8.918900000000122
+      },
+      {
+        "name": "crash-before-search",
+        "status": "PASS",
+        "point": "before-search",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 76.18550000000141
+      },
+      {
+        "name": "crash-after-search",
+        "status": "PASS",
+        "point": "after-search",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 56.68530000000101
+      },
+      {
+        "name": "crash-after-fetch",
+        "status": "PASS",
+        "point": "after-fetch",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 52.99099999999817
+      },
+      {
+        "name": "crash-during-insertion",
+        "status": "PASS",
+        "point": "during-insertion",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 62.090799999998126
+      },
+      {
+        "name": "crash-after-insertion",
+        "status": "PASS",
+        "point": "after-insertion",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 57.176000000003114
+      },
+      {
+        "name": "crash-before-frontier",
+        "status": "PASS",
+        "point": "before-frontier",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 62.18729999999778
+      },
+      {
+        "name": "crash-during-frontier",
+        "status": "PASS",
+        "point": "during-frontier",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 385,
+            "reconcile": 0,
+            "revision": 0,
+            "wake": 0
+          },
+          "count": 0
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 47.704499999999825
+      },
+      {
+        "name": "crash-after-commit",
+        "status": "PASS",
+        "point": "after-commit",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 257,
+            "reconcile": 0,
+            "revision": 1,
+            "wake": 0
+          },
+          "count": 128
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 58.484199999998964
+      },
+      {
+        "name": "crash-before-ack",
+        "status": "PASS",
+        "point": "before-ack",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 257,
+            "reconcile": 0,
+            "revision": 1,
+            "wake": 0
+          },
+          "count": 128
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 58.855600000002596
+      },
+      {
+        "name": "crash-before-schedule",
+        "status": "PASS",
+        "point": "before-schedule",
+        "truthCount": 384,
+        "observedBeforeKill": {
+          "state": {
+            "account": "p3-crash-2026-10-12T13-27-12-384Z",
+            "path": "INBOX",
+            "epoch": "1791811633",
+            "fresh": 384,
+            "history": 257,
+            "reconcile": 0,
+            "revision": 1,
+            "wake": 0
+          },
+          "count": 128
+        },
+        "termination": {
+          "code": null,
+          "signal": "SIGKILL",
+          "stderr": ""
+        },
+        "recovery": {
+          "code": 0,
+          "signal": null,
+          "stderr": ""
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 57.32390000000305
+      },
+      {
+        "name": "simultaneous-leadership-renewal-release",
+        "status": "PASS",
+        "generation": 293,
+        "nextGeneration": 294,
+        "winners": 1
+      },
+      {
+        "name": "expired-fetch-takeover-and-stale-commit",
+        "status": "PASS",
+        "oldCallbackRejected": {
+          "event": "failure",
+          "error": "Error: Stale owner fenced",
+          "pid": 59944
+        },
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 50.674299999998766
+      },
+      {
+        "name": "lease-expiry-inside-transaction",
+        "status": "PASS",
+        "rolledBack": true
+      },
+      {
+        "name": "remote-rejection-during-takeover",
+        "status": "PASS",
+        "remoteSessionsDuringTakeover": "username                           # service (pids)                 (ips)    \np3-crash-2026-10-12t13-27-12-384z 10 imap    (2287 2291 2285 2283 2293 2297 2295 2279 2289 2281) (172.18.0.1)\n",
+        "replacementInitiallyRejected": true,
+        "noAuthoritativeCommit": true,
+        "identities": 384,
+        "epoch": "1791811633",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 69.32130000000325
+      },
+      {
+        "name": "expiry-at-COMMIT-server-trigger",
+        "status": "PASS",
+        "lateCommitRejectedInPostgres": true
+      },
+      {
+        "name": "database-total-deadline-and-settlement",
+        "status": "PASS",
+        "durationMs": 201.20230000000447,
+        "nextQuerySucceeded": true
+      }
+    ]
+  },
+  "lateCallbacks": [
+    {
+      "file": "2026-10-12T13-09-11-271Z-late-db-callback.json",
+      "stamp": "2026-10-12T13-09-11-271Z",
+      "storeHash": "47d63fa424d355f82657b395fbcab7982e916b7475b82f04ecf0ecbf381649f3",
+      "oldOutcome": "Error: write CONNECTION_CLOSED 127.0.0.1:35433",
+      "observed": {
+        "state": {
+          "account": "p3-late-db-44aa549f-4429-43f2-9f87-16e33cc41789",
+          "path": "INBOX",
+          "epoch": "1791810552",
+          "fresh": 32,
+          "history": 33,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "status": "FAIL",
+      "failure": "AssertionError [ERR_ASSERTION]: Late cancelled transaction callback must not roll back a later writer\n\n0 !== 32\n\n    at <anonymous> (D:\\Projects\\JS\\Maildock\\experiments\\imap-durability\\late-db-callback.ts:19:10)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "eventCount": 2
+    },
+    {
+      "file": "2026-10-12T13-12-12-558Z-late-db-callback.json",
+      "stamp": "2026-10-12T13-12-12-558Z",
+      "storeHash": "871b9cdf1949e227c20518475bc4ddbd7d2ec2f45a140e2f67719fc3c5a2ea67",
+      "oldOutcome": "Error: Database native socket retired; commit outcome uncertain",
+      "observed": {
+        "state": {
+          "account": "p3-late-db-164a89ec-26d2-46d4-bb17-dcee53f54d78",
+          "path": "INBOX",
+          "epoch": "1791810732",
+          "fresh": 32,
+          "history": 1,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 32
+      },
+      "status": "PASS",
+      "identities": 32,
+      "epoch": "1791810732",
+      "history": 1,
+      "fresh": 32,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 9.097299999999905,
+      "eventCount": 2
+    },
+    {
+      "file": "2026-10-12T13-14-49-665Z-late-db-callback.json",
+      "stamp": "2026-10-12T13-14-49-665Z",
+      "storeHash": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+      "oldOutcome": "Error: Database native socket retired; commit outcome uncertain",
+      "observed": {
+        "state": {
+          "account": "p3-late-db-d82308ee-968f-4db7-a009-a6439d2f028b",
+          "path": "INBOX",
+          "epoch": "1791810889",
+          "fresh": 32,
+          "history": 1,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 32
+      },
+      "status": "PASS",
+      "identities": 32,
+      "epoch": "1791810889",
+      "history": 1,
+      "fresh": 32,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 6.869799999999941,
+      "eventCount": 2
+    },
+    {
+      "file": "2026-10-12T13-15-46-852Z-late-db-callback.json",
+      "stamp": "2026-10-12T13-15-46-852Z",
+      "storeHash": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+      "oldOutcome": "Error: Database native socket retired; commit outcome uncertain",
+      "observed": {
+        "state": {
+          "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+          "path": "INBOX",
+          "epoch": "1791810946",
+          "fresh": 32,
+          "history": 1,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 32
+      },
+      "lazyQueryCallbackRejected": true,
+      "status": "PASS",
+      "identities": 32,
+      "epoch": "1791810946",
+      "history": 1,
+      "fresh": 32,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 6.354400000000169,
+      "eventCount": 3
+    },
+    {
+      "file": "2026-10-12T13-27-03-447Z-late-db-callback.json",
+      "stamp": "2026-10-12T13-27-03-447Z",
+      "storeHash": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+      "oldOutcome": "Error: Database native socket retired; commit outcome uncertain",
+      "observed": {
+        "state": {
+          "account": "p3-late-db-7cbf8bf2-5bea-415b-9e87-dc8d6afc49a3",
+          "path": "INBOX",
+          "epoch": "1791811623",
+          "fresh": 32,
+          "history": 1,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 32
+      },
+      "lazyQueryCallbackRejected": true,
+      "status": "PASS",
+      "identities": 32,
+      "epoch": "1791811623",
+      "history": 1,
+      "fresh": 32,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 6.506500000000415,
+      "eventCount": 3
+    }
+  ],
+  "reconciliation": {
+    "stamp": "2026-10-12T13-58-52-939Z",
+    "cases": [
+      {
+        "name": "search-fetch-missing-sparse-and-wake-CAS",
+        "status": "PASS",
+        "omittedFetchAdvanced": false,
+        "staleResurrectionAccepted": false,
+        "lateWakeRetained": true,
+        "newUid": 385,
+        "identities": 379,
+        "epoch": "1791813533",
+        "history": 1,
+        "fresh": 385,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 51.870599999999286
+      },
+      {
+        "name": "persistent-oversized-UID-exposed-without-skip",
+        "status": "PASS",
+        "expectedUnresolved": true,
+        "unresolved": {
+          "history": 4,
+          "stillPresent": [
+            2
+          ]
+        },
+        "skipped": false,
+        "identities": 2,
+        "epoch": "1791813539",
+        "history": 1,
+        "fresh": 3,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 2.132499999999709
+      },
+      {
+        "name": "equal-count-delete-plus-arrival",
+        "status": "PASS",
+        "identities": 128,
+        "epoch": "1791813539",
+        "history": 1,
+        "fresh": 129,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 16.728500000001077
+      },
+      {
+        "name": "uidvalidity-reset-buffered-old-fetch",
+        "status": "PASS",
+        "beforeEpoch": "1791813542",
+        "afterEpoch": "1791813543",
+        "oldCallbackRejected": {
+          "event": "failure",
+          "error": "Error: Stale owner fenced",
+          "pid": 39984
+        },
+        "identities": 1,
+        "epoch": "1791813543",
+        "history": 1,
+        "fresh": 1,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 2.272499999999127
+      },
+      {
+        "name": "restart-during-membership-reconciliation",
+        "status": "PASS",
+        "identities": 380,
+        "epoch": "1791813548",
+        "history": 1,
+        "fresh": 384,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 43.82670000000144
+      },
+      {
+        "name": "15000-deletions-with-independent-new-arrivals",
+        "status": "PASS",
+        "deletions": 15000,
+        "durationMs": 75002.119,
+        "arrivals": [
+          {
+            "uid": 97410,
+            "completed": 39195.9063,
+            "available": 39402.7322
+          },
+          {
+            "uid": 97411,
+            "completed": 39407.3194,
+            "available": 39546.5571
+          },
+          {
+            "uid": 97412,
+            "completed": 39452.9465,
+            "available": 39546.5587
+          },
+          {
+            "uid": 97413,
+            "completed": 39508.8162,
+            "available": 39830.9572
+          },
+          {
+            "uid": 97414,
+            "completed": 39553.827,
+            "available": 39830.959
+          },
+          {
+            "uid": 97415,
+            "completed": 39606.593,
+            "available": 39830.9607
+          },
+          {
+            "uid": 97416,
+            "completed": 39645.757,
+            "available": 39830.9612
+          },
+          {
+            "uid": 97417,
+            "completed": 39682.781,
+            "available": 39830.9616
+          },
+          {
+            "uid": 97418,
+            "completed": 39829.9866,
+            "available": 39962.6361
+          },
+          {
+            "uid": 97419,
+            "completed": 39874.2776,
+            "available": 39962.6385
+          }
+        ],
+        "worstArrivalMs": 322.140999999996,
+        "identities": 37419,
+        "epoch": "1791803598",
+        "history": 1,
+        "fresh": 97419,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 3915.81289999999
+      }
+    ]
+  },
+  "network": {
+    "stamp": "2026-10-12T12-37-55-058Z",
+    "trace": "2026-10-12T12-37-55-058Z-network.jsonl.gz",
+    "results": [
+      {
+        "name": "local",
+        "delay": 0,
+        "bandwidth": 0,
+        "status": "PASS",
+        "firstMetadataMs": 167.8151999999991,
+        "measuredNoopRttMs": {
+          "n": 20,
+          "p50": 1.3550999999997657,
+          "p95": 2.035599999999249,
+          "p99": null,
+          "max": 2.332800000000134
+        },
+        "effectiveMetadataBytesPerSecond": {
+          "n": 3,
+          "p50": 2159030.078090682,
+          "p95": null,
+          "p99": null,
+          "max": 2368905.3584077987
+        },
+        "arrivalMs": {
+          "n": 10,
+          "p50": 86.05040000000008,
+          "p95": null,
+          "p99": null,
+          "max": 113.16320000000087
+        },
+        "userTurnCompletionMs": {
+          "n": 10,
+          "p50": 30.44300000000112,
+          "p95": null,
+          "p99": null,
+          "max": 44.60399999999936
+        },
+        "userWireAdmissionMs": {
+          "n": 10,
+          "p50": 25.855199999999968,
+          "p95": null,
+          "p99": null,
+          "max": 37.183100000000195
+        },
+        "proxyBytes": 660924,
+        "peakProxyBuffered": 0,
+        "identities": 394,
+        "epoch": "1791808675",
+        "history": 1,
+        "fresh": 394,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 83.90090000000055
+      },
+      {
+        "name": "20ms-requested",
+        "delay": 10,
+        "bandwidth": 0,
+        "status": "PASS",
+        "firstMetadataMs": 779.6078999999991,
+        "measuredNoopRttMs": {
+          "n": 20,
+          "p50": 31.08400000000256,
+          "p95": 31.6875,
+          "p99": null,
+          "max": 32.0622000000003
+        },
+        "effectiveMetadataBytesPerSecond": {
+          "n": 3,
+          "p50": 392184.96389236767,
+          "p95": null,
+          "p99": null,
+          "max": 397690.9014365591
+        },
+        "arrivalMs": {
+          "n": 10,
+          "p50": 352.7920000000013,
+          "p95": null,
+          "p99": null,
+          "max": 377.8234999999986
+        },
+        "userTurnCompletionMs": {
+          "n": 10,
+          "p50": 162.56700000000274,
+          "p95": null,
+          "p99": null,
+          "max": 172.68309999999838
+        },
+        "userWireAdmissionMs": {
+          "n": 10,
+          "p50": 93.89089999999851,
+          "p95": null,
+          "p99": null,
+          "max": 109.85559999999896
+        },
+        "proxyBytes": 683372,
+        "peakProxyBuffered": 52645,
+        "identities": 394,
+        "epoch": "1791808684",
+        "history": 1,
+        "fresh": 394,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 44.85889999999927
+      },
+      {
+        "name": "100ms-requested",
+        "delay": 50,
+        "bandwidth": 0,
+        "status": "PASS",
+        "firstMetadataMs": 2605.293399999995,
+        "measuredNoopRttMs": {
+          "n": 20,
+          "p50": 124.25840000000608,
+          "p95": 125.64029999999912,
+          "p99": null,
+          "max": 125.72060000000056
+        },
+        "effectiveMetadataBytesPerSecond": {
+          "n": 3,
+          "p50": 79060.55576277108,
+          "p95": null,
+          "p99": null,
+          "max": 106303.92991937895
+        },
+        "arrivalMs": {
+          "n": 10,
+          "p50": 1081.316700000003,
+          "p95": null,
+          "p99": null,
+          "max": 1105.8712000000014
+        },
+        "userTurnCompletionMs": {
+          "n": 10,
+          "p50": 519.6851999999999,
+          "p95": null,
+          "p99": null,
+          "max": 535.6324000000022
+        },
+        "userWireAdmissionMs": {
+          "n": 10,
+          "p50": 273.27769999999873,
+          "p95": null,
+          "p99": null,
+          "max": 285.68009999999776
+        },
+        "proxyBytes": 685064,
+        "peakProxyBuffered": 51555,
+        "identities": 394,
+        "epoch": "1791808699",
+        "history": 1,
+        "fresh": 394,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 59.97929999999906
+      },
+      {
+        "name": "128KiB-per-second",
+        "delay": 10,
+        "bandwidth": 131072,
+        "status": "PASS",
+        "firstMetadataMs": 1326.2268999999942,
+        "measuredNoopRttMs": {
+          "n": 20,
+          "p50": 31.13169999999809,
+          "p95": 32.01220000000467,
+          "p99": null,
+          "max": 47.03840000000491
+        },
+        "effectiveMetadataBytesPerSecond": {
+          "n": 3,
+          "p50": 90934.9943312266,
+          "p95": null,
+          "p99": null,
+          "max": 96429.06705250875
+        },
+        "arrivalMs": {
+          "n": 10,
+          "p50": 365.2028999999893,
+          "p95": null,
+          "p99": null,
+          "max": 418.8984000000055
+        },
+        "userTurnCompletionMs": {
+          "n": 10,
+          "p50": 169.53139999999257,
+          "p95": null,
+          "p99": null,
+          "max": 190.6750000000029
+        },
+        "userWireAdmissionMs": {
+          "n": 10,
+          "p50": 99.71150000000489,
+          "p95": null,
+          "p99": null,
+          "max": 115.36629999999423
+        },
+        "proxyBytes": 690572,
+        "peakProxyBuffered": 53987,
+        "identities": 394,
+        "epoch": "1791808733",
+        "history": 1,
+        "fresh": 394,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 64.28560000000289
+      },
+      {
+        "name": "hang-after-search",
+        "status": "PASS",
+        "observed": {
+          "durationMs": 10006.096600000004,
+          "inducedError": true
+        },
+        "identities": 128,
+        "epoch": "1791808753",
+        "history": 1,
+        "fresh": 128,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 21.594100000002072
+      },
+      {
+        "name": "reset-after-search",
+        "status": "PASS",
+        "observed": {
+          "durationMs": 86.57300000000396,
+          "inducedError": true
+        },
+        "identities": 128,
+        "epoch": "1791808765",
+        "history": 1,
+        "fresh": 128,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 19.280899999997928
+      },
+      {
+        "name": "temporary-blackout",
+        "status": "PASS",
+        "observed": {
+          "durationMs": 5761.349900000001,
+          "inducedError": false
+        },
+        "identities": 128,
+        "epoch": "1791808767",
+        "history": 1,
+        "fresh": 128,
+        "missing": 0,
+        "duplicates": 0,
+        "oracleMs": 15.750199999994948
+      }
+    ]
+  },
+  "packet": {
+    "stamp": "2026-10-12T12-44-56-467Z",
+    "image": "sha256:b2c9dce7a3d7f144f486a1cd2287aa20dc7ad529637d4adf31a238fde09f52a3",
+    "seed": 2403,
+    "before": "qdisc noqueue 0: root refcnt 2 \n",
+    "qdiscMeasured": "qdisc netem 33: root refcnt 23 limit 1000 delay 20ms loss 3% seed 2403\n Sent 1277235 bytes 1203 pkt (dropped 30, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+    "status": "PASS",
+    "dropped": 30,
+    "rttMs": {
+      "n": 100,
+      "p50": 22.872200000001612,
+      "p95": 23.943100000000413,
+      "p99": 257.8693000000021,
+      "max": 259.1749000000018
+    },
+    "effectiveBytesPerSecond": {
+      "n": 10,
+      "p50": 376623.90070702264,
+      "p95": null,
+      "p99": null,
+      "max": 495967.7636742224
+    },
+    "identities": 1024,
+    "epoch": "1791809097",
+    "history": 1,
+    "fresh": 1024,
+    "missing": 0,
+    "duplicates": 0,
+    "oracleMs": 258.4083000000028
+  },
+  "loads": [
+    {
+      "file": "2026-10-12T11-37-47-889Z-workload-W1-D1-summary.json",
+      "stamp": "2026-10-12T11-37-47-889Z",
+      "duration": 60,
+      "W": 1,
+      "pool": 1,
+      "saturation": true,
+      "seed": 2403,
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.01005768333333496,
+      "operations": 1983,
+      "dispatch": {
+        "p3-load-0": 47,
+        "p3-load-1": 47,
+        "p3-load-2": 46,
+        "p3-load-3": 46,
+        "p3-load-4": 46,
+        "p3-load-5": 46,
+        "p3-load-6": 47,
+        "p3-load-7": 46
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 47,
+          "p50": 846.0506999999998,
+          "p95": 2296.6111999999994,
+          "p99": null,
+          "max": 4024.5455
+        },
+        "p3-load-1": {
+          "n": 47,
+          "p50": 862.5221999999994,
+          "p95": 2167.3773,
+          "p99": null,
+          "max": 4160.999600000003
+        },
+        "p3-load-2": {
+          "n": 46,
+          "p50": 944.8201000000045,
+          "p95": 2335.5924000000014,
+          "p99": null,
+          "max": 4367.517
+        },
+        "p3-load-3": {
+          "n": 46,
+          "p50": 952.1310999999987,
+          "p95": 2657.1912999999986,
+          "p99": null,
+          "max": 4369.559699999998
+        },
+        "p3-load-4": {
+          "n": 46,
+          "p50": 932.8247999999949,
+          "p95": 2457.7451999999976,
+          "p99": null,
+          "max": 4374.346299999997
+        },
+        "p3-load-5": {
+          "n": 46,
+          "p50": 926.9856999999975,
+          "p95": 2465.0784999999996,
+          "p99": null,
+          "max": 4353.610200000003
+        },
+        "p3-load-6": {
+          "n": 47,
+          "p50": 671.1592000000019,
+          "p95": 1197.2338999999993,
+          "p99": null,
+          "max": 1445.3318
+        },
+        "p3-load-7": {
+          "n": 46,
+          "p50": 931.2478000000046,
+          "p95": 2305.1863999999987,
+          "p99": null,
+          "max": 3805.695099999997
+        }
+      },
+      "freshMs": {
+        "n": 136,
+        "p50": 986.8127999999997,
+        "p95": 4421.0116999999955,
+        "p99": 179315.2438,
+        "max": 179441.6759
+      },
+      "userAdmissionMs": {
+        "n": 46,
+        "p50": 1017.0551000000014,
+        "p95": 5146.195500000002,
+        "p99": null,
+        "max": 7975.562700000002
+      },
+      "dbWaitMs": {
+        "n": 13531,
+        "p50": 0.00039999998989515007,
+        "p95": 0.0010000000002037268,
+        "p99": 1.7734999999956926,
+        "max": 28.560800000002928
+      },
+      "dbTransactionMs": {
+        "n": 13531,
+        "p50": 6.82029999999213,
+        "p95": 26.89930000001914,
+        "p99": 34.053000000014435,
+        "max": 139.34619999999995
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "49873"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "49873"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "49873"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "49873"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 178688.5088,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50068,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 50068,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8864.526099999988
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50068,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50068,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8541.82680000001
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 64.92300000000978
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 56.444799999997485
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 57.522100000001956
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 243,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 51.19529999999213
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 43.35529999999562
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 53.944900000002235
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 18068.6578
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 35464.2972
+        }
+      ],
+      "arrivals": 136,
+      "lateAtQuiescence": 2,
+      "eventLoopMs": {
+        "p50": 10.829823,
+        "p95": 24.592383,
+        "p99": 30.572543,
+        "max": 140.509183
+      }
+    },
+    {
+      "file": "2026-10-12T11-41-53-939Z-workload-W2-D2-summary.json",
+      "stamp": "2026-10-12T11-41-53-939Z",
+      "duration": 60,
+      "W": 2,
+      "pool": 2,
+      "saturation": true,
+      "seed": 2403,
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.5140277299999997,
+      "operations": 2599,
+      "dispatch": {
+        "p3-load-0": 123,
+        "p3-load-1": 123,
+        "p3-load-2": 123,
+        "p3-load-3": 123,
+        "p3-load-4": 129,
+        "p3-load-5": 128,
+        "p3-load-6": 117,
+        "p3-load-7": 119
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 123,
+          "p50": 299.5211999999956,
+          "p95": 549.475699999999,
+          "p99": 800.6854000000021,
+          "max": 898.3493999999992
+        },
+        "p3-load-1": {
+          "n": 123,
+          "p50": 341.0422000000035,
+          "p95": 563.0990999999995,
+          "p99": 688.213499999998,
+          "max": 729.4771000000001
+        },
+        "p3-load-2": {
+          "n": 123,
+          "p50": 398.4315999999999,
+          "p95": 689.6817999999985,
+          "p99": 920.7558000000063,
+          "max": 930.4709999999995
+        },
+        "p3-load-3": {
+          "n": 123,
+          "p50": 407.2129000000059,
+          "p95": 699.5541000000012,
+          "p99": 854.4689999999991,
+          "max": 854.5986999999996
+        },
+        "p3-load-4": {
+          "n": 129,
+          "p50": 397.34859999999753,
+          "p95": 733.6936000000005,
+          "p99": 880.1985999999961,
+          "max": 1199.2957999999999
+        },
+        "p3-load-5": {
+          "n": 128,
+          "p50": 407.1445999999996,
+          "p95": 685.0212999999931,
+          "p99": 822.4817000000039,
+          "max": 1236.6670000000013
+        },
+        "p3-load-6": {
+          "n": 117,
+          "p50": 178.64630000000034,
+          "p95": 361.2725999999966,
+          "p99": 381.1370000000006,
+          "max": 394.1828999999998
+        },
+        "p3-load-7": {
+          "n": 119,
+          "p50": 359.91010000000097,
+          "p95": 610.8971999999994,
+          "p99": 690.8765000000021,
+          "max": 696.6958000000013
+        }
+      },
+      "freshMs": {
+        "n": 140,
+        "p50": 412.222400000006,
+        "p95": 789.338800000005,
+        "p99": 2074.1259999999966,
+        "max": 2476.553500000002
+      },
+      "userAdmissionMs": {
+        "n": 123,
+        "p50": 346.59979999999996,
+        "p95": 3770.006000000001,
+        "p99": 4908.962199999998,
+        "max": 5196.710200000005
+      },
+      "dbWaitMs": {
+        "n": 17041,
+        "p50": 0.0005999999993946403,
+        "p95": 0.0013000000035390258,
+        "p99": 0.0029999999969732016,
+        "max": 32.80879999999888
+      },
+      "dbTransactionMs": {
+        "n": 17041,
+        "p50": 7.08009999999922,
+        "p95": 25.96820000000298,
+        "p99": 34.734499999991385,
+        "max": 179.7552999999898
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "49941"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "49941"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "49941"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "49941"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 181171.5391,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50138,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 50138,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8447.56660000002
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50138,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50138,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8885.325400000002
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 75.39360000001034
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 97.38609999997425
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 61.92880000002333
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 242,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 53.818900000012945
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 57.030600000027334
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 48.64890000000014
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 248.04299999999967
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 890.7357000000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17060.989
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17860.533900000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33619.656800000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34258.2912
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34902.705500000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 50707.4209
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51413.8176
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51967.0793
+        }
+      ],
+      "arrivals": 140,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.584063,
+        "p95": 24.084479,
+        "p99": 30.900223,
+        "max": 145.883135
+      }
+    },
+    {
+      "file": "2026-10-12T11-46-02-386Z-workload-W4-D1-summary.json",
+      "stamp": "2026-10-12T11-46-02-386Z",
+      "duration": 60,
+      "W": 4,
+      "pool": 1,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "01f09a4c1f3934f41c82b11d21f25f27cb0d56f478b036e5c8283a4d527aaac2",
+      "status": "PASS",
+      "runMs": 60000.00000000001,
+      "actualBusyUtilization": 0.8606094866666654,
+      "selectorSampledBusyIntegral": 189301.9189,
+      "historyResumeMs": {
+        "p3-load-0": 827.6090000000113,
+        "p3-load-1": 827.6475000000064,
+        "p3-load-2": 827.6550000000134,
+        "p3-load-3": 1061.1023000000132,
+        "p3-load-4": 1061.1321000000025,
+        "p3-load-5": 1061.140900000013,
+        "p3-load-6": 1296.8675000000076,
+        "p3-load-7": 1296.9089000000095
+      },
+      "operations": 2798,
+      "dispatch": {
+        "p3-load-0": 150,
+        "p3-load-1": 153,
+        "p3-load-2": 150,
+        "p3-load-3": 150,
+        "p3-load-4": 166,
+        "p3-load-5": 161,
+        "p3-load-6": 104,
+        "p3-load-7": 146
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 150,
+          "p50": 177.3028000000013,
+          "p95": 303.2870000000039,
+          "p99": 566.7597999999998,
+          "max": 603.6094000000012
+        },
+        "p3-load-1": {
+          "n": 153,
+          "p50": 163.9462999999996,
+          "p95": 294.02930000000197,
+          "p99": 483.3425000000061,
+          "max": 545.7440000000006
+        },
+        "p3-load-2": {
+          "n": 150,
+          "p50": 279.19229999999516,
+          "p95": 461.976200000001,
+          "p99": 563.8853999999992,
+          "max": 569.8696000000054
+        },
+        "p3-load-3": {
+          "n": 150,
+          "p50": 267.3345000000045,
+          "p95": 449.73419999999896,
+          "p99": 594.3361000000004,
+          "max": 620.1448999999993
+        },
+        "p3-load-4": {
+          "n": 166,
+          "p50": 209.93940000000293,
+          "p95": 335.0452000000005,
+          "p99": 399.3845000000001,
+          "max": 609.1733999999997
+        },
+        "p3-load-5": {
+          "n": 161,
+          "p50": 207.82220000000052,
+          "p95": 365.1588999999949,
+          "p99": 526.667300000001,
+          "max": 537.3277999999991
+        },
+        "p3-load-6": {
+          "n": 104,
+          "p50": 105.65039999999863,
+          "p95": 356.1853999999985,
+          "p99": 360.22060000000056,
+          "max": 381.26610000000073
+        },
+        "p3-load-7": {
+          "n": 146,
+          "p50": 224.03489999999874,
+          "p95": 336.3174999999974,
+          "p99": 447.4226000000008,
+          "max": 483.64650000000074
+        }
+      },
+      "freshMs": {
+        "n": 140,
+        "p50": 477.6389000000054,
+        "p95": 891.4970999999996,
+        "p99": 2008.0357999999978,
+        "max": 2178.954899999999
+      },
+      "userAdmissionMs": {
+        "n": 149,
+        "p50": 404.66560000000027,
+        "p95": 2183.342600000001,
+        "p99": 4618.5818,
+        "max": 5835.294099999999
+      },
+      "dbWaitMs": {
+        "n": 16616,
+        "p50": 5.171500000000378,
+        "p95": 30.684299999993527,
+        "p99": 41.8640000000014,
+        "max": 665.552199999991
+      },
+      "dbTransactionMs": {
+        "n": 16616,
+        "p50": 7.750799999994342,
+        "p95": 27.091199999995297,
+        "p99": 52.418900000004214,
+        "max": 700.9606000000058
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "50011"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50011"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "50011"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50011"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 163121.12089999998,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50208,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 50208,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8583.515000000014
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50208,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50208,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8720.526500000007
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 56.96649999998044
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 44.47370000000228
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 45.60799999997835
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 242,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 41.72490000000107
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 40.40389999997569
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 41.71270000000368
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 480.76690000000053
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16760.1213
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17453.967900000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 18123.4303
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34127.7229
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34818.045000000006
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 35601.1059
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51728.0074
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 52464.8261
+        }
+      ],
+      "arrivals": 140,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.543103,
+        "p95": 23.986175,
+        "p99": 29.425663,
+        "max": 96.468991
+      }
+    },
+    {
+      "file": "2026-10-12T11-49-53-159Z-workload-W4-D6-summary.json",
+      "stamp": "2026-10-12T11-49-53-159Z",
+      "duration": 60,
+      "W": 4,
+      "pool": 6,
+      "saturation": false,
+      "seed": 2403,
+      "sourceSha256": "f9db0a6cba4aa6a6d65a81bb0c0a27b19fabdf68a9409898e275ec5c413e139c",
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.7933817366666667,
+      "activeOccupancyMs": {
+        "n": 1720,
+        "p50": 86.27960000000166,
+        "p95": 281.01260000000184,
+        "p99": 357.23059999999896,
+        "max": 2853.3220999999976
+      },
+      "activeHistoryRows": 34802,
+      "activeHistoryRowsPerSecond": 580.0333333333333,
+      "activeDbWaitMs": {
+        "n": 9446,
+        "p50": 0.0005000000001018634,
+        "p95": 0.0013000000035390258,
+        "p99": 0.0018999999956577085,
+        "max": 0.036400000000867294
+      },
+      "activeDbTransactionMs": {
+        "n": 9446,
+        "p50": 9.776699999998527,
+        "p95": 33.15899999999965,
+        "p99": 48.61989999999787,
+        "max": 85.72729999999865
+      },
+      "selectorSampledBusyIntegral": 142393.7817000001,
+      "historyResumeMs": {
+        "p3-load-0": 824.3608999999997,
+        "p3-load-1": 824.4453999999969
+      },
+      "operations": 3068,
+      "dispatch": {
+        "p3-load-0": 360,
+        "p3-load-1": 311,
+        "p3-load-2": 372,
+        "p3-load-3": 376,
+        "p3-load-4": 96,
+        "p3-load-5": 96,
+        "p3-load-6": 44,
+        "p3-load-7": 65
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 360,
+          "p50": 2.0046000000002095,
+          "p95": 117.17020000000048,
+          "p99": 221.0511000000006,
+          "max": 365.6319000000003
+        },
+        "p3-load-1": {
+          "n": 311,
+          "p50": 6.105900000002293,
+          "p95": 166.23279999999795,
+          "p99": 331.678899999999,
+          "max": 533.2721000000001
+        },
+        "p3-load-2": {
+          "n": 372,
+          "p50": 31.016499999999724,
+          "p95": 269.8253000000004,
+          "p99": 318.6738999999998,
+          "max": 384.303899999999
+        },
+        "p3-load-3": {
+          "n": 376,
+          "p50": 50.06289999999717,
+          "p95": 263.1975999999995,
+          "p99": 349.77939999999944,
+          "max": 407.3469999999943
+        },
+        "p3-load-4": {
+          "n": 96,
+          "p50": 479.2638999999999,
+          "p95": 1080.2289000000019,
+          "p99": null,
+          "max": 1164.714899999999
+        },
+        "p3-load-5": {
+          "n": 96,
+          "p50": 539.2321999999986,
+          "p95": 1101.4324999999953,
+          "p99": null,
+          "max": 1199.2481999999982
+        },
+        "p3-load-6": {
+          "n": 44,
+          "p50": 1016.3702999999987,
+          "p95": 1086.3993999999984,
+          "p99": null,
+          "max": 1150.0238000000027
+        },
+        "p3-load-7": {
+          "n": 65,
+          "p50": 1013.5368999999992,
+          "p95": 1086.9375,
+          "p99": null,
+          "max": 1118.7345999999961
+        }
+      },
+      "freshMs": {
+        "n": 138,
+        "p50": 333.8093000000008,
+        "p95": 479.7557000000015,
+        "p99": 499.88880000000063,
+        "max": 537.729499999994
+      },
+      "userAdmissionMs": {
+        "n": 376,
+        "p50": 113.03220000000147,
+        "p95": 392.5609000000004,
+        "p99": 651.6419999999998,
+        "max": 949.8948000000019
+      },
+      "dbWaitMs": {
+        "n": 17766,
+        "p50": 0.0004000000044470653,
+        "p95": 0.0011999999987892807,
+        "p99": 0.0017000000007101335,
+        "max": 0.036400000000867294
+      },
+      "dbTransactionMs": {
+        "n": 17766,
+        "p50": 8.815999999991618,
+        "p95": 32.812400000002526,
+        "p99": 47.4597999999969,
+        "max": 349.1327000000165
+      },
+      "historyWaitMs": {
+        "n": 272,
+        "p50": 12.267100000000937,
+        "p95": 202.70040000000154,
+        "p99": 533.2721000000001,
+        "max": 819.2915999999996
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "50081"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50081"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "31265"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "34849"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "1"
+        }
+      ],
+      "historyResumedAndConvergedMs": 132313.2143,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50277,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 50277,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8748.636300000013
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50277,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50277,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 8874.580600000016
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 44.170799999992596
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 40.55919999998878
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 41.98670000000857
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 242,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 38.050900000002
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 50.36860000001616
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 36.80760000000009
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 252.51739999999972
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 779.1923999999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17132.838900000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17671.9372
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 18190.331700000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34677.1353
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 35253.9507
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 35888.9017
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 52146.7456
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 52705.8153
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 53322.134
+        }
+      ],
+      "arrivals": 138,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.567679,
+        "p95": 24.870911,
+        "p99": 30.113791,
+        "max": 109.314047
+      }
+    },
+    {
+      "file": "2026-10-12T11-53-12-473Z-workload-W4-D2-summary.json",
+      "stamp": "2026-10-12T11-53-12-473Z",
+      "duration": 600,
+      "W": 4,
+      "pool": 2,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "37013225be08373818311a162782dce974a91d0abc4c14cb49f6f1677ea03449",
+      "status": "PASS",
+      "runMs": 600000,
+      "actualBusyUtilization": 0.8851684145416622,
+      "hintEvents": 1142,
+      "hintFlushes": 1142,
+      "activeOccupancyMs": {
+        "n": 23391,
+        "p50": 65.63920000000508,
+        "p95": 277.1399999999994,
+        "p99": 364.40740000000005,
+        "max": 3850.5869999999995
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 20000,
+        "p50": 1.9888999999966472,
+        "p95": 8.646899999934249,
+        "p99": 12.010200000018813,
+        "max": 34.65469999995548
+      },
+      "activeDbTransactionMs": {
+        "n": 20000,
+        "p50": 5.706600000034086,
+        "p95": 12.060599999967963,
+        "p99": 17.705200000084005,
+        "max": 61.00530000007711
+      },
+      "selectorSampledBusyIntegral": 1886029.6572999894,
+      "historyResumeMs": {
+        "p3-load-0": 928.7591999999713,
+        "p3-load-1": 928.9723000000231,
+        "p3-load-2": 929.0601000000024,
+        "p3-load-3": 1099.7876999999862,
+        "p3-load-4": 1099.8647999999812,
+        "p3-load-5": 1099.8837999999523,
+        "p3-load-6": 1241.5457999999635,
+        "p3-load-7": 1241.6156999999657
+      },
+      "operations": 25021,
+      "dispatch": {
+        "p3-load-0": 3002,
+        "p3-load-1": 2945,
+        "p3-load-2": 3223,
+        "p3-load-3": 3179,
+        "p3-load-4": 3315,
+        "p3-load-5": 3349,
+        "p3-load-6": 1418,
+        "p3-load-7": 2960
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 3002,
+          "p50": 89.39019999996526,
+          "p95": 162.35050000000047,
+          "p99": 248.29750000001513,
+          "max": 515.5972999999649
+        },
+        "p3-load-1": {
+          "n": 2945,
+          "p50": 89.00099999998929,
+          "p95": 167.9255000000121,
+          "p99": 223.10960000002524,
+          "max": 373.673700000043
+        },
+        "p3-load-2": {
+          "n": 3223,
+          "p50": 115.17829999997048,
+          "p95": 222.1429999999964,
+          "p99": 296.79589999996824,
+          "max": 562.9679999999935
+        },
+        "p3-load-3": {
+          "n": 3179,
+          "p50": 114.91969999999856,
+          "p95": 218.45770000002813,
+          "p99": 322.7707999999984,
+          "max": 548.5509999999776
+        },
+        "p3-load-4": {
+          "n": 3315,
+          "p50": 104.07439999998314,
+          "p95": 182.1351999999897,
+          "p99": 249.45769999999902,
+          "max": 458.00090000001364
+        },
+        "p3-load-5": {
+          "n": 3349,
+          "p50": 102.08079999999609,
+          "p95": 184.7280000000028,
+          "p99": 249.20699999999488,
+          "max": 361.5625
+        },
+        "p3-load-6": {
+          "n": 1418,
+          "p50": 79.39009999996051,
+          "p95": 175.49139999994077,
+          "p99": 256.24949999997625,
+          "max": 413.8933000000543
+        },
+        "p3-load-7": {
+          "n": 2960,
+          "p50": 98.414300000004,
+          "p95": 191.74580000000424,
+          "p99": 267.93900000001304,
+          "max": 427.6886999999988
+        }
+      },
+      "freshMs": {
+        "n": 1142,
+        "p50": 258.9105999999447,
+        "p95": 464.87839999999414,
+        "p99": 549.3240999999998,
+        "max": 735.4162000000069
+      },
+      "userAdmissionMs": {
+        "n": 2768,
+        "p50": 256.2274000000034,
+        "p95": 812.7811000000074,
+        "p99": 1143.1644000000088,
+        "max": 1956.008299999994
+      },
+      "dbWaitMs": {
+        "n": 20000,
+        "p50": 0.0004999999655410647,
+        "p95": 7.215599999995902,
+        "p99": 11.237399999983609,
+        "max": 34.65469999995548
+      },
+      "dbTransactionMs": {
+        "n": 20000,
+        "p50": 5.7041999999200925,
+        "p95": 18.160000000032596,
+        "p99": 34.501600000075996,
+        "max": 339.6770999999717
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "50150"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50150"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "50150"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50150"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 103038.93759999995,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50848,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 50848,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 7400.6408999999985
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50848,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50848,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 6049.393900000025
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 34.67119999998249
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 28.146400000085123
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 28.17599999997765
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 142,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 15.721499999985099
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 29.918100000009872
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 23.899699999950826
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 291.01830000000064
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 912.0935
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16582.857900000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17191.448800000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17758.1577
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33860.5812
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34470.7765
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 35008.401399999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51063.926499999994
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51740.0472
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 52377.8073
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 68417.9789
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 69194.9
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 69833.7312
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 85767.1061
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 86320.03229999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 86958.5675
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 104812.9776
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 105418.9697
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 106013.6301
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 106606.1888
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 126700.8638
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 127277.2681
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 127891.3268
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 128500.5371
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 148722.7483
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 149280.4358
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 149968.0619
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 150518.36980000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 170827.807
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 171353.98450000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 171958.14210000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 172578.6355
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 196270.8873
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 196890.2145
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 197436.2996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 198040.1155
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 219191.0784
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 219754.176
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 220354.71980000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 220997.2187
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 243431.2189
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 243961.2187
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 244495.477
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 245164.3286
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 245851.76220000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 270806.3466
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 271489.6371
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 272020.4373
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 272637.2134
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 273316.62580000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 297942.4694
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 298707.4712
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 299237.6778
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 299795.517
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 300412.3436
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 323548.8154
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 324157.8718
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 324781.1889
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 325372.9806
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 325947.1677
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 349715.3949
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 350355.7221
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 350905.5992
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 351560.4266
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 372413.04370000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 373013.1928
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 373666.5801
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 374221.9721
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 394658.03500000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 395242.4863
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 395870.6652
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 396421.87930000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 417141.78880000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 417852.4997
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 418438.5795
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 419118.8802
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 439005.4496
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 439606.8348
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 440154.6877
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 440684.63310000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 459343.2806
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 459891.6938
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 460519.4032
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 461103.9914
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 478140.68710000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 478739.6118
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 479299.8617
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 479853.0294
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 495929.7687
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 496568.3049
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 497180.63430000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 515973.511
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 516525.51050000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 517120.2185
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 517723.9562
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 533931.2102
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 534656.3762
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 535214.7411
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 551547.1682
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 552094.6747
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 552691.5565000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 571521.9183
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 572103.5768
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 572751.5932
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 573314.9391
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 589618.83
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 590145.0073
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 590697.2076
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 591242.7106
+        }
+      ],
+      "arrivals": 1142,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.108927,
+        "p95": 13.713407,
+        "p99": 21.250047,
+        "max": 115.146751
+      }
+    },
+    {
+      "file": "2026-10-12T12-10-41-322Z-workload-W1-D1-summary.json",
+      "stamp": "2026-10-12T12-10-41-322Z",
+      "duration": 60,
+      "W": 1,
+      "pool": 1,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.9677913766666683,
+      "hintEvents": 108,
+      "hintFlushes": 104,
+      "activeOccupancyMs": {
+        "n": 426,
+        "p50": 46.270300000000134,
+        "p95": 296.1182000000008,
+        "p99": 1705.2675000000017,
+        "max": 2614.951100000002
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 2754,
+        "p50": 0.00020000000222353265,
+        "p95": 1.2015000000001237,
+        "p99": 7.093399999997928,
+        "max": 15.275099999998929
+      },
+      "activeDbTransactionMs": {
+        "n": 2754,
+        "p50": 5.958000000005995,
+        "p95": 15.270099999994272,
+        "p99": 30.640100000000075,
+        "max": 174.97660000000178
+      },
+      "selectorSampledBusyIntegral": 542.5918000000183,
+      "historyResumeMs": {
+        "p3-load-0": 668.0644999999931,
+        "p3-load-1": 741.2476999999926,
+        "p3-load-2": 829.8246999999974,
+        "p3-load-3": 908.754099999991,
+        "p3-load-4": 997.2614999999932,
+        "p3-load-5": 1086.7828000000009,
+        "p3-load-6": 1142.2733000000007,
+        "p3-load-7": 1217.700199999992
+      },
+      "operations": 2073,
+      "dispatch": {
+        "p3-load-0": 53,
+        "p3-load-1": 53,
+        "p3-load-2": 53,
+        "p3-load-3": 53,
+        "p3-load-4": 54,
+        "p3-load-5": 54,
+        "p3-load-6": 54,
+        "p3-load-7": 52
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 53,
+          "p50": 758.3536000000022,
+          "p95": 2199.2477999999974,
+          "p99": null,
+          "max": 2984.588099999997
+        },
+        "p3-load-1": {
+          "n": 53,
+          "p50": 771.5887000000002,
+          "p95": 2189.0547000000006,
+          "p99": null,
+          "max": 3017.5383
+        },
+        "p3-load-2": {
+          "n": 53,
+          "p50": 914.3415999999997,
+          "p95": 2402.6884999999966,
+          "p99": null,
+          "max": 3284.992699999999
+        },
+        "p3-load-3": {
+          "n": 53,
+          "p50": 927.0366999999969,
+          "p95": 2390.647799999999,
+          "p99": null,
+          "max": 3301.215400000001
+        },
+        "p3-load-4": {
+          "n": 54,
+          "p50": 907.5737000000008,
+          "p95": 2424.078099999999,
+          "p99": null,
+          "max": 3301.6579999999994
+        },
+        "p3-load-5": {
+          "n": 54,
+          "p50": 903.8406000000032,
+          "p95": 2419.7676999999967,
+          "p99": null,
+          "max": 4150.033299999999
+        },
+        "p3-load-6": {
+          "n": 54,
+          "p50": 635.502800000002,
+          "p95": 850.061099999999,
+          "p99": null,
+          "max": 1374.3896000000022
+        },
+        "p3-load-7": {
+          "n": 52,
+          "p50": 909.3241999999991,
+          "p95": 2423.4556999999986,
+          "p99": null,
+          "max": 3096.3778999999995
+        }
+      },
+      "freshMs": {
+        "n": 134,
+        "p50": 920.2128999999986,
+        "p95": 3338.1463000000003,
+        "p99": 4722.982499999998,
+        "max": 5233.013599999998
+      },
+      "userAdmissionMs": {
+        "n": 50,
+        "p50": 1568.5269999999991,
+        "p95": 4493.940999999999,
+        "p99": null,
+        "max": 6117.5867
+      },
+      "dbWaitMs": {
+        "n": 12591,
+        "p50": 0.00020000000949949026,
+        "p95": 0.0005000000237487257,
+        "p99": 2.3994999999995343,
+        "max": 15.275099999998929
+      },
+      "dbTransactionMs": {
+        "n": 12591,
+        "p50": 6.104299999991781,
+        "p95": 21.597099999999045,
+        "p99": 30.31020000000717,
+        "max": 174.97660000000178
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65731"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50721"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65731"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50721"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 139042.0953,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50925,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 65925,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 7126.8706999999995
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50915,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50915,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 7527.596099999995
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 59.45089999999618
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 38.413300000014715
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 34.08389999999781
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 142,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 20.09519999998156
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 34.34789999999339
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 34.213199999998324
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 54516.248600000006
+        }
+      ],
+      "arrivals": 134,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 11.059199,
+        "p95": 21.905407,
+        "p99": 28.737535,
+        "max": 122.028031
+      }
+    },
+    {
+      "file": "2026-10-12T12-14-07-582Z-workload-W2-D2-summary.json",
+      "stamp": "2026-10-12T12-14-07-582Z",
+      "duration": 60,
+      "W": 2,
+      "pool": 2,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+      "status": "PASS",
+      "runMs": 59999.99999999999,
+      "actualBusyUtilization": 0.9472278458333324,
+      "hintEvents": 142,
+      "hintFlushes": 142,
+      "activeOccupancyMs": {
+        "n": 1324,
+        "p50": 39.97750000000087,
+        "p95": 264.04829999999856,
+        "p99": 542.6412999999993,
+        "max": 1475.0933000000005
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 7928,
+        "p50": 0.0004000000044470653,
+        "p95": 0.0011999999987892807,
+        "p99": 1.2267999999967287,
+        "max": 15.236700000001292
+      },
+      "activeDbTransactionMs": {
+        "n": 7928,
+        "p50": 5.732900000000882,
+        "p95": 12.94549999999981,
+        "p99": 20.325900000003458,
+        "max": 134.66090000000258
+      },
+      "selectorSampledBusyIntegral": 61803.456700000104,
+      "historyResumeMs": {
+        "p3-load-0": 508.29769999999553,
+        "p3-load-1": 629.3135000000038,
+        "p3-load-2": 722.4621000000043,
+        "p3-load-3": 807.3013000000064,
+        "p3-load-4": 881.7070999999996,
+        "p3-load-5": 964.1282999999967,
+        "p3-load-6": 1023.2060999999958,
+        "p3-load-7": 1115.7214999999997
+      },
+      "operations": 2973,
+      "dispatch": {
+        "p3-load-0": 169,
+        "p3-load-1": 169,
+        "p3-load-2": 166,
+        "p3-load-3": 165,
+        "p3-load-4": 172,
+        "p3-load-5": 179,
+        "p3-load-6": 145,
+        "p3-load-7": 159
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 169,
+          "p50": 231.70920000000115,
+          "p95": 381.86670000000595,
+          "p99": 510.90229999999974,
+          "max": 518.1474000000017
+        },
+        "p3-load-1": {
+          "n": 169,
+          "p50": 224.21030000000064,
+          "p95": 436.0349999999962,
+          "p99": 523.2517999999982,
+          "max": 525.2816000000003
+        },
+        "p3-load-2": {
+          "n": 166,
+          "p50": 307.61039999999775,
+          "p95": 618.5805000000037,
+          "p99": 686.6573000000008,
+          "max": 843.5922999999966
+        },
+        "p3-load-3": {
+          "n": 165,
+          "p50": 310.7969000000012,
+          "p95": 619.6422999999995,
+          "p99": 719.8097999999954,
+          "max": 754.2844000000005
+        },
+        "p3-load-4": {
+          "n": 172,
+          "p50": 278.0575000000026,
+          "p95": 592.5830999999998,
+          "p99": 696.5640000000058,
+          "max": 710.9661000000051
+        },
+        "p3-load-5": {
+          "n": 179,
+          "p50": 259.35719999999856,
+          "p95": 562.5952000000034,
+          "p99": 769.7176000000036,
+          "max": 777.2762999999995
+        },
+        "p3-load-6": {
+          "n": 145,
+          "p50": 76.50720000000001,
+          "p95": 263.38380000000325,
+          "p99": 379.7532000000065,
+          "max": 396.8917999999976
+        },
+        "p3-load-7": {
+          "n": 159,
+          "p50": 251.43040000000474,
+          "p95": 583.9391000000032,
+          "p99": 683.2067000000025,
+          "max": 686.5720999999994
+        }
+      },
+      "freshMs": {
+        "n": 142,
+        "p50": 390.6144000000004,
+        "p95": 695.945099999999,
+        "p99": 1076.9465999999957,
+        "max": 1482.1567999999988
+      },
+      "userAdmissionMs": {
+        "n": 162,
+        "p50": 494.75550000000294,
+        "p95": 1046.5505000000012,
+        "p99": 1778.1201,
+        "max": 2044.6046000000006
+      },
+      "dbWaitMs": {
+        "n": 17777,
+        "p50": 0.0004999999946448952,
+        "p95": 0.0011999999987892807,
+        "p99": 0.0020000000076834112,
+        "max": 15.236700000001292
+      },
+      "dbTransactionMs": {
+        "n": 17777,
+        "p50": 6.378599999996368,
+        "p95": 22.81459999999788,
+        "p99": 33.47860000000219,
+        "max": 205.61179999999877
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65798"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50788"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65798"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50788"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 154246.773,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 50996,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 65996,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 9478.705400000006
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 50986,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 50986,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 6820.246400000004
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 39.45530000000144
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 29.73870000001625
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 38.32489999997779
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 142,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 16.377700000011828
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 28.792699999990873
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 26.751900000002934
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 191.26999999999953
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 783.4605999999994
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16639.2053
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17209.5337
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17814.545400000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33702.4411
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34349.2514
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 50749.6037
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51623.2095
+        }
+      ],
+      "arrivals": 142,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.502143,
+        "p95": 22.183935,
+        "p99": 29.720575,
+        "max": 164.888575
+      }
+    },
+    {
+      "file": "2026-10-12T12-17-47-760Z-workload-W4-D1-summary.json",
+      "stamp": "2026-10-12T12-17-47-760Z",
+      "duration": 60,
+      "W": 4,
+      "pool": 1,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.8549523470833326,
+      "hintEvents": 142,
+      "hintFlushes": 142,
+      "activeOccupancyMs": {
+        "n": 1718,
+        "p50": 92.4120999999941,
+        "p95": 294.4085999999952,
+        "p99": 363.5002999999997,
+        "max": 1494.6427000000003
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 10173,
+        "p50": 9.956500000000233,
+        "p95": 25.68869999999879,
+        "p99": 35.432300000000396,
+        "max": 91.74919999999838
+      },
+      "activeDbTransactionMs": {
+        "n": 10173,
+        "p50": 5.07589999999982,
+        "p95": 11.114299999997456,
+        "p99": 14.813199999999597,
+        "max": 61.080799999999726
+      },
+      "selectorSampledBusyIntegral": 189599.87010000017,
+      "historyResumeMs": {
+        "p3-load-0": 286.0697000000073,
+        "p3-load-1": 286.0981000000029,
+        "p3-load-2": 286.1052000000054,
+        "p3-load-3": 440.1386000000057,
+        "p3-load-4": 440.1631999999954,
+        "p3-load-5": 440.17179999999644,
+        "p3-load-6": 565.7734000000055,
+        "p3-load-7": 565.792300000001
+      },
+      "operations": 3369,
+      "dispatch": {
+        "p3-load-0": 224,
+        "p3-load-1": 221,
+        "p3-load-2": 225,
+        "p3-load-3": 221,
+        "p3-load-4": 243,
+        "p3-load-5": 246,
+        "p3-load-6": 122,
+        "p3-load-7": 216
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 224,
+          "p50": 118.76699999999983,
+          "p95": 200.01319999999396,
+          "p99": 233.8641000000007,
+          "max": 261.27409999999963
+        },
+        "p3-load-1": {
+          "n": 221,
+          "p50": 118.07560000000012,
+          "p95": 230.8084000000017,
+          "p99": 296.5758999999962,
+          "max": 343.5748999999996
+        },
+        "p3-load-2": {
+          "n": 225,
+          "p50": 167.70840000000044,
+          "p95": 318.5320000000065,
+          "p99": 389.478099999993,
+          "max": 466.2454999999991
+        },
+        "p3-load-3": {
+          "n": 221,
+          "p50": 176.24549999999908,
+          "p95": 329.13930000000255,
+          "p99": 396.60659999999916,
+          "max": 438.1260999999995
+        },
+        "p3-load-4": {
+          "n": 243,
+          "p50": 141.59470000000147,
+          "p95": 241.80559999999969,
+          "p99": 353.95930000000226,
+          "max": 375.1895999999979
+        },
+        "p3-load-5": {
+          "n": 246,
+          "p50": 135.96590000000015,
+          "p95": 222.0689000000002,
+          "p99": 317.65989999999874,
+          "max": 420.0154999999995
+        },
+        "p3-load-6": {
+          "n": 122,
+          "p50": 116.12249999999767,
+          "p95": 253.09739999999874,
+          "p99": 319.6743999999999,
+          "max": 324.85109999999986
+        },
+        "p3-load-7": {
+          "n": 216,
+          "p50": 141.35339999999997,
+          "p95": 252.82810000000063,
+          "p99": 351.5633000000016,
+          "max": 548.0343999999996
+        }
+      },
+      "freshMs": {
+        "n": 142,
+        "p50": 370.1679000000004,
+        "p95": 534.4812999999995,
+        "p99": 843.5699999999997,
+        "max": 990.0144
+      },
+      "userAdmissionMs": {
+        "n": 220,
+        "p50": 442.9346000000005,
+        "p95": 654.6184000000012,
+        "p99": 884.3976000000002,
+        "max": 1383.645700000001
+      },
+      "dbWaitMs": {
+        "n": 20000,
+        "p50": 4.305999999996857,
+        "p95": 21.956900000001042,
+        "p99": 31.670100000003004,
+        "max": 161.38290000001143
+      },
+      "dbTransactionMs": {
+        "n": 20000,
+        "p50": 5.0834000000013475,
+        "p95": 16.100299999990966,
+        "p99": 29.972000000008848,
+        "max": 178.28529999998864
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65869"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50859"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65869"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50859"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 102653.4373,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 51067,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 66067,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 6786.327400000009
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 51057,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 51057,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 6333.51880000002
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 29.340499999991152
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 31.078999999997905
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 26.801100000011502
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 142,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 19.143699999985984
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 35.37860000002547
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 32.83040000000619
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 199.82320000000072
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 16367.912499999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17041.005699999998
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17686.5931
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33457.044
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34062.0439
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34698.6687
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 50383.5071
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51081.217899999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51705.9772
+        }
+      ],
+      "arrivals": 142,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.215423,
+        "p95": 18.120703,
+        "p99": 22.953983,
+        "max": 128.843775
+      }
+    },
+    {
+      "file": "2026-10-12T12-20-35-973Z-workload-W4-D6-summary.json",
+      "stamp": "2026-10-12T12-20-35-973Z",
+      "duration": 60,
+      "W": 4,
+      "pool": 6,
+      "saturation": false,
+      "seed": 2403,
+      "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.6734256891666656,
+      "hintEvents": 104,
+      "hintFlushes": 104,
+      "activeOccupancyMs": {
+        "n": 1993,
+        "p50": 70.29669999999896,
+        "p95": 188.60089999999946,
+        "p99": 369.2894000000015,
+        "max": 1596.2039000000004
+      },
+      "activeHistoryRows": 64526,
+      "activeHistoryRowsPerSecond": 1075.4333333333334,
+      "activeDbWaitMs": {
+        "n": 10829,
+        "p50": 0.0004000000008090865,
+        "p95": 0.0010000000002037268,
+        "p99": 0.0013000000035390258,
+        "max": 0.06830000000081782
+      },
+      "activeDbTransactionMs": {
+        "n": 10829,
+        "p50": 7.050499999997555,
+        "p95": 26.009399999999005,
+        "p99": 38.680200000002515,
+        "max": 220.16159999999945
+      },
+      "selectorSampledBusyIntegral": 110111.89899999989,
+      "historyResumeMs": {
+        "p3-load-0": 343.7488000000085,
+        "p3-load-1": 343.79690000000846
+      },
+      "operations": 3141,
+      "dispatch": {
+        "p3-load-0": 585,
+        "p3-load-1": 570,
+        "p3-load-2": 273,
+        "p3-load-3": 273,
+        "p3-load-4": 88,
+        "p3-load-5": 88,
+        "p3-load-6": 50,
+        "p3-load-7": 66
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 585,
+          "p50": 1.1537000000007538,
+          "p95": 62.30699999999706,
+          "p99": 111.35090000000491,
+          "max": 286.90759999999864
+        },
+        "p3-load-1": {
+          "n": 570,
+          "p50": 1.2001000000000204,
+          "p95": 89.69470000000001,
+          "p99": 193.4357999999993,
+          "max": 354.6692000000003
+        },
+        "p3-load-2": {
+          "n": 273,
+          "p50": 213.75870000000214,
+          "p95": 279.4375,
+          "p99": 304.85419999999976,
+          "max": 420.2199000000037
+        },
+        "p3-load-3": {
+          "n": 273,
+          "p50": 208.63899999999558,
+          "p95": 281.50359999999637,
+          "p99": 351.1006000000016,
+          "max": 421.5095000000001
+        },
+        "p3-load-4": {
+          "n": 88,
+          "p50": 713.8049000000001,
+          "p95": 1085.7332999999999,
+          "p99": null,
+          "max": 1118.697199999995
+        },
+        "p3-load-5": {
+          "n": 88,
+          "p50": 743.1484,
+          "p95": 1088.7574999999997,
+          "p99": null,
+          "max": 1121.7681999999986
+        },
+        "p3-load-6": {
+          "n": 50,
+          "p50": 1021.8151999999973,
+          "p95": 1080.3606,
+          "p99": null,
+          "max": 1089.5528999999988
+        },
+        "p3-load-7": {
+          "n": 66,
+          "p50": 1034.8515999999981,
+          "p95": 1095.2805000000008,
+          "p99": null,
+          "max": 1116.2711999999956
+        }
+      },
+      "freshMs": {
+        "n": 104,
+        "p50": 62.77270000000135,
+        "p95": 353.52729999999974,
+        "p99": 410.1863999999987,
+        "max": 434.1195000000007
+      },
+      "userAdmissionMs": {
+        "n": 424,
+        "p50": 36.053500000001804,
+        "p95": 104.300900000002,
+        "p99": 158.83849999999802,
+        "max": 243.1762000000017
+      },
+      "dbWaitMs": {
+        "n": 18177,
+        "p50": 0.0003000000142492354,
+        "p95": 0.0008999999990919605,
+        "p99": 0.0012000000024272595,
+        "max": 0.06830000000081782
+      },
+      "dbTransactionMs": {
+        "n": 18177,
+        "p50": 6.513100000000122,
+        "p95": 25.19129999999859,
+        "p99": 37.767699999996694,
+        "max": 1412.8180999999895
+      },
+      "historyWaitMs": {
+        "n": 505,
+        "p50": 1.2890999999981432,
+        "p95": 91.17110000000048,
+        "p99": 214.87189999999828,
+        "max": 354.6692000000003
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65940"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50930"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "33684"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "19314"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "1"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "1"
+        }
+      ],
+      "historyResumedAndConvergedMs": 92514.2428,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 51119,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 66119,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 5759.825700000016
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 51109,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 51109,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 6663.904099999985
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 55.06950000001234
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 48.883499999996275
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 42.671899999986636
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 142,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 20.20900000000256
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 40.303300000028685
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 54.272100000001956
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 150.72609999999986
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 681.1992
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 22289.2002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 22813.5128
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 23393.9143
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 24005.1715
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 46148.9737
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 46697.321
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 47256.4826
+        }
+      ],
+      "arrivals": 104,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.420223,
+        "p95": 21.921791,
+        "p99": 26.607615,
+        "max": 149.159935
+      }
+    },
+    {
+      "file": "2026-10-12T12-23-14-164Z-workload-W4-D2-summary.json",
+      "stamp": "2026-10-12T12-23-14-164Z",
+      "duration": 600,
+      "W": 4,
+      "pool": 2,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+      "status": "PASS",
+      "runMs": 600000,
+      "actualBusyUtilization": 0.8858905197499976,
+      "hintEvents": 1240,
+      "hintFlushes": 1240,
+      "activeOccupancyMs": {
+        "n": 28525,
+        "p50": 52.75250000000233,
+        "p95": 258.43170000001555,
+        "p99": 295.3317999999854,
+        "max": 1649.7984999999899
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 20000,
+        "p50": 2.2830000000540167,
+        "p95": 9.449499999987893,
+        "p99": 12.623499999986961,
+        "max": 27.9087999999756
+      },
+      "activeDbTransactionMs": {
+        "n": 20000,
+        "p50": 5.852400000090711,
+        "p95": 12.378100000089034,
+        "p99": 17.86619999993127,
+        "max": 34.54350000002887
+      },
+      "selectorSampledBusyIntegral": 1886258.9523000042,
+      "historyResumeMs": {
+        "p3-load-0": 403.9993999999715,
+        "p3-load-1": 404.06890000007115,
+        "p3-load-2": 404.11940000008326,
+        "p3-load-3": 511.3424000000814,
+        "p3-load-4": 511.4111999999732,
+        "p3-load-5": 511.454000000027,
+        "p3-load-6": 601.0093999999808,
+        "p3-load-7": 601.0839000000851
+      },
+      "operations": 30190,
+      "dispatch": {
+        "p3-load-0": 3592,
+        "p3-load-1": 3724,
+        "p3-load-2": 3954,
+        "p3-load-3": 3909,
+        "p3-load-4": 4038,
+        "p3-load-5": 4052,
+        "p3-load-6": 1661,
+        "p3-load-7": 3595
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 3592,
+          "p50": 74.83929999999236,
+          "p95": 130.85190000000875,
+          "p99": 189.9028999999864,
+          "max": 357.63039999996545
+        },
+        "p3-load-1": {
+          "n": 3724,
+          "p50": 74.61620000001858,
+          "p95": 128.40650000004098,
+          "p99": 178.47010000003502,
+          "max": 323.6811000000016
+        },
+        "p3-load-2": {
+          "n": 3954,
+          "p50": 93.11290000000736,
+          "p95": 170.60529999999562,
+          "p99": 237.19890000000305,
+          "max": 368.4316000000108
+        },
+        "p3-load-3": {
+          "n": 3909,
+          "p50": 94.01769999996759,
+          "p95": 171.04440000000068,
+          "p99": 234.64449999999488,
+          "max": 396.46609999996144
+        },
+        "p3-load-4": {
+          "n": 4038,
+          "p50": 83.71169999999984,
+          "p95": 146.77210000000196,
+          "p99": 195.54869999998482,
+          "max": 397.7392000000109
+        },
+        "p3-load-5": {
+          "n": 4052,
+          "p50": 84.75460000000021,
+          "p95": 156.26130000001285,
+          "p99": 212.8768000000855,
+          "max": 279.68189999996684
+        },
+        "p3-load-6": {
+          "n": 1661,
+          "p50": 38.88029999999708,
+          "p95": 132.25329999999667,
+          "p99": 181.51679999998305,
+          "max": 297.03919999999925
+        },
+        "p3-load-7": {
+          "n": 3595,
+          "p50": 85.81349999998929,
+          "p95": 173.44710000004852,
+          "p99": 232.7113000000245,
+          "max": 362.11510000005364
+        }
+      },
+      "freshMs": {
+        "n": 1240,
+        "p50": 238.8239000000176,
+        "p95": 380.51450000000114,
+        "p99": 528.868300000031,
+        "max": 979.0086000000592
+      },
+      "userAdmissionMs": {
+        "n": 3845,
+        "p50": 198.92410000000382,
+        "p95": 369.6165000000037,
+        "p99": 474.7149000000063,
+        "max": 863.2556999999997
+      },
+      "dbWaitMs": {
+        "n": 20000,
+        "p50": 0.0005000000819563866,
+        "p95": 7.427399999927729,
+        "p99": 11.087300000013784,
+        "max": 27.9087999999756
+      },
+      "dbTransactionMs": {
+        "n": 20000,
+        "p50": 5.626800000085495,
+        "p95": 17.700899999937974,
+        "p99": 30.63870000001043,
+        "max": 373.2077000000281
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65992"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50982"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "65992"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "50982"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 97697.54410000006,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 51739,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 66739,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 5250.915700000012
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 51729,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 51729,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 5039.0315999999875
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 45.11999999999534
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 43.94590000004973
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 43.20889999996871
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 132,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 23.67160000000149
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 33.28289999999106
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 34.829100000089966
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 167.06820000000062
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 932.1268
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16355.486900000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16882.6431
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17395.569199999998
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: {\"status\":\"unresolved\",\"kind\":\"unresolved\",\"remoteOutcome\":\"read-only\",\"message\":\"Connection not available\",\"metrics\":{\"received\":0,\"accepted\":0,\"maxChunk\":0,\"rejectedChunk\":0,\"identities\":0,\"parserAtAbort\":{\"lineBytes\":0,\"responseBytes\":0,\"literalBytes\":0,\"queuedChunks\":0},\"settlementMs\":3.798399999999674,\"closeMs\":3.9078000000008615,\"durationMs\":3.913300000000163},\"diagnostics\":[{\"kind\":\"connection\",\"message\":\"Connection not available\"}]}",
+          "at": 33379.732800000005
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33892.3487
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34469.8664
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 34998.7765
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 50538.3236
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51132.3315
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51693.637200000005
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 67646.122
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 68348.4548
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 68903.1189
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 84485.2699
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 85032.96800000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 85647.86260000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 103314.1112
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 103855.70760000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 104390.7057
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 104979.2334
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 123837.811
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 124425.5184
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 124944.41560000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 125578.0447
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 144339.0628
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 144870.5248
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 145442.9814
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 145995.4496
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 164966.7933
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 165661.5746
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 166183.2923
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 166808.8113
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 185630.0908
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 186217.1276
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 186854.1101
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 187430.75
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 206451.8485
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 207011.325
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 207590.57630000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 208221.3558
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 227242.4062
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 227804.8031
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 228357.125
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 228953.6156
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 248307.4901
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 248872.84410000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 249419.9405
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 265633.40489999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 266178.2422
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 266759.56139999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 282750.5414
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 283321.495
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 283904.6763
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 300057.16569999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 300638.752
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 301156.6434
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 317319.09349999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 317906.00029999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 318430.2299
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 335023.512
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 335648.5576
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 336198.6821
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 336720.08719999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 352346.1417
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 352932.01599999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 353544.5869
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 369774.9112
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 370331.382
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 370928.21479999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 386876.9741
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 387489.6211
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 388017.2059
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 405977.8917
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 406506.81159999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 407051.07279999997
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 407652.8917
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 426832.43389999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 427432.49439999997
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 427986.9259
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 428603.4948
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 447301.51509999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 447865.6391
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 448427.19739999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 448990.77619999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 468089.99189999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 468610.8953
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 469247.1234
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 469833.4286
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 489178.5967
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 489794.23829999997
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 490363.1822
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 490989.0326
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 510640.41469999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 511320.7537
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 511935.24529999995
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 512554.6237
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 532158.603
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 532707.6579
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 533297.5316
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 533813.255
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 557260.5032
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 557801.6192000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 558393.8689
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 558959.9035
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 579009.6962
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 579572.9966000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 580195.567
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 580753.0378
+        }
+      ],
+      "arrivals": 1240,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.051583,
+        "p95": 12.451839,
+        "p99": 18.956287,
+        "max": 71.368703
+      }
+    },
+    {
+      "file": "2026-10-12T13-41-18-197Z-workload-W4-D1-summary.json",
+      "stamp": "2026-10-12T13-41-18-197Z",
+      "duration": 60,
+      "W": 4,
+      "pool": 1,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "30c9e5c8fa31f925ad1b1a6cd01f4f7f955caa38a31daa55b3ca8f75830af8e1",
+      "storeSha256": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+      "coordinatorSha256": "3e6c96c79587da5ebb0fc5b67f1a3a48545675661e5fab98d5ad5949ce74958a",
+      "status": "PASS",
+      "runMs": 60000,
+      "actualBusyUtilization": 0.8551690129166651,
+      "hintEvents": 140,
+      "hintFlushes": 140,
+      "activeOccupancyMs": {
+        "n": 1905,
+        "p50": 82.56810000000041,
+        "p95": 291.59440000000177,
+        "p99": 340.08640000000014,
+        "max": 966.3947999999946
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 11226,
+        "p50": 9.193500000001222,
+        "p95": 22.59179999999833,
+        "p99": 29.131499999995867,
+        "max": 249.0715999999993
+      },
+      "activeDbTransactionMs": {
+        "n": 11226,
+        "p50": 4.75959999999759,
+        "p95": 9.698599999999715,
+        "p99": 13.240799999999581,
+        "max": 239.33749999999964
+      },
+      "selectorSampledBusyIntegral": 189450.87839999978,
+      "historyResumeMs": {
+        "p3-load-0": 294.95449999999255,
+        "p3-load-1": 294.98249999999825,
+        "p3-load-2": 294.98769999999786,
+        "p3-load-3": 458.91339999999036,
+        "p3-load-4": 458.93649999999616,
+        "p3-load-5": 458.9436999999889,
+        "p3-load-6": 619.4395999999979,
+        "p3-load-7": 619.4628999999986
+      },
+      "operations": 3582,
+      "dispatch": {
+        "p3-load-0": 248,
+        "p3-load-1": 250,
+        "p3-load-2": 251,
+        "p3-load-3": 253,
+        "p3-load-4": 267,
+        "p3-load-5": 271,
+        "p3-load-6": 130,
+        "p3-load-7": 235
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 248,
+          "p50": 112.36240000000544,
+          "p95": 190.7515999999996,
+          "p99": 296.4377999999997,
+          "max": 448.7921000000006
+        },
+        "p3-load-1": {
+          "n": 250,
+          "p50": 107.73479999999836,
+          "p95": 190.43239999999787,
+          "p99": 267.8084000000017,
+          "max": 479.8831
+        },
+        "p3-load-2": {
+          "n": 251,
+          "p50": 148.3764999999985,
+          "p95": 291.2835999999952,
+          "p99": 400.8703999999998,
+          "max": 462.2400999999991
+        },
+        "p3-load-3": {
+          "n": 253,
+          "p50": 152.52439999999842,
+          "p95": 257.1597000000038,
+          "p99": 395.3623000000007,
+          "max": 452.22900000000027
+        },
+        "p3-load-4": {
+          "n": 267,
+          "p50": 124.85829999999987,
+          "p95": 205.51270000000022,
+          "p99": 299.6839,
+          "max": 349.79789999999775
+        },
+        "p3-load-5": {
+          "n": 271,
+          "p50": 122.3324000000066,
+          "p95": 203.95859999999993,
+          "p99": 307.70640000000094,
+          "max": 378.41219999999885
+        },
+        "p3-load-6": {
+          "n": 130,
+          "p50": 109.78290000000561,
+          "p95": 195.2515999999996,
+          "p99": 267.95090000000346,
+          "max": 293.77810000000136
+        },
+        "p3-load-7": {
+          "n": 235,
+          "p50": 124.2754999999961,
+          "p95": 210.01080000000002,
+          "p99": 310.3868999999977,
+          "max": 382.6759000000002
+        }
+      },
+      "freshMs": {
+        "n": 140,
+        "p50": 317.9340000000011,
+        "p95": 482.26050000000396,
+        "p99": 872.0731999999989,
+        "max": 928.0884000000005
+      },
+      "userAdmissionMs": {
+        "n": 249,
+        "p50": 391.00410000000556,
+        "p95": 643.1357999999964,
+        "p99": 804.2304000000004,
+        "max": 1048.7132999999994
+      },
+      "dbWaitMs": {
+        "n": 20000,
+        "p50": 3.9606999999996333,
+        "p95": 18.617000000005646,
+        "p99": 25.631399999998393,
+        "max": 73.04150000000664
+      },
+      "dbTransactionMs": {
+        "n": 20000,
+        "p50": 4.695300000006682,
+        "p95": 15.510800000003655,
+        "p99": 19.598599999997532,
+        "max": 84.6591000000044
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "96632"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "51602"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "96632"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "51602"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 100540.9563,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 51829,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 96829,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 5228.978399999993
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 51799,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 51799,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 4579.721300000005
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 31.67640000002575
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 26.530999999988126
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 27.57289999999921
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 132,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 13.73300000000745
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 26.384599999990314
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 21.082099999999627
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 182.8712999999998
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16666.3007
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17253.7582
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17811.5373
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 18334.8669
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33890.1739
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34423.0608
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34954.092599999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51084.708099999996
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51640.7249
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 52230.4159
+        }
+      ],
+      "arrivals": 140,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.133503,
+        "p95": 15.269887,
+        "p99": 19.480575,
+        "max": 52.887551
+      }
+    },
+    {
+      "file": "2026-10-12T13-44-04-755Z-workload-W4-D2-summary.json",
+      "stamp": "2026-10-12T13-44-04-755Z",
+      "duration": 600,
+      "W": 4,
+      "pool": 2,
+      "saturation": true,
+      "seed": 2403,
+      "sourceSha256": "30c9e5c8fa31f925ad1b1a6cd01f4f7f955caa38a31daa55b3ca8f75830af8e1",
+      "storeSha256": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+      "coordinatorSha256": "3e6c96c79587da5ebb0fc5b67f1a3a48545675661e5fab98d5ad5949ce74958a",
+      "status": "PASS",
+      "runMs": 600000,
+      "actualBusyUtilization": 0.8847074136666692,
+      "hintEvents": 1160,
+      "hintFlushes": 1160,
+      "activeOccupancyMs": {
+        "n": 31152,
+        "p50": 49.25239999999758,
+        "p95": 251.7834000000148,
+        "p99": 285.55730000004405,
+        "max": 3491.8120000000345
+      },
+      "activeHistoryRows": 0,
+      "activeHistoryRowsPerSecond": 0,
+      "activeDbWaitMs": {
+        "n": 20000,
+        "p50": 2.1946999999927357,
+        "p95": 8.200499999918975,
+        "p99": 11.731099999975413,
+        "max": 324.14710000006016
+      },
+      "activeDbTransactionMs": {
+        "n": 20000,
+        "p50": 5.431400000001304,
+        "p95": 11.455100000021048,
+        "p99": 15.268000000040047,
+        "max": 324.3756000000285
+      },
+      "selectorSampledBusyIntegral": 1888289.1596999997,
+      "historyResumeMs": {
+        "p3-load-0": 546.9337999999989,
+        "p3-load-1": 547.0586999999359,
+        "p3-load-2": 547.1517999999924,
+        "p3-load-3": 650.3976000000257,
+        "p3-load-4": 650.4641999999294,
+        "p3-load-5": 650.5135999999475,
+        "p3-load-6": 746.031100000022,
+        "p3-load-7": 746.0886999999639
+      },
+      "operations": 32839,
+      "dispatch": {
+        "p3-load-0": 4000,
+        "p3-load-1": 4111,
+        "p3-load-2": 4329,
+        "p3-load-3": 4288,
+        "p3-load-4": 4404,
+        "p3-load-5": 4413,
+        "p3-load-6": 1678,
+        "p3-load-7": 3929
+      },
+      "perAccountWaitMs": {
+        "p3-load-0": {
+          "n": 4000,
+          "p50": 71.52249999996275,
+          "p95": 118.45900000000256,
+          "p99": 165.86110000000917,
+          "max": 276.6740999999456
+        },
+        "p3-load-1": {
+          "n": 4111,
+          "p50": 70.02950000000419,
+          "p95": 118.56890000000021,
+          "p99": 178.25679999997374,
+          "max": 546.6596999999601
+        },
+        "p3-load-2": {
+          "n": 4329,
+          "p50": 84.12179999996442,
+          "p95": 146.6863000000012,
+          "p99": 206.45020000002114,
+          "max": 586.5903000000399
+        },
+        "p3-load-3": {
+          "n": 4288,
+          "p50": 85.31810000000405,
+          "p95": 144.13290000000052,
+          "p99": 210.00899999996182,
+          "max": 631.3832000000402
+        },
+        "p3-load-4": {
+          "n": 4404,
+          "p50": 75.67220000002999,
+          "p95": 127.04950000002282,
+          "p99": 164.83090000000084,
+          "max": 458.27069999999367
+        },
+        "p3-load-5": {
+          "n": 4413,
+          "p50": 77.36050000000978,
+          "p95": 129.68330000000424,
+          "p99": 178.3773000000001,
+          "max": 382.2896999999648
+        },
+        "p3-load-6": {
+          "n": 1678,
+          "p50": 32.242900000012014,
+          "p95": 122.24429999999847,
+          "p99": 159.62919999996666,
+          "max": 574.9856000000145
+        },
+        "p3-load-7": {
+          "n": 3929,
+          "p50": 79.11329999996815,
+          "p95": 144.08799999998882,
+          "p99": 191.91599999999744,
+          "max": 902.9660999999614
+        }
+      },
+      "freshMs": {
+        "n": 1160,
+        "p50": 187.17210000002524,
+        "p95": 317.17480000003707,
+        "p99": 384.42419999995036,
+        "max": 1150.1449999999022
+      },
+      "userAdmissionMs": {
+        "n": 4192,
+        "p50": 164.43110000001616,
+        "p95": 311.4676000000036,
+        "p99": 383.8845999999903,
+        "max": 1399.2081000000471
+      },
+      "dbWaitMs": {
+        "n": 20000,
+        "p50": 0.0004000000189989805,
+        "p95": 6.943800000008196,
+        "p99": 10.210900000063702,
+        "max": 324.14710000006016
+      },
+      "dbTransactionMs": {
+        "n": 20000,
+        "p50": 5.3325000000186265,
+        "p95": 17.369300000020303,
+        "p99": 29.754399999976158,
+        "max": 324.3756000000285
+      },
+      "historyWaitMs": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "initialHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "96702"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "51672"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "saturatedHistory": [
+        {
+          "account": "p3-load-0",
+          "history": "96702"
+        },
+        {
+          "account": "p3-load-1",
+          "history": "51672"
+        },
+        {
+          "account": "p3-load-2",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-3",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-4",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-5",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-6",
+          "history": "129"
+        },
+        {
+          "account": "p3-load-7",
+          "history": "129"
+        }
+      ],
+      "historyResumedAndConvergedMs": 91261.50509999995,
+      "convergence": [
+        {
+          "account": "p3-load-0",
+          "identities": 52409,
+          "epoch": "1791803598",
+          "history": 1,
+          "fresh": 97409,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 4995.120400000014
+        },
+        {
+          "account": "p3-load-1",
+          "identities": 52379,
+          "epoch": "1791804112",
+          "history": 1,
+          "fresh": 52379,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 4587.25410000002
+        },
+        {
+          "account": "p3-load-2",
+          "identities": 256,
+          "epoch": "1791804241",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 29.963199999998324
+        },
+        {
+          "account": "p3-load-3",
+          "identities": 256,
+          "epoch": "1791804248",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 24.259500000043772
+        },
+        {
+          "account": "p3-load-4",
+          "identities": 256,
+          "epoch": "1791804254",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 23.81200000003446
+        },
+        {
+          "account": "p3-load-5",
+          "identities": 132,
+          "epoch": "1791804261",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 13.76879999996163
+        },
+        {
+          "account": "p3-load-6",
+          "identities": 256,
+          "epoch": "1791804267",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 22.647600000025705
+        },
+        {
+          "account": "p3-load-7",
+          "identities": 256,
+          "epoch": "1791804273",
+          "history": 1,
+          "fresh": 256,
+          "missing": 0,
+          "duplicates": 0,
+          "oracleMs": 21.64060000004247
+        }
+      ],
+      "errors": [
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 132.04930000000058
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 770.4349000000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16229.437800000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 16772.759899999997
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 17288.851499999997
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33137.8554
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 33790.739400000006
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 34394.5683
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 50082.4888
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 50619.6111
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 51199.9254
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 66919.63029999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 67605.6375
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 68123.20939999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 83913.254
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 84464.89809999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 85010.98259999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 102162.378
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 102746.314
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 103324.5616
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 103864.1581
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 122348.7347
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 122879.6329
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 123456.03929999999
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 123985.1581
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 144155.58200000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 144757.1067
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 145340.8709
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 145947.05810000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 167022.246
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 167626.4087
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 168201.98080000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 168717.93600000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 190416.09180000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 191013.6731
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 191603.4725
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 192167.1293
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 214510.9671
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 215032.3912
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 215578.81110000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 216144.9328
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 237650.4457
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 238249.99850000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 238843.8238
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 239395.76380000002
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 260681.6762
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 261197.0133
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 261771.4681
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 262351.3628
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 281174.7328
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 281778.3901
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 282330.7451
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 282864.3944
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 301679.8428
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 302239.662
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 302818.5488
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 303405.6163
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 322359.3227
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 322913.3403
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 323533.2952
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 324083.5024
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 342899.3477
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 343455.60120000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 344047.3184
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 344573.9953
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 363438.9551
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 364046.32060000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 364606.48240000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 365206.1684
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 384267.40260000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 384836.7945
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 385352.7414
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 385933.02530000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 404923.3344
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 405572.1852
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 406141.8448
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 406741.1446
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 425476.72630000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 426036.8159
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 426634.39770000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 427199.6501
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 446183.08890000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 446704.9745
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 447233.3262
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 447917.6786
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 467148.27880000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 467666.4237
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 468296.98110000003
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 468866.242
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 487792.6518
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 488373.9224
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 488921.661
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 489465.7983
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 510509.57920000004
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 511054.9266
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 511634.6218
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 512223.3985
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 533218.8819
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 533824.4801
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 534385.9212
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 534910.2906000001
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 553865.2661
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "repair",
+          "error": "Error: read ECONNRESET",
+          "at": 554420.3152
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 554987.1801
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 555583.7818
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+          "at": 576809.6457
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 577493.5229
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 578061.6661
+        },
+        {
+          "account": "p3-load-7",
+          "kind": "fresh",
+          "error": "Error: read ECONNRESET",
+          "at": 578582.3325
+        }
+      ],
+      "arrivals": 1160,
+      "lateAtQuiescence": 0,
+      "eventLoopMs": {
+        "p50": 10.043391,
+        "p95": 12.066815,
+        "p99": 17.252351,
+        "max": 85.000191
+      }
+    }
+  ],
+  "lastLong": "2026-10-12T13-44-04-755Z-workload-W4-D2-summary.json",
+  "memoryBuckets": [
+    {
+      "minutes": "0–2",
+      "n": 119,
+      "rssMin": 89.51953125,
+      "rssMax": 261.79296875,
+      "heapMax": 113.30242156982422,
+      "readyMax": 5,
+      "usersMax": 2,
+      "activeMax": 4,
+      "hintsMax": 2,
+      "traceBufferedMax": 2998
+    },
+    {
+      "minutes": "2–4",
+      "n": 119,
+      "rssMin": 259.11328125,
+      "rssMax": 262.296875,
+      "heapMax": 116.80423736572266,
+      "readyMax": 6,
+      "usersMax": 2,
+      "activeMax": 4,
+      "hintsMax": 1,
+      "traceBufferedMax": 2149
+    },
+    {
+      "minutes": "4–6",
+      "n": 118,
+      "rssMin": 260.85546875,
+      "rssMax": 267.42578125,
+      "heapMax": 113.82064056396484,
+      "readyMax": 5,
+      "usersMax": 2,
+      "activeMax": 4,
+      "hintsMax": 1,
+      "traceBufferedMax": 3545
+    },
+    {
+      "minutes": "6–8",
+      "n": 119,
+      "rssMin": 264.81640625,
+      "rssMax": 267.1328125,
+      "heapMax": 113.75782012939453,
+      "readyMax": 5,
+      "usersMax": 2,
+      "activeMax": 4,
+      "hintsMax": 1,
+      "traceBufferedMax": 3000
+    },
+    {
+      "minutes": "8–10",
+      "n": 118,
+      "rssMin": 265.1171875,
+      "rssMax": 270.65625,
+      "heapMax": 121.93904113769531,
+      "readyMax": 5,
+      "usersMax": 2,
+      "activeMax": 4,
+      "hintsMax": 1,
+      "traceBufferedMax": 3757
+    }
+  ],
+  "worstAllRetainedLoadFreshMs": 179441.6759,
+  "notRun": [
+    "production pg-boss delivery/ACK",
+    "production notifications/conversations/command intents/cache publication",
+    "real billion-sized/near-2^32 UID gaps",
+    "persistence-backed permanently omitted FETCH (oversized poison UID tested separately)",
+    "30 seeded schedules per network/load profile"
+  ]
+}

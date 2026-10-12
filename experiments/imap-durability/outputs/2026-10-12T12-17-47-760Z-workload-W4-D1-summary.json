@@ -1,0 +1,1083 @@
+{
+  "stamp": "2026-10-12T12-17-47-760Z",
+  "duration": 60,
+  "W": 4,
+  "pool": 1,
+  "saturation": true,
+  "seed": 2403,
+  "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+  "status": "PASS",
+  "runMs": 60000,
+  "actualBusyUtilization": 0.8549523470833326,
+  "hintEvents": 142,
+  "hintFlushes": 142,
+  "activeOccupancyMs": {
+    "n": 1718,
+    "p50": 92.4120999999941,
+    "p95": 294.4085999999952,
+    "p99": 363.5002999999997,
+    "max": 1494.6427000000003
+  },
+  "activeHistoryRows": 0,
+  "activeHistoryRowsPerSecond": 0,
+  "activeDbWaitMs": {
+    "n": 10173,
+    "p50": 9.956500000000233,
+    "p95": 25.68869999999879,
+    "p99": 35.432300000000396,
+    "max": 91.74919999999838
+  },
+  "activeDbTransactionMs": {
+    "n": 10173,
+    "p50": 5.07589999999982,
+    "p95": 11.114299999997456,
+    "p99": 14.813199999999597,
+    "max": 61.080799999999726
+  },
+  "selectorSampledBusyIntegral": 189599.87010000017,
+  "historyResumeMs": {
+    "p3-load-0": 286.0697000000073,
+    "p3-load-1": 286.0981000000029,
+    "p3-load-2": 286.1052000000054,
+    "p3-load-3": 440.1386000000057,
+    "p3-load-4": 440.1631999999954,
+    "p3-load-5": 440.17179999999644,
+    "p3-load-6": 565.7734000000055,
+    "p3-load-7": 565.792300000001
+  },
+  "operations": 3369,
+  "dispatch": {
+    "p3-load-0": 224,
+    "p3-load-1": 221,
+    "p3-load-2": 225,
+    "p3-load-3": 221,
+    "p3-load-4": 243,
+    "p3-load-5": 246,
+    "p3-load-6": 122,
+    "p3-load-7": 216
+  },
+  "perAccountWaitMs": {
+    "p3-load-0": {
+      "n": 224,
+      "p50": 118.76699999999983,
+      "p95": 200.01319999999396,
+      "p99": 233.8641000000007,
+      "max": 261.27409999999963
+    },
+    "p3-load-1": {
+      "n": 221,
+      "p50": 118.07560000000012,
+      "p95": 230.8084000000017,
+      "p99": 296.5758999999962,
+      "max": 343.5748999999996
+    },
+    "p3-load-2": {
+      "n": 225,
+      "p50": 167.70840000000044,
+      "p95": 318.5320000000065,
+      "p99": 389.478099999993,
+      "max": 466.2454999999991
+    },
+    "p3-load-3": {
+      "n": 221,
+      "p50": 176.24549999999908,
+      "p95": 329.13930000000255,
+      "p99": 396.60659999999916,
+      "max": 438.1260999999995
+    },
+    "p3-load-4": {
+      "n": 243,
+      "p50": 141.59470000000147,
+      "p95": 241.80559999999969,
+      "p99": 353.95930000000226,
+      "max": 375.1895999999979
+    },
+    "p3-load-5": {
+      "n": 246,
+      "p50": 135.96590000000015,
+      "p95": 222.0689000000002,
+      "p99": 317.65989999999874,
+      "max": 420.0154999999995
+    },
+    "p3-load-6": {
+      "n": 122,
+      "p50": 116.12249999999767,
+      "p95": 253.09739999999874,
+      "p99": 319.6743999999999,
+      "max": 324.85109999999986
+    },
+    "p3-load-7": {
+      "n": 216,
+      "p50": 141.35339999999997,
+      "p95": 252.82810000000063,
+      "p99": 351.5633000000016,
+      "max": 548.0343999999996
+    }
+  },
+  "freshMs": {
+    "n": 142,
+    "p50": 370.1679000000004,
+    "p95": 534.4812999999995,
+    "p99": 843.5699999999997,
+    "max": 990.0144
+  },
+  "userAdmissionMs": {
+    "n": 220,
+    "p50": 442.9346000000005,
+    "p95": 654.6184000000012,
+    "p99": 884.3976000000002,
+    "max": 1383.645700000001
+  },
+  "dbWaitMs": {
+    "n": 20000,
+    "p50": 4.305999999996857,
+    "p95": 21.956900000001042,
+    "p99": 31.670100000003004,
+    "max": 161.38290000001143
+  },
+  "dbTransactionMs": {
+    "n": 20000,
+    "p50": 5.0834000000013475,
+    "p95": 16.100299999990966,
+    "p99": 29.972000000008848,
+    "max": 178.28529999998864
+  },
+  "historyWaitMs": {
+    "n": 0,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "max": null
+  },
+  "initialHistory": [
+    {
+      "account": "p3-load-0",
+      "history": "65869"
+    },
+    {
+      "account": "p3-load-1",
+      "history": "50859"
+    },
+    {
+      "account": "p3-load-2",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-3",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-4",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-5",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-6",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-7",
+      "history": "129"
+    }
+  ],
+  "saturatedHistory": [
+    {
+      "account": "p3-load-0",
+      "history": "65869"
+    },
+    {
+      "account": "p3-load-1",
+      "history": "50859"
+    },
+    {
+      "account": "p3-load-2",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-3",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-4",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-5",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-6",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-7",
+      "history": "129"
+    }
+  ],
+  "historyResumedAndConvergedMs": 102653.4373,
+  "convergence": [
+    {
+      "account": "p3-load-0",
+      "identities": 51067,
+      "epoch": "1791803598",
+      "history": 1,
+      "fresh": 66067,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 6786.327400000009
+    },
+    {
+      "account": "p3-load-1",
+      "identities": 51057,
+      "epoch": "1791804112",
+      "history": 1,
+      "fresh": 51057,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 6333.51880000002
+    },
+    {
+      "account": "p3-load-2",
+      "identities": 256,
+      "epoch": "1791804241",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 29.340499999991152
+    },
+    {
+      "account": "p3-load-3",
+      "identities": 256,
+      "epoch": "1791804248",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 31.078999999997905
+    },
+    {
+      "account": "p3-load-4",
+      "identities": 256,
+      "epoch": "1791804254",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 26.801100000011502
+    },
+    {
+      "account": "p3-load-5",
+      "identities": 142,
+      "epoch": "1791804261",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 19.143699999985984
+    },
+    {
+      "account": "p3-load-6",
+      "identities": 256,
+      "epoch": "1791804267",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 35.37860000002547
+    },
+    {
+      "account": "p3-load-7",
+      "identities": 256,
+      "epoch": "1791804273",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 32.83040000000619
+    }
+  ],
+  "errors": [
+    {
+      "account": "p3-load-7",
+      "kind": "repair",
+      "error": "Error: read ECONNRESET",
+      "at": 199.82320000000072
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: Explicit mailbox/UIDVALIDITY validation failed",
+      "at": 16367.912499999999
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 17041.005699999998
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 17686.5931
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 33457.044
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 34062.0439
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 34698.6687
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 50383.5071
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 51081.217899999996
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 51705.9772
+    }
+  ],
+  "arrivals": 142,
+  "lateAtQuiescence": 0,
+  "samples": [
+    {
+      "at": 4.15059999999994,
+      "rss": 94461952,
+      "heap": 22217264,
+      "running": 0,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 0,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 0
+    },
+    {
+      "at": 1050.2924000000003,
+      "rss": 110542848,
+      "heap": 25550880,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 2056.9883,
+      "rss": 113700864,
+      "heap": 27477192,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 3152.7247000000007,
+      "rss": 115425280,
+      "heap": 31532632,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3507,
+      "retries": 1
+    },
+    {
+      "at": 4208.0873,
+      "rss": 116662272,
+      "heap": 35198760,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 5213.345400000001,
+      "rss": 119054336,
+      "heap": 30209800,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 6264.6182,
+      "rss": 120078336,
+      "heap": 30604856,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 7267.338200000001,
+      "rss": 121036800,
+      "heap": 30163512,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 8271.496299999999,
+      "rss": 139771904,
+      "heap": 44179664,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1719,
+      "retries": 1
+    },
+    {
+      "at": 9328.206000000002,
+      "rss": 141725696,
+      "heap": 47325368,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 10363.8373,
+      "rss": 142102528,
+      "heap": 36638264,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 2,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 11438.8449,
+      "rss": 141533184,
+      "heap": 28433472,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 12444.678199999998,
+      "rss": 143466496,
+      "heap": 21417600,
+      "running": 4,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 147,
+      "retries": 1
+    },
+    {
+      "at": 13467.552899999999,
+      "rss": 143101952,
+      "heap": 24727288,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 14483.751400000001,
+      "rss": 143708160,
+      "heap": 38577344,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 15507.4045,
+      "rss": 143876096,
+      "heap": 29363904,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 1
+    },
+    {
+      "at": 16572.520099999998,
+      "rss": 148156416,
+      "heap": 29439336,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 2
+    },
+    {
+      "at": 17594.4273,
+      "rss": 149401600,
+      "heap": 43232872,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 7,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 3
+    },
+    {
+      "at": 18618.3895,
+      "rss": 155897856,
+      "heap": 43495720,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 19620.8963,
+      "rss": 159612928,
+      "heap": 24133664,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 20636.7173,
+      "rss": 159776768,
+      "heap": 40476712,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 21686.2435,
+      "rss": 179159040,
+      "heap": 22709232,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 22691.6548,
+      "rss": 180588544,
+      "heap": 52664792,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 23694.9672,
+      "rss": 196112384,
+      "heap": 68410560,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1706,
+      "retries": 4
+    },
+    {
+      "at": 24721.8311,
+      "rss": 199442432,
+      "heap": 35180936,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 25725.9806,
+      "rss": 200220672,
+      "heap": 31787448,
+      "running": 4,
+      "userReady": 1,
+      "lanes": 7,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 147,
+      "retries": 4
+    },
+    {
+      "at": 26786.9798,
+      "rss": 200777728,
+      "heap": 45857624,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 27838.933599999997,
+      "rss": 201048064,
+      "heap": 60197696,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 28845.9507,
+      "rss": 93061120,
+      "heap": 20947656,
+      "running": 4,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 145,
+      "retries": 4
+    },
+    {
+      "at": 29891.9079,
+      "rss": 98484224,
+      "heap": 22402928,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 30899.7673,
+      "rss": 103301120,
+      "heap": 20121816,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 31906.3215,
+      "rss": 106225664,
+      "heap": 23394216,
+      "running": 4,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 148,
+      "retries": 4
+    },
+    {
+      "at": 32955.9142,
+      "rss": 116228096,
+      "heap": 21686528,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 4
+    },
+    {
+      "at": 33956.679,
+      "rss": 116387840,
+      "heap": 26469160,
+      "running": 4,
+      "userReady": 1,
+      "lanes": 7,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 147,
+      "retries": 5
+    },
+    {
+      "at": 35039.6848,
+      "rss": 119046144,
+      "heap": 28173640,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 7,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 36060.068999999996,
+      "rss": 120115200,
+      "heap": 25717848,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1711,
+      "retries": 7
+    },
+    {
+      "at": 37070.3697,
+      "rss": 121712640,
+      "heap": 21665568,
+      "running": 4,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 148,
+      "retries": 7
+    },
+    {
+      "at": 38101.4564,
+      "rss": 127193088,
+      "heap": 39890320,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 39115.8637,
+      "rss": 141615104,
+      "heap": 37905344,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 40137.6475,
+      "rss": 147832832,
+      "heap": 30303688,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 41153.2715,
+      "rss": 147390464,
+      "heap": 25636928,
+      "running": 4,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 148,
+      "retries": 7
+    },
+    {
+      "at": 42209.0765,
+      "rss": 154943488,
+      "heap": 21257008,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 43230.4822,
+      "rss": 154365952,
+      "heap": 22613880,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 44266.9425,
+      "rss": 155656192,
+      "heap": 39247072,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 45295.2165,
+      "rss": 155103232,
+      "heap": 42072456,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 1,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 46360.691399999996,
+      "rss": 154759168,
+      "heap": 27644232,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2997,
+      "retries": 7
+    },
+    {
+      "at": 47385.1254,
+      "rss": 156639232,
+      "heap": 33299888,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 48409.876299999996,
+      "rss": 157335552,
+      "heap": 49078528,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 49457.5588,
+      "rss": 161705984,
+      "heap": 44174672,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1723,
+      "retries": 7
+    },
+    {
+      "at": 50487.5779,
+      "rss": 162082816,
+      "heap": 61319344,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 7,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 8
+    },
+    {
+      "at": 51494.1765,
+      "rss": 196358144,
+      "heap": 46260488,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 7,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 9
+    },
+    {
+      "at": 52495.2494,
+      "rss": 197033984,
+      "heap": 62265512,
+      "running": 4,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 148,
+      "retries": 10
+    },
+    {
+      "at": 53513.7331,
+      "rss": 210542592,
+      "heap": 78869624,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 10
+    },
+    {
+      "at": 54515.0619,
+      "rss": 220176384,
+      "heap": 25849208,
+      "running": 4,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 138,
+      "retries": 10
+    },
+    {
+      "at": 55518.4101,
+      "rss": 221782016,
+      "heap": 70719072,
+      "running": 4,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 147,
+      "retries": 10
+    },
+    {
+      "at": 56544.5061,
+      "rss": 220880896,
+      "heap": 33413264,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 10
+    },
+    {
+      "at": 57569.4734,
+      "rss": 222298112,
+      "heap": 46936296,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 10
+    },
+    {
+      "at": 58571.8198,
+      "rss": 222306304,
+      "heap": 60388464,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 147,
+      "retries": 10
+    },
+    {
+      "at": 59584.0842,
+      "rss": 220192768,
+      "heap": 32532952,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 10
+    }
+  ],
+  "eventLoopMs": {
+    "p50": 10.215423,
+    "p95": 18.120703,
+    "p99": 22.953983,
+    "max": 128.843775
+  }
+}

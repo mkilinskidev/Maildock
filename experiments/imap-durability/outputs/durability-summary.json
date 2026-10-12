@@ -1,0 +1,429 @@
+{
+  "started": "2026-10-12T13-27-12-384Z",
+  "cases": [
+    {
+      "name": "persistence-smoke",
+      "status": "PASS",
+      "identities": 32,
+      "epoch": "1791811632",
+      "history": 1,
+      "fresh": 32,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 8.918900000000122
+    },
+    {
+      "name": "crash-before-search",
+      "status": "PASS",
+      "point": "before-search",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 76.18550000000141
+    },
+    {
+      "name": "crash-after-search",
+      "status": "PASS",
+      "point": "after-search",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 56.68530000000101
+    },
+    {
+      "name": "crash-after-fetch",
+      "status": "PASS",
+      "point": "after-fetch",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 52.99099999999817
+    },
+    {
+      "name": "crash-during-insertion",
+      "status": "PASS",
+      "point": "during-insertion",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 62.090799999998126
+    },
+    {
+      "name": "crash-after-insertion",
+      "status": "PASS",
+      "point": "after-insertion",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 57.176000000003114
+    },
+    {
+      "name": "crash-before-frontier",
+      "status": "PASS",
+      "point": "before-frontier",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 62.18729999999778
+    },
+    {
+      "name": "crash-during-frontier",
+      "status": "PASS",
+      "point": "during-frontier",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 385,
+          "reconcile": 0,
+          "revision": 0,
+          "wake": 0
+        },
+        "count": 0
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 47.704499999999825
+    },
+    {
+      "name": "crash-after-commit",
+      "status": "PASS",
+      "point": "after-commit",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 257,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 128
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 58.484199999998964
+    },
+    {
+      "name": "crash-before-ack",
+      "status": "PASS",
+      "point": "before-ack",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 257,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 128
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 58.855600000002596
+    },
+    {
+      "name": "crash-before-schedule",
+      "status": "PASS",
+      "point": "before-schedule",
+      "truthCount": 384,
+      "observedBeforeKill": {
+        "state": {
+          "account": "p3-crash-2026-10-12T13-27-12-384Z",
+          "path": "INBOX",
+          "epoch": "1791811633",
+          "fresh": 384,
+          "history": 257,
+          "reconcile": 0,
+          "revision": 1,
+          "wake": 0
+        },
+        "count": 128
+      },
+      "termination": {
+        "code": null,
+        "signal": "SIGKILL",
+        "stderr": ""
+      },
+      "recovery": {
+        "code": 0,
+        "signal": null,
+        "stderr": ""
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 57.32390000000305
+    },
+    {
+      "name": "simultaneous-leadership-renewal-release",
+      "status": "PASS",
+      "generation": 293,
+      "nextGeneration": 294,
+      "winners": 1
+    },
+    {
+      "name": "expired-fetch-takeover-and-stale-commit",
+      "status": "PASS",
+      "oldCallbackRejected": {
+        "event": "failure",
+        "error": "Error: Stale owner fenced",
+        "pid": 59944
+      },
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 50.674299999998766
+    },
+    {
+      "name": "lease-expiry-inside-transaction",
+      "status": "PASS",
+      "rolledBack": true
+    },
+    {
+      "name": "remote-rejection-during-takeover",
+      "status": "PASS",
+      "remoteSessionsDuringTakeover": "username                           # service (pids)                 (ips)    \np3-crash-2026-10-12t13-27-12-384z 10 imap    (2287 2291 2285 2283 2293 2297 2295 2279 2289 2281) (172.18.0.1)\n",
+      "replacementInitiallyRejected": true,
+      "noAuthoritativeCommit": true,
+      "identities": 384,
+      "epoch": "1791811633",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 69.32130000000325
+    },
+    {
+      "name": "expiry-at-COMMIT-server-trigger",
+      "status": "PASS",
+      "lateCommitRejectedInPostgres": true
+    },
+    {
+      "name": "database-total-deadline-and-settlement",
+      "status": "PASS",
+      "durationMs": 201.20230000000447,
+      "nextQuerySucceeded": true
+    }
+  ]
+}

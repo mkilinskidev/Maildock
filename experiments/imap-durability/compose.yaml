@@ -1,0 +1,36 @@
+name: maildock-imap-durability
+services:
+  dovecot:
+    image: dovecot/dovecot:2.4.3-dev@sha256:d0db02b4aa9c16bc50c96faad68fcf5724c1453a98a39ada685409227e967898
+    command: [dovecot, -F]
+    cap_add: [SYS_CHROOT]
+    ports: ["127.0.0.1:32993:31993"]
+    volumes:
+      - mailbox:/srv/vmail
+      - ../imap-dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
+      - ./.runtime/tls:/etc/dovecot/ssl:ro
+    networks: [fixture]
+    mem_limit: 1g
+    cpus: 2
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_USER: phase3
+      POSTGRES_PASSWORD: disposable-phase3-only
+      POSTGRES_DB: phase3
+    ports: ["127.0.0.1:35433:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    networks: [fixture]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U phase3 -d phase3"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    mem_limit: 512m
+    cpus: 2
+networks:
+  fixture:
+    driver: bridge
+volumes:
+  mailbox:
+  postgres:

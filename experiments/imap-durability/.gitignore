@@ -1,0 +1,5 @@
+.runtime/
+fixtures/
+outputs/*.jsonl
+outputs/*.log
+outputs/regressions.json

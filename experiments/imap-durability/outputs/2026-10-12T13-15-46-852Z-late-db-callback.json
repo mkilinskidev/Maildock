@@ -1,0 +1,693 @@
+{
+  "stamp": "2026-10-12T13-15-46-852Z",
+  "storeHash": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+  "oldOutcome": "Error: Database native socket retired; commit outcome uncertain",
+  "observed": {
+    "state": {
+      "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+      "path": "INBOX",
+      "epoch": "1791810946",
+      "fresh": 32,
+      "history": 1,
+      "reconcile": 0,
+      "revision": 1,
+      "wake": 0
+    },
+    "count": 32
+  },
+  "lazyQueryCallbackRejected": true,
+  "status": "PASS",
+  "identities": 32,
+  "epoch": "1791810946",
+  "history": 1,
+  "fresh": 32,
+  "missing": 0,
+  "duplicates": 0,
+  "oracleMs": 6.354400000000169,
+  "events": [
+    {
+      "at": "2026-10-12T13:15:47.460Z",
+      "pid": 23672,
+      "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+      "path": "INBOX",
+      "kind": "history",
+      "owner": "b431a89c-44ec-48d0-a1e5-0f40aa78d835",
+      "generation": 268,
+      "start": 1085.1825,
+      "before": {
+        "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+        "path": "INBOX",
+        "epoch": "1791810946",
+        "fresh": 32,
+        "history": 33,
+        "reconcile": 0,
+        "revision": 0,
+        "wake": 0
+      },
+      "transactionStart": "2026-10-12T13:15:47.537Z",
+      "status": "UNRESOLVED",
+      "reason": "Error: Database native socket retired; commit outcome uncertain",
+      "commit": "not confirmed",
+      "low": 1,
+      "high": 32,
+      "returned": 32,
+      "persisted": 32,
+      "absent": 0,
+      "searchComplete": true,
+      "fetchComplete": true,
+      "evidenceComplete": true,
+      "end": 3167.7831,
+      "durationMs": 2082.6274000000003,
+      "rss": 103096320,
+      "heap": 23084624,
+      "transport": [
+        {
+          "kind": "SELECT",
+          "start": 1119.9902,
+          "end": 1124.7795,
+          "status": "justified",
+          "metrics": {
+            "received": 486,
+            "accepted": 486,
+            "maxChunk": 365,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 4.768000000000029,
+            "durationMs": 4.778099999999995
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "REFRESH",
+          "start": 1124.798,
+          "end": 1126.1414,
+          "status": "justified",
+          "metrics": {
+            "received": 43,
+            "accepted": 43,
+            "maxChunk": 43,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 1.3286000000000513,
+            "durationMs": 1.3378000000000156
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "STATUS",
+          "start": 1126.1469,
+          "end": 1127.6754,
+          "status": "justified",
+          "metrics": {
+            "received": 129,
+            "accepted": 129,
+            "maxChunk": 129,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 1.514699999999948,
+            "durationMs": 1.5231000000001131
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "SEARCH",
+          "low": 1,
+          "high": 32,
+          "start": 1148.2911,
+          "end": 1150.6095,
+          "status": "justified",
+          "metrics": {
+            "received": 142,
+            "accepted": 142,
+            "maxChunk": 142,
+            "rejectedChunk": 0,
+            "identities": 32,
+            "maxParsedSearchTokens": 32,
+            "retainedSearchIdentities": 32,
+            "settlementMs": 2.2349999999999,
+            "durationMs": 2.2507000000000517
+          },
+          "diagnostics": [],
+          "legacySearchResponses": 1
+        },
+        {
+          "kind": "FETCH",
+          "uids": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32
+          ],
+          "expected": 32,
+          "unsolicitedHints": [],
+          "start": 1150.7415,
+          "end": 1161.8247,
+          "status": "justified",
+          "metrics": {
+            "received": 16925,
+            "accepted": 16925,
+            "maxChunk": 2250,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 11.041799999999967,
+            "durationMs": 11.054300000000012
+          },
+          "diagnostics": []
+        }
+      ],
+      "commands": [
+        {
+          "at": 1107.4882,
+          "command": "1 ID (\"name\" \"imapflow\" \"version\" \"2.0.6\" \"vendor\" \"Postal Systems\" \"support-url\" \"https://github.com/postalsys/imapflow/issues\")"
+        },
+        {
+          "at": 1108.8525,
+          "command": "2 AUTHENTICATE PLAIN"
+        },
+        {
+          "at": 1109.9935,
+          "command": "AHAzLWxhdGUtZGItZWRkY2IzZjQtMjJjNy00NWRkLWFlY2ItODdmODQ0YTk1MzhmACgqIHZhbHVlIGhpZGRlbiAqKQ=="
+        },
+        {
+          "at": 1116.4098,
+          "command": "3 ID (\"name\" \"imapflow\" \"version\" \"2.0.6\" \"vendor\" \"Postal Systems\" \"support-url\" \"https://github.com/postalsys/imapflow/issues\")"
+        },
+        {
+          "at": 1117.6304,
+          "command": "4 NAMESPACE"
+        },
+        {
+          "at": 1119.0148,
+          "command": "5 ENABLE CONDSTORE"
+        },
+        {
+          "at": 1120.1073,
+          "command": "6 LIST \"\" \"INBOX\" RETURN (SPECIAL-USE CHILDREN SUBSCRIBED)"
+        },
+        {
+          "at": 1121.7309,
+          "command": "7 LSUB \"\" \"INBOX\""
+        },
+        {
+          "at": 1122.8052,
+          "command": "8 SELECT INBOX"
+        },
+        {
+          "at": 1124.9416,
+          "command": "9 NOOP"
+        },
+        {
+          "at": 1126.4801,
+          "command": "A STATUS INBOX (UIDNEXT UIDVALIDITY)"
+        },
+        {
+          "at": 1149.1286,
+          "command": "B UID SEARCH UID 1:32"
+        },
+        {
+          "at": 1151.4385,
+          "command": "C UID FETCH 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32 (UID FLAGS BODYSTRUCTURE RFC822.SIZE MODSEQ BODY.PEEK[HEADER])"
+        }
+      ],
+      "tagged": [
+        {
+          "at": 1108.6754,
+          "tag": "1",
+          "status": "OK"
+        },
+        {
+          "at": 1116.2529,
+          "tag": "2",
+          "status": "OK"
+        },
+        {
+          "at": 1117.5849,
+          "tag": "3",
+          "status": "OK"
+        },
+        {
+          "at": 1118.9208,
+          "tag": "4",
+          "status": "OK"
+        },
+        {
+          "at": 1119.9125,
+          "tag": "5",
+          "status": "OK"
+        },
+        {
+          "at": 1121.6807,
+          "tag": "6",
+          "status": "OK"
+        },
+        {
+          "at": 1122.7267,
+          "tag": "7",
+          "status": "OK"
+        },
+        {
+          "at": 1124.7353,
+          "tag": "8",
+          "status": "OK"
+        },
+        {
+          "at": 1126.1068,
+          "tag": "9",
+          "status": "OK"
+        },
+        {
+          "at": 1127.6413,
+          "tag": "A",
+          "status": "OK"
+        },
+        {
+          "at": 1150.5249,
+          "tag": "B",
+          "status": "OK"
+        },
+        {
+          "at": 1161.6933,
+          "tag": "C",
+          "status": "OK"
+        }
+      ],
+      "bytesIn": 17725,
+      "bytesOut": 327
+    },
+    {
+      "at": "2026-10-12T13:15:49.543Z",
+      "pid": 23672,
+      "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+      "path": "INBOX",
+      "kind": "history",
+      "owner": "b431a89c-44ec-48d0-a1e5-0f40aa78d835",
+      "generation": 268,
+      "start": 3168.0691,
+      "before": {
+        "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+        "path": "INBOX",
+        "epoch": "1791810946",
+        "fresh": 32,
+        "history": 33,
+        "reconcile": 0,
+        "revision": 0,
+        "wake": 0
+      },
+      "transactionStart": "2026-10-12T13:15:49.662Z",
+      "commit": "confirmed",
+      "after": {
+        "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+        "path": "INBOX",
+        "epoch": "1791810946",
+        "fresh": 32,
+        "history": 1,
+        "reconcile": 0,
+        "revision": 1,
+        "wake": 0
+      },
+      "status": "PASS",
+      "low": 1,
+      "high": 32,
+      "returned": 32,
+      "persisted": 32,
+      "absent": 0,
+      "searchComplete": true,
+      "fetchComplete": true,
+      "evidenceComplete": true,
+      "end": 3430.2632,
+      "durationMs": 262.19450000000006,
+      "rss": 104341504,
+      "heap": 23003088,
+      "transport": [
+        {
+          "kind": "SELECT",
+          "start": 3249.7013,
+          "end": 3255.2371,
+          "status": "justified",
+          "metrics": {
+            "received": 486,
+            "accepted": 486,
+            "maxChunk": 365,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 5.478499999999713,
+            "durationMs": 5.490699999999833
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "REFRESH",
+          "start": 3255.2542,
+          "end": 3256.2738,
+          "status": "justified",
+          "metrics": {
+            "received": 43,
+            "accepted": 43,
+            "maxChunk": 43,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 1.0070999999998094,
+            "durationMs": 1.0142000000000735
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "STATUS",
+          "start": 3256.2788,
+          "end": 3257.2693,
+          "status": "justified",
+          "metrics": {
+            "received": 129,
+            "accepted": 129,
+            "maxChunk": 129,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 0.9780000000000655,
+            "durationMs": 0.9862000000002809
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "SEARCH",
+          "low": 1,
+          "high": 32,
+          "start": 3279.1747,
+          "end": 3280.9098,
+          "status": "justified",
+          "metrics": {
+            "received": 142,
+            "accepted": 142,
+            "maxChunk": 142,
+            "rejectedChunk": 0,
+            "identities": 32,
+            "maxParsedSearchTokens": 32,
+            "retainedSearchIdentities": 32,
+            "settlementMs": 1.6966000000002168,
+            "durationMs": 1.7088000000003376
+          },
+          "diagnostics": [],
+          "legacySearchResponses": 1
+        },
+        {
+          "kind": "FETCH",
+          "uids": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32
+          ],
+          "expected": 32,
+          "unsolicitedHints": [],
+          "start": 3280.9248,
+          "end": 3287.375,
+          "status": "justified",
+          "metrics": {
+            "received": 16925,
+            "accepted": 16925,
+            "maxChunk": 2250,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 6.424399999999878,
+            "durationMs": 6.436399999999594
+          },
+          "diagnostics": []
+        }
+      ],
+      "commands": [
+        {
+          "at": 3237.3323,
+          "command": "1 ID (\"name\" \"imapflow\" \"version\" \"2.0.6\" \"vendor\" \"Postal Systems\" \"support-url\" \"https://github.com/postalsys/imapflow/issues\")"
+        },
+        {
+          "at": 3238.4237,
+          "command": "2 AUTHENTICATE PLAIN"
+        },
+        {
+          "at": 3239.4667,
+          "command": "AHAzLWxhdGUtZGItZWRkY2IzZjQtMjJjNy00NWRkLWFlY2ItODdmODQ0YTk1MzhmACgqIHZhbHVlIGhpZGRlbiAqKQ=="
+        },
+        {
+          "at": 3245.9785,
+          "command": "3 ID (\"name\" \"imapflow\" \"version\" \"2.0.6\" \"vendor\" \"Postal Systems\" \"support-url\" \"https://github.com/postalsys/imapflow/issues\")"
+        },
+        {
+          "at": 3247.2652,
+          "command": "4 NAMESPACE"
+        },
+        {
+          "at": 3248.6155,
+          "command": "5 ENABLE CONDSTORE"
+        },
+        {
+          "at": 3249.9035,
+          "command": "6 LIST \"\" \"INBOX\" RETURN (SPECIAL-USE CHILDREN SUBSCRIBED)"
+        },
+        {
+          "at": 3252.0447,
+          "command": "7 LSUB \"\" \"INBOX\""
+        },
+        {
+          "at": 3253.2814,
+          "command": "8 SELECT INBOX"
+        },
+        {
+          "at": 3255.3046,
+          "command": "9 NOOP"
+        },
+        {
+          "at": 3256.3458,
+          "command": "A STATUS INBOX (UIDNEXT UIDVALIDITY)"
+        },
+        {
+          "at": 3279.3488,
+          "command": "B UID SEARCH UID 1:32"
+        },
+        {
+          "at": 3281.1831,
+          "command": "C UID FETCH 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32 (UID FLAGS BODYSTRUCTURE RFC822.SIZE MODSEQ BODY.PEEK[HEADER])"
+        }
+      ],
+      "tagged": [
+        {
+          "at": 3238.2369,
+          "tag": "1",
+          "status": "OK"
+        },
+        {
+          "at": 3245.8325,
+          "tag": "2",
+          "status": "OK"
+        },
+        {
+          "at": 3247.2277,
+          "tag": "3",
+          "status": "OK"
+        },
+        {
+          "at": 3248.482,
+          "tag": "4",
+          "status": "OK"
+        },
+        {
+          "at": 3249.613,
+          "tag": "5",
+          "status": "OK"
+        },
+        {
+          "at": 3251.9632,
+          "tag": "6",
+          "status": "OK"
+        },
+        {
+          "at": 3253.2004,
+          "tag": "7",
+          "status": "OK"
+        },
+        {
+          "at": 3255.173,
+          "tag": "8",
+          "status": "OK"
+        },
+        {
+          "at": 3256.249,
+          "tag": "9",
+          "status": "OK"
+        },
+        {
+          "at": 3257.2403,
+          "tag": "A",
+          "status": "OK"
+        },
+        {
+          "at": 3280.8564,
+          "tag": "B",
+          "status": "OK"
+        },
+        {
+          "at": 3287.3304,
+          "tag": "C",
+          "status": "OK"
+        }
+      ],
+      "bytesIn": 17725,
+      "bytesOut": 327
+    },
+    {
+      "at": "2026-10-12T13:15:51.811Z",
+      "pid": 23672,
+      "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+      "path": "INBOX",
+      "kind": "fresh",
+      "owner": "b431a89c-44ec-48d0-a1e5-0f40aa78d835",
+      "generation": 268,
+      "start": 5436.7354,
+      "before": {
+        "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+        "path": "INBOX",
+        "epoch": "1791810946",
+        "fresh": 32,
+        "history": 1,
+        "reconcile": 0,
+        "revision": 1,
+        "wake": 0
+      },
+      "transactionStart": "2026-10-12T13:15:51.911Z",
+      "commit": "confirmed",
+      "after": {
+        "account": "p3-late-db-eddcb3f4-22c7-45dd-aecb-87f844a9538f",
+        "path": "INBOX",
+        "epoch": "1791810946",
+        "fresh": 32,
+        "history": 1,
+        "reconcile": 0,
+        "revision": 2,
+        "wake": 0
+      },
+      "status": "PASS",
+      "returned": 0,
+      "persisted": 0,
+      "absent": 0,
+      "searchComplete": true,
+      "fetchComplete": true,
+      "evidenceComplete": true,
+      "end": 5549.7775,
+      "durationMs": 113.04250000000047,
+      "rss": 104509440,
+      "heap": 24046504,
+      "transport": [
+        {
+          "kind": "REFRESH",
+          "start": 5519.3157,
+          "end": 5520.6415,
+          "status": "justified",
+          "metrics": {
+            "received": 43,
+            "accepted": 43,
+            "maxChunk": 43,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 1.3060999999997875,
+            "durationMs": 1.3170000000000073
+          },
+          "diagnostics": []
+        },
+        {
+          "kind": "STATUS",
+          "start": 5520.6483,
+          "end": 5521.8246,
+          "status": "justified",
+          "metrics": {
+            "received": 129,
+            "accepted": 129,
+            "maxChunk": 129,
+            "rejectedChunk": 0,
+            "identities": 0,
+            "settlementMs": 1.162399999999252,
+            "durationMs": 1.1713999999992666
+          },
+          "diagnostics": []
+        }
+      ],
+      "commands": [
+        {
+          "at": 5519.398,
+          "command": "D NOOP"
+        },
+        {
+          "at": 5520.762,
+          "command": "E STATUS INBOX (UIDNEXT UIDVALIDITY)"
+        }
+      ],
+      "tagged": [
+        {
+          "at": 5520.6014,
+          "tag": "D",
+          "status": "OK"
+        },
+        {
+          "at": 5521.789,
+          "tag": "E",
+          "status": "OK"
+        }
+      ],
+      "bytesIn": 17897,
+      "bytesOut": 373
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "at": "2026-10-12T13:27:09.755Z",
+  "account": "p3-sql-fault-85178f5e-12df-4185-97a0-12272008887e",
+  "status": "PASS",
+  "metadataStatementRollback": true,
+  "frontierStatementRollback": true,
+  "wrongMailboxRejected": true,
+  "identities": 32,
+  "epoch": "1791811629",
+  "history": 1,
+  "fresh": 32,
+  "missing": 0,
+  "duplicates": 0,
+  "oracleMs": 8.690699999999879
+}

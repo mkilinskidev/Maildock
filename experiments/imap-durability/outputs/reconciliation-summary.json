@@ -1,0 +1,145 @@
+{
+  "stamp": "2026-10-12T13-58-52-939Z",
+  "cases": [
+    {
+      "name": "search-fetch-missing-sparse-and-wake-CAS",
+      "status": "PASS",
+      "omittedFetchAdvanced": false,
+      "staleResurrectionAccepted": false,
+      "lateWakeRetained": true,
+      "newUid": 385,
+      "identities": 379,
+      "epoch": "1791813533",
+      "history": 1,
+      "fresh": 385,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 51.870599999999286
+    },
+    {
+      "name": "persistent-oversized-UID-exposed-without-skip",
+      "status": "PASS",
+      "expectedUnresolved": true,
+      "unresolved": {
+        "history": 4,
+        "stillPresent": [
+          2
+        ]
+      },
+      "skipped": false,
+      "identities": 2,
+      "epoch": "1791813539",
+      "history": 1,
+      "fresh": 3,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 2.132499999999709
+    },
+    {
+      "name": "equal-count-delete-plus-arrival",
+      "status": "PASS",
+      "identities": 128,
+      "epoch": "1791813539",
+      "history": 1,
+      "fresh": 129,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 16.728500000001077
+    },
+    {
+      "name": "uidvalidity-reset-buffered-old-fetch",
+      "status": "PASS",
+      "beforeEpoch": "1791813542",
+      "afterEpoch": "1791813543",
+      "oldCallbackRejected": {
+        "event": "failure",
+        "error": "Error: Stale owner fenced",
+        "pid": 39984
+      },
+      "identities": 1,
+      "epoch": "1791813543",
+      "history": 1,
+      "fresh": 1,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 2.272499999999127
+    },
+    {
+      "name": "restart-during-membership-reconciliation",
+      "status": "PASS",
+      "identities": 380,
+      "epoch": "1791813548",
+      "history": 1,
+      "fresh": 384,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 43.82670000000144
+    },
+    {
+      "name": "15000-deletions-with-independent-new-arrivals",
+      "status": "PASS",
+      "deletions": 15000,
+      "durationMs": 75002.119,
+      "arrivals": [
+        {
+          "uid": 97410,
+          "completed": 39195.9063,
+          "available": 39402.7322
+        },
+        {
+          "uid": 97411,
+          "completed": 39407.3194,
+          "available": 39546.5571
+        },
+        {
+          "uid": 97412,
+          "completed": 39452.9465,
+          "available": 39546.5587
+        },
+        {
+          "uid": 97413,
+          "completed": 39508.8162,
+          "available": 39830.9572
+        },
+        {
+          "uid": 97414,
+          "completed": 39553.827,
+          "available": 39830.959
+        },
+        {
+          "uid": 97415,
+          "completed": 39606.593,
+          "available": 39830.9607
+        },
+        {
+          "uid": 97416,
+          "completed": 39645.757,
+          "available": 39830.9612
+        },
+        {
+          "uid": 97417,
+          "completed": 39682.781,
+          "available": 39830.9616
+        },
+        {
+          "uid": 97418,
+          "completed": 39829.9866,
+          "available": 39962.6361
+        },
+        {
+          "uid": 97419,
+          "completed": 39874.2776,
+          "available": 39962.6385
+        }
+      ],
+      "worstArrivalMs": 322.140999999996,
+      "identities": 37419,
+      "epoch": "1791803598",
+      "history": 1,
+      "fresh": 97419,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 3915.81289999999
+    }
+  ]
+}

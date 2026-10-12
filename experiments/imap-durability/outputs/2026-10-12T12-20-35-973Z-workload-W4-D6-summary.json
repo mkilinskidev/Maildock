@@ -1,0 +1,1071 @@
+{
+  "stamp": "2026-10-12T12-20-35-973Z",
+  "duration": 60,
+  "W": 4,
+  "pool": 6,
+  "saturation": false,
+  "seed": 2403,
+  "sourceSha256": "3236a9b65ade00b76cfd97910a824740a251f1f481723bd1d6220e4f5d286075",
+  "status": "PASS",
+  "runMs": 60000,
+  "actualBusyUtilization": 0.6734256891666656,
+  "hintEvents": 104,
+  "hintFlushes": 104,
+  "activeOccupancyMs": {
+    "n": 1993,
+    "p50": 70.29669999999896,
+    "p95": 188.60089999999946,
+    "p99": 369.2894000000015,
+    "max": 1596.2039000000004
+  },
+  "activeHistoryRows": 64526,
+  "activeHistoryRowsPerSecond": 1075.4333333333334,
+  "activeDbWaitMs": {
+    "n": 10829,
+    "p50": 0.0004000000008090865,
+    "p95": 0.0010000000002037268,
+    "p99": 0.0013000000035390258,
+    "max": 0.06830000000081782
+  },
+  "activeDbTransactionMs": {
+    "n": 10829,
+    "p50": 7.050499999997555,
+    "p95": 26.009399999999005,
+    "p99": 38.680200000002515,
+    "max": 220.16159999999945
+  },
+  "selectorSampledBusyIntegral": 110111.89899999989,
+  "historyResumeMs": {
+    "p3-load-0": 343.7488000000085,
+    "p3-load-1": 343.79690000000846
+  },
+  "operations": 3141,
+  "dispatch": {
+    "p3-load-0": 585,
+    "p3-load-1": 570,
+    "p3-load-2": 273,
+    "p3-load-3": 273,
+    "p3-load-4": 88,
+    "p3-load-5": 88,
+    "p3-load-6": 50,
+    "p3-load-7": 66
+  },
+  "perAccountWaitMs": {
+    "p3-load-0": {
+      "n": 585,
+      "p50": 1.1537000000007538,
+      "p95": 62.30699999999706,
+      "p99": 111.35090000000491,
+      "max": 286.90759999999864
+    },
+    "p3-load-1": {
+      "n": 570,
+      "p50": 1.2001000000000204,
+      "p95": 89.69470000000001,
+      "p99": 193.4357999999993,
+      "max": 354.6692000000003
+    },
+    "p3-load-2": {
+      "n": 273,
+      "p50": 213.75870000000214,
+      "p95": 279.4375,
+      "p99": 304.85419999999976,
+      "max": 420.2199000000037
+    },
+    "p3-load-3": {
+      "n": 273,
+      "p50": 208.63899999999558,
+      "p95": 281.50359999999637,
+      "p99": 351.1006000000016,
+      "max": 421.5095000000001
+    },
+    "p3-load-4": {
+      "n": 88,
+      "p50": 713.8049000000001,
+      "p95": 1085.7332999999999,
+      "p99": null,
+      "max": 1118.697199999995
+    },
+    "p3-load-5": {
+      "n": 88,
+      "p50": 743.1484,
+      "p95": 1088.7574999999997,
+      "p99": null,
+      "max": 1121.7681999999986
+    },
+    "p3-load-6": {
+      "n": 50,
+      "p50": 1021.8151999999973,
+      "p95": 1080.3606,
+      "p99": null,
+      "max": 1089.5528999999988
+    },
+    "p3-load-7": {
+      "n": 66,
+      "p50": 1034.8515999999981,
+      "p95": 1095.2805000000008,
+      "p99": null,
+      "max": 1116.2711999999956
+    }
+  },
+  "freshMs": {
+    "n": 104,
+    "p50": 62.77270000000135,
+    "p95": 353.52729999999974,
+    "p99": 410.1863999999987,
+    "max": 434.1195000000007
+  },
+  "userAdmissionMs": {
+    "n": 424,
+    "p50": 36.053500000001804,
+    "p95": 104.300900000002,
+    "p99": 158.83849999999802,
+    "max": 243.1762000000017
+  },
+  "dbWaitMs": {
+    "n": 18177,
+    "p50": 0.0003000000142492354,
+    "p95": 0.0008999999990919605,
+    "p99": 0.0012000000024272595,
+    "max": 0.06830000000081782
+  },
+  "dbTransactionMs": {
+    "n": 18177,
+    "p50": 6.513100000000122,
+    "p95": 25.19129999999859,
+    "p99": 37.767699999996694,
+    "max": 1412.8180999999895
+  },
+  "historyWaitMs": {
+    "n": 505,
+    "p50": 1.2890999999981432,
+    "p95": 91.17110000000048,
+    "p99": 214.87189999999828,
+    "max": 354.6692000000003
+  },
+  "initialHistory": [
+    {
+      "account": "p3-load-0",
+      "history": "65940"
+    },
+    {
+      "account": "p3-load-1",
+      "history": "50930"
+    },
+    {
+      "account": "p3-load-2",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-3",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-4",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-5",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-6",
+      "history": "129"
+    },
+    {
+      "account": "p3-load-7",
+      "history": "129"
+    }
+  ],
+  "saturatedHistory": [
+    {
+      "account": "p3-load-0",
+      "history": "33684"
+    },
+    {
+      "account": "p3-load-1",
+      "history": "19314"
+    },
+    {
+      "account": "p3-load-2",
+      "history": "1"
+    },
+    {
+      "account": "p3-load-3",
+      "history": "1"
+    },
+    {
+      "account": "p3-load-4",
+      "history": "1"
+    },
+    {
+      "account": "p3-load-5",
+      "history": "1"
+    },
+    {
+      "account": "p3-load-6",
+      "history": "1"
+    },
+    {
+      "account": "p3-load-7",
+      "history": "1"
+    }
+  ],
+  "historyResumedAndConvergedMs": 92514.2428,
+  "convergence": [
+    {
+      "account": "p3-load-0",
+      "identities": 51119,
+      "epoch": "1791803598",
+      "history": 1,
+      "fresh": 66119,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 5759.825700000016
+    },
+    {
+      "account": "p3-load-1",
+      "identities": 51109,
+      "epoch": "1791804112",
+      "history": 1,
+      "fresh": 51109,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 6663.904099999985
+    },
+    {
+      "account": "p3-load-2",
+      "identities": 256,
+      "epoch": "1791804241",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 55.06950000001234
+    },
+    {
+      "account": "p3-load-3",
+      "identities": 256,
+      "epoch": "1791804248",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 48.883499999996275
+    },
+    {
+      "account": "p3-load-4",
+      "identities": 256,
+      "epoch": "1791804254",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 42.671899999986636
+    },
+    {
+      "account": "p3-load-5",
+      "identities": 142,
+      "epoch": "1791804261",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 20.20900000000256
+    },
+    {
+      "account": "p3-load-6",
+      "identities": 256,
+      "epoch": "1791804267",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 40.303300000028685
+    },
+    {
+      "account": "p3-load-7",
+      "identities": 256,
+      "epoch": "1791804273",
+      "history": 1,
+      "fresh": 256,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 54.272100000001956
+    }
+  ],
+  "errors": [
+    {
+      "account": "p3-load-7",
+      "kind": "repair",
+      "error": "Error: read ECONNRESET",
+      "at": 150.72609999999986
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 681.1992
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 22289.2002
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 22813.5128
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 23393.9143
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 24005.1715
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 46148.9737
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 46697.321
+    },
+    {
+      "account": "p3-load-7",
+      "kind": "fresh",
+      "error": "Error: read ECONNRESET",
+      "at": 47256.4826
+    }
+  ],
+  "arrivals": 104,
+  "lateAtQuiescence": 0,
+  "samples": [
+    {
+      "at": 3.999300000000403,
+      "rss": 95354880,
+      "heap": 21772176,
+      "running": 0,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 0,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 0
+    },
+    {
+      "at": 1009.4907000000003,
+      "rss": 115146752,
+      "heap": 25320288,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 7,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2384,
+      "retries": 2
+    },
+    {
+      "at": 2015.4726,
+      "rss": 118099968,
+      "heap": 28937232,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 2
+    },
+    {
+      "at": 3037.1751999999997,
+      "rss": 135356416,
+      "heap": 37560816,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 2
+    },
+    {
+      "at": 4057.4357,
+      "rss": 152199168,
+      "heap": 48490256,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1707,
+      "retries": 2
+    },
+    {
+      "at": 5059.301300000001,
+      "rss": 154157056,
+      "heap": 19825608,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2786,
+      "retries": 2
+    },
+    {
+      "at": 6060.326500000001,
+      "rss": 154529792,
+      "heap": 23376560,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 147,
+      "retries": 2
+    },
+    {
+      "at": 7073.9787,
+      "rss": 154243072,
+      "heap": 32674056,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2785,
+      "retries": 2
+    },
+    {
+      "at": 8105.705,
+      "rss": 154890240,
+      "heap": 21586328,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2784,
+      "retries": 2
+    },
+    {
+      "at": 9110.1767,
+      "rss": 208371712,
+      "heap": 41265504,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1717,
+      "retries": 2
+    },
+    {
+      "at": 10124.2597,
+      "rss": 219451392,
+      "heap": 29747312,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1316,
+      "retries": 2
+    },
+    {
+      "at": 11162.428199999998,
+      "rss": 222879744,
+      "heap": 63856752,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 2
+    },
+    {
+      "at": 12168.7949,
+      "rss": 227012608,
+      "heap": 54461448,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2788,
+      "retries": 2
+    },
+    {
+      "at": 13218.5805,
+      "rss": 225796096,
+      "heap": 65852512,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2789,
+      "retries": 2
+    },
+    {
+      "at": 14240.298999999999,
+      "rss": 225648640,
+      "heap": 41437928,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2787,
+      "retries": 2
+    },
+    {
+      "at": 15242.025399999999,
+      "rss": 226054144,
+      "heap": 41475848,
+      "running": 1,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2789,
+      "retries": 2
+    },
+    {
+      "at": 16274.236,
+      "rss": 227356672,
+      "heap": 31422624,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 7,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2786,
+      "retries": 2
+    },
+    {
+      "at": 17298.2596,
+      "rss": 229748736,
+      "heap": 65068144,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2788,
+      "retries": 2
+    },
+    {
+      "at": 18352.261300000002,
+      "rss": 230162432,
+      "heap": 66735720,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2788,
+      "retries": 2
+    },
+    {
+      "at": 19355.2569,
+      "rss": 233877504,
+      "heap": 50290880,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2788,
+      "retries": 2
+    },
+    {
+      "at": 20407.3816,
+      "rss": 229941248,
+      "heap": 69303512,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 2
+    },
+    {
+      "at": 21416.4235,
+      "rss": 228839424,
+      "heap": 23172264,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1721,
+      "retries": 2
+    },
+    {
+      "at": 22473.5015,
+      "rss": 230707200,
+      "heap": 70232520,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 7,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2789,
+      "retries": 3
+    },
+    {
+      "at": 23493.2094,
+      "rss": 231079936,
+      "heap": 64707944,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 7,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1722,
+      "retries": 5
+    },
+    {
+      "at": 24501.614,
+      "rss": 230342656,
+      "heap": 22244104,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 7,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2789,
+      "retries": 6
+    },
+    {
+      "at": 25521.0458,
+      "rss": 230719488,
+      "heap": 70311536,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 6
+    },
+    {
+      "at": 26525.1946,
+      "rss": 232009728,
+      "heap": 37551608,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1722,
+      "retries": 6
+    },
+    {
+      "at": 27658.1498,
+      "rss": 232075264,
+      "heap": 55610584,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 6
+    },
+    {
+      "at": 28693.482900000003,
+      "rss": 232767488,
+      "heap": 68714952,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 6
+    },
+    {
+      "at": 29761.661999999997,
+      "rss": 231641088,
+      "heap": 72658992,
+      "running": 1,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2786,
+      "retries": 6
+    },
+    {
+      "at": 30814.205199999997,
+      "rss": 231673856,
+      "heap": 69012240,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2787,
+      "retries": 6
+    },
+    {
+      "at": 31821.6507,
+      "rss": 232198144,
+      "heap": 71655096,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3528,
+      "retries": 6
+    },
+    {
+      "at": 32833.5092,
+      "rss": 232206336,
+      "heap": 45332520,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 6
+    },
+    {
+      "at": 33855.2262,
+      "rss": 232562688,
+      "heap": 26284472,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 6
+    },
+    {
+      "at": 34887.432,
+      "rss": 232157184,
+      "heap": 20198968,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 6
+    },
+    {
+      "at": 35901.3076,
+      "rss": 233357312,
+      "heap": 67637848,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3525,
+      "retries": 6
+    },
+    {
+      "at": 36944.0146,
+      "rss": 231817216,
+      "heap": 65621560,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 6
+    },
+    {
+      "at": 37982.5226,
+      "rss": 232189952,
+      "heap": 69427104,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 1,
+      "traceBufferedBytes": 3533,
+      "retries": 6
+    },
+    {
+      "at": 38987.6837,
+      "rss": 232288256,
+      "heap": 36491008,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3535,
+      "retries": 6
+    },
+    {
+      "at": 39988.4806,
+      "rss": 232132608,
+      "heap": 71911832,
+      "running": 4,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 148,
+      "retries": 6
+    },
+    {
+      "at": 41044.3202,
+      "rss": 231718912,
+      "heap": 22386616,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3530,
+      "retries": 6
+    },
+    {
+      "at": 42081.0537,
+      "rss": 232345600,
+      "heap": 27037312,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 6
+    },
+    {
+      "at": 43087.5562,
+      "rss": 232755200,
+      "heap": 74146736,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1721,
+      "retries": 6
+    },
+    {
+      "at": 44138.1677,
+      "rss": 231178240,
+      "heap": 19989672,
+      "running": 1,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 6
+    },
+    {
+      "at": 45154.3999,
+      "rss": 232579072,
+      "heap": 71481928,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 6
+    },
+    {
+      "at": 46181.5254,
+      "rss": 232124416,
+      "heap": 22103392,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 7,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 7
+    },
+    {
+      "at": 47196.9173,
+      "rss": 232452096,
+      "heap": 70402096,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 7,
+      "readySet": 3,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1723,
+      "retries": 8
+    },
+    {
+      "at": 48205.3443,
+      "rss": 232574976,
+      "heap": 37663136,
+      "running": 3,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 9
+    },
+    {
+      "at": 49241.6263,
+      "rss": 233177088,
+      "heap": 44353456,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3530,
+      "retries": 9
+    },
+    {
+      "at": 50250.0577,
+      "rss": 231849984,
+      "heap": 20176392,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 9
+    },
+    {
+      "at": 51277.5166,
+      "rss": 232034304,
+      "heap": 41764504,
+      "running": 3,
+      "userReady": 1,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2070,
+      "retries": 9
+    },
+    {
+      "at": 52287.6665,
+      "rss": 233185280,
+      "heap": 58781080,
+      "running": 2,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 9
+    },
+    {
+      "at": 53370.6467,
+      "rss": 233373696,
+      "heap": 35904408,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 9
+    },
+    {
+      "at": 54441.0179,
+      "rss": 232873984,
+      "heap": 52732648,
+      "running": 1,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 9
+    },
+    {
+      "at": 55457.5607,
+      "rss": 233594880,
+      "heap": 72013184,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3530,
+      "retries": 9
+    },
+    {
+      "at": 56508.6115,
+      "rss": 232562688,
+      "heap": 56967472,
+      "running": 3,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 4,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 1722,
+      "retries": 9
+    },
+    {
+      "at": 57549.6741,
+      "rss": 233041920,
+      "heap": 26063480,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 3532,
+      "retries": 9
+    },
+    {
+      "at": 58567.8128,
+      "rss": 236290048,
+      "heap": 50227520,
+      "running": 2,
+      "userReady": 2,
+      "lanes": 8,
+      "readySet": 5,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 2790,
+      "retries": 9
+    },
+    {
+      "at": 59583.128600000004,
+      "rss": 232194048,
+      "heap": 39083496,
+      "running": 1,
+      "userReady": 0,
+      "lanes": 8,
+      "readySet": 6,
+      "pendingNotifications": 0,
+      "traceBufferedBytes": 0,
+      "retries": 9
+    }
+  ],
+  "eventLoopMs": {
+    "p50": 10.420223,
+    "p95": 21.921791,
+    "p99": 26.607615,
+    "max": 149.159935
+  }
+}

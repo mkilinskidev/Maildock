@@ -1,0 +1,435 @@
+{
+  "at": "2026-10-12T14:02:31.997Z",
+  "branch": "experiment/imap-durability-validation\n",
+  "base": "8c4f9790999f850b4dd2f4365a408d24671bb575",
+  "node": "v24.21.0",
+  "platform": "win32",
+  "arch": "x64",
+  "cpu": "Intel(R) Core(TM) Ultra 7 155H",
+  "logicalCpus": 22,
+  "totalmem": 33777467392,
+  "seed": 2403,
+  "versions": {
+    "imapflow": "2.0.6",
+    "postgres": "3.4.9",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  },
+  "docker": "Client:\n Version:           28.5.1\n API version:       1.51\n Go version:        go1.24.8\n Git commit:        e180ab8\n Built:             Wed Oct  8 12:19:16 2025\n OS/Arch:           windows/amd64\n Context:           desktop-linux\n\nServer: Docker Desktop 4.50.0 (209931)\n Engine:\n  Version:          28.5.1\n  API version:      1.51 (minimum version 1.24)\n  Go version:       go1.24.8\n  Git commit:       f8215cc\n  Built:            Wed Oct  8 12:17:24 2025\n  OS/Arch:          linux/amd64\n  Experimental:     false\n containerd:\n  Version:          1.7.27\n  GitCommit:        05044ec0a9a75232cad458027ca83437aae3f4da\n runc:\n  Version:          1.2.5\n  GitCommit:        v1.2.5-0-g59923ef\n docker-init:\n  Version:          0.19.0\n  GitCommit:        de40ad0\n",
+  "compose": "Docker Compose version v2.40.3-desktop.1\n",
+  "images": "/maildock-imap-durability-dovecot-1 dovecot/dovecot:2.4.3-dev@sha256:d0db02b4aa9c16bc50c96faad68fcf5724c1453a98a39ada685409227e967898 sha256:d0db02b4aa9c16bc50c96faad68fcf5724c1453a98a39ada685409227e967898\n/maildock-imap-durability-postgres-1 postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94 sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94\n",
+  "helper": "sha256:b2c9dce7a3d7f144f486a1cd2287aa20dc7ad529637d4adf31a238fde09f52a3\n",
+  "database": "PostgreSQL 17.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 14.2.0) 14.2.0, 64-bit|on|on|on\n",
+  "hashes": {
+    "bulk-seed.ts": "d1287e1a528094615b63e4cd5f3c1c10ac00edb2c38587c30288c4f3031e4028",
+    "cli.ts": "9413a47112e60bbf0f871e3c558b5d75448998948bdc6b92a2509af23a10a432",
+    "client.ts": "f0dab6f9fdb79fc6dfa1abb1df1819aa83943015e8c488464a0ff3089ccf713e",
+    "commit-uncertainty.ts": "34ff1beff0f8f3eae2df33c864ad82d1196c1e8e53377b47f9af657a1d6cb360",
+    "compose.yaml": "121fb4be3f437499c07c2ed5c8ff2788f39991c74bf0f858e1f6807ecdd6e23a",
+    "coordinator.ts": "3e6c96c79587da5ebb0fc5b67f1a3a48545675661e5fab98d5ad5949ce74958a",
+    "critical-recheck.ps1": "aa607be8e475ff51731ffc43a9470a94ac7e15dbb1d9b9fd046c77362ed22166",
+    "db-startup-deadline.ts": "4ac242548b453414ae20a5246e73f74a113ea88aef09902213c99fbcc45c17cd",
+    "durability.ts": "baa1876b9ce5ca8efdeb8f47349c4c2801a7f6c872b7c948e7474c0def022b1b",
+    "environment.ts": "40ae9b303782e2b6c92be7a9fa90ff239875114e66bd3e7b282261010d28d9eb",
+    "final-validation.ps1": "389a0b7371b36ee903483e9858410f5afa79b538d9b270fcc32da26822305b68",
+    "fixture.ts": "3618defc763ef3c8f46731ccd34c5a5f948c46b9bd575c114f6f967d5c4210b1",
+    "import.sh": "ea56412f0c4d6d733d8433927ec5b99d4dbfb684e0d3181bf0ea941a765f4513",
+    "late-db-callback.ts": "4daf732b2d08d48030cf4a0424a26726ca6d1af30a2927ce38a56da0269e871a",
+    "load-matrix.ps1": "4841c1b03b5ef1f96373c758e7ae9cc9e183be0aa661fa52ddc22a1342e138ce",
+    "metrics.ts": "9280c6157d9860edfbc963d654fa0fdea453bcb6d59ee6316c6f92d4f4bb258c",
+    "network.ts": "734e6501083777964a7f40ec283614d41cd44acf3df60ecc969af518aaf2818f",
+    "packet-loss.ts": "99e693d7f7936757f94500d4954b8777dd6a17fff03baf4f59559e05364c592e",
+    "post-fix-load.ps1": "4b68ef205dcc68c18adec6098d2a7eea762260a310a2394621c3e846b43ff6c3",
+    "post-validation.ps1": "7479428ae272e95cb34a81bb15e463d17cab4e934cb4f2f05c1af2b45b8f726e",
+    "proxy.ts": "6335afd2835cec04ae4674e50b76b511c1ef48c5dc139dc44a37be8155976057",
+    "reconciliation.ts": "9e49b30ef3f0fe9046d14bdb2809dd7230c8636e36f2886ce82d489b83aef2e4",
+    "regressions.ts": "4e5f89ef05a369d6aa38cbcefd966c34063c54d5c41151492658b679ffc62cd6",
+    "restore-reference.ts": "d3b6514a8dab910f73164a3fe9a721fd7b681028f3098b6193a439ad8049adf0",
+    "schema.sql": "c2d1a724fce72ee15c7908acfe7189963844db94543f878875549425a3d6b3f5",
+    "search-evidence.ts": "87e1d04b12834d9a901ca0077c42bb9fcfc46cdb7c09d22f670136795ef77589",
+    "seed-small.ts": "ab7364751936c54ea9b39775cecbc3d1e101579fcb5158b7ac818ab32eea45cc",
+    "seed.ps1": "6f23fbfc89bdeec48e74331adbba819055f5b264d7ee842f08c6e89397d3523a",
+    "setup.ps1": "085979eeee4d8cca0769b76cecebd7ad9da3d2934c8fc054512acf18dcc14622",
+    "statement-failures.ts": "5b451bf135821f3bee3a5734529c71cd511a976077a16857199dfe2aef883b31",
+    "store.ts": "a1a3484e790767412d5da786ffe8f6ddf506081a563ca43842a3c8f911b11839",
+    "suite.ps1": "b3769d0eb9193a3b842d88237771ef74d5e87406ded9589c36b3307342018cfe",
+    "summarize.ts": "e1123743aaf86737bfcdd171d5a9204b5d1b4b918f38934b11455436a1e41178",
+    "support.ts": "de44ca336f746a16fa413ab9af23028d2adfc2235e0afc779f51518ca8b7e046",
+    "turn-budget.ts": "3d866cc163df8084e48c0983ddd45f3d7b6d74abb12d0838054e7fc9c05f81f2",
+    "verify-fixtures.ts": "c16c9d650a5cceab36961f422586be7aaccc3ffed5e21b1cbf8c0ed8eb3f1edb",
+    "worker.ts": "0ca8c2adccfefd350a5436f36cd75e693e3d56f2bd06daa8174c05526ac58b04",
+    "workload.ts": "30c9e5c8fa31f925ad1b1a6cd01f4f7f955caa38a31daa55b3ca8f75830af8e1",
+    "imapflow/dist/esm/imap-flow.js": "a4990e4ee4953b663a196e8e4406e3231c81b1c6d9d3334d5655a40e622f441e",
+    "imapflow/dist/esm/commands/search.js": "10c0ec18f576b90f0c1b38c69e1e2b67d12a760f912883264e0121a086716a01",
+    "imapflow/dist/esm/commands/fetch.js": "7f6317f1783179ea6d48a13dc0bfd16363503c56f1b3dedc6d8792d0e8768e98",
+    "imapflow/dist/esm/handler/imap-stream.js": "8a27145e6815d14eee26591cfb032c6fae937698c06ef60c37a38a4e47b68154",
+    "imapflow/dist/esm/handler/token-parser.js": "8184f1219c52c5112ae268284edf0e7fe49053e111de93854412ee2ae225df81",
+    "postgres/src/index.js": "4e21f5733e70d79cffc10d10d4ef01031de4a9ac862210e43f8870029fd103ed",
+    "postgres/src/connection.js": "ee3a218d9aa6a6f2887c1a19da50009335fe84c11a5431d5cab72d6bc528632f",
+    "phase2-dovecot.conf": "d2fc4f07f1543031135618823fd3e1d0db76376be12e442ee456cd765eef6267",
+    "phase3-public-tls.crt": "85fbd3a97faf52f0e1f0a415542494adab6c9d249f60680945b4156148d0a0c3",
+    "Dockerfile.network": "d1411d53fb02567777d7e46f8e0aba5e2754b996820ffc0bfc8011514d99f53e"
+  },
+  "index": [
+    {
+      "name": "2026-10-12T11-09-55-962Z-durability.json.gz",
+      "bytes": 22006,
+      "sha256": "4d916203f6bf701c401305a837c003514e37a8991dbcdfac0f7360273ea2d86d"
+    },
+    {
+      "name": "2026-10-12T11-13-12-154Z-commit-uncertainty.json",
+      "bytes": 12756,
+      "sha256": "36eafabe54da9bfe98bca7d3186ef07e46f677113e64fca081d08072d06f5552"
+    },
+    {
+      "name": "2026-10-12T11-16-16-811Z-durability.json.gz",
+      "bytes": 19131,
+      "sha256": "809a9f2595a9bfadc924249845774757fde1ab6b9c48713d0533db9ca8d4b959"
+    },
+    {
+      "name": "2026-10-12T11-18-32-921Z-durability.json.gz",
+      "bytes": 5884,
+      "sha256": "040165746d9566d8c06f4eab08e29d0d10a403c5721aa52d56d4853214f93278"
+    },
+    {
+      "name": "2026-10-12T11-20-49-806Z-durability.json.gz",
+      "bytes": 21999,
+      "sha256": "adc144e8aa32158a5c4e24930eae92c6ded291b13d141336bec970bee87e6529"
+    },
+    {
+      "name": "2026-10-12T11-22-02-734Z-network-summary.json",
+      "bytes": 2706,
+      "sha256": "1af9ceeac1a192eaf2459f46b5254bd872380ceb00f561bae6d5f13c1229a1a3"
+    },
+    {
+      "name": "2026-10-12T11-22-02-734Z-network.jsonl.gz",
+      "bytes": 19128,
+      "sha256": "79a09ac74aa026c5c23dda1b6e93e8ee1f387e1874a96174aed0e2410af5c00d"
+    },
+    {
+      "name": "2026-10-12T11-24-11-795Z-durability.json.gz",
+      "bytes": 23155,
+      "sha256": "fcc665c2c88a9bf80b29766049ccd5baec1882c9e37b61edef70f876a7e5bc45"
+    },
+    {
+      "name": "2026-10-12T11-25-34-809Z-network-summary.json",
+      "bytes": 3143,
+      "sha256": "816a62b15cb5075dfd02e40a31fa9d4642c168de619a4f293d0738b3ff013232"
+    },
+    {
+      "name": "2026-10-12T11-25-34-809Z-network.jsonl.gz",
+      "bytes": 15360,
+      "sha256": "7969865929fa40cd490a92771af77705397ce435907c35bb5cefdd163d0b8345"
+    },
+    {
+      "name": "2026-10-12T11-27-48-396Z-durability.json.gz",
+      "bytes": 23152,
+      "sha256": "704737a53d50d78f1cc24f68ab8086fdd06826aeb33019ca224ab86699bbfd19"
+    },
+    {
+      "name": "2026-10-12T11-29-38-069Z-network-summary.json",
+      "bytes": 5439,
+      "sha256": "3e87615c97c0d0d9e3573c55236a232678f59c432fbf4b84d4046f6ad53271f2"
+    },
+    {
+      "name": "2026-10-12T11-29-38-069Z-network.jsonl.gz",
+      "bytes": 32601,
+      "sha256": "61e338b25f10d8c10fd8ad1ee0b6aac3552ef596fbb178646431ab6a5a3b2b3a"
+    },
+    {
+      "name": "2026-10-12T11-29-48-623Z-regressions.json.gz",
+      "bytes": 75465,
+      "sha256": "ad1f555ce5f8bee1cc9706a97f6cd1e490efee1ff7f97d06df5f2149c9d7e840"
+    },
+    {
+      "name": "2026-10-12T11-33-22-728Z-packet-loss.json",
+      "bytes": 513,
+      "sha256": "9ed8971f7eb677fca732913c8682e162439545d9cf117a524a2f0cd45bed5987"
+    },
+    {
+      "name": "2026-10-12T11-33-32-634Z-commit-uncertainty.json",
+      "bytes": 12764,
+      "sha256": "c26ebb6d27f20342c807187990f8bd11ab1710069788f0c7a66027aeb88efbdb"
+    },
+    {
+      "name": "2026-10-12T11-36-24-915Z-packet-loss.json",
+      "bytes": 867,
+      "sha256": "e21321130ebf60add77597d0ae5b846f2291088a66ce6289fb628a489d075914"
+    },
+    {
+      "name": "2026-10-12T11-37-47-889Z-workload-W1-D1-summary.json",
+      "bytes": 15321,
+      "sha256": "2e628d1d87a0570eaab50d25b57d6a6ae95a75e0a309fe50215b8fa9aeef41e6"
+    },
+    {
+      "name": "2026-10-12T11-37-47-889Z-workload-W1-D1.jsonl.gz",
+      "bytes": 945941,
+      "sha256": "9bca7ef16ac5e96e54b6e1e6d98712651635779fe4940525981a4a6277435b9b"
+    },
+    {
+      "name": "2026-10-12T11-41-53-939Z-workload-W2-D2-summary.json",
+      "bytes": 17737,
+      "sha256": "8c126a5590d3b71efc20578a7df95b388e1d01125ba8764867fca1981153bde6"
+    },
+    {
+      "name": "2026-10-12T11-41-53-939Z-workload-W2-D2.jsonl.gz",
+      "bytes": 1052502,
+      "sha256": "4697df58a37e3211fe870802e3e290deae57e0a04834c99bd59c7b4b7297016d"
+    },
+    {
+      "name": "2026-10-12T11-46-02-386Z-workload-W4-D1-summary.json",
+      "bytes": 18245,
+      "sha256": "c08c5a8f706331873bc0c2d80b50d0a83c5be62260fb0e7d425ce536e4e2257a"
+    },
+    {
+      "name": "2026-10-12T11-46-02-386Z-workload-W4-D1.jsonl.gz",
+      "bytes": 951353,
+      "sha256": "578a019ded18bd0d4278f8f9aa397342e4a6f3ade6c75232d8f234270f2a0f83"
+    },
+    {
+      "name": "2026-10-12T11-49-53-159Z-workload-W4-D6-summary.json",
+      "bytes": 19013,
+      "sha256": "8aaabab40b3f58a0fe4d943733435d7e5fd6c4dd7a2353df61654070903f3003"
+    },
+    {
+      "name": "2026-10-12T11-49-53-159Z-workload-W4-D6.jsonl.gz",
+      "bytes": 1286777,
+      "sha256": "2ecae39b62b05ea8d4af1745413f4abdb42a52aaf4b9a5e071df8a6ffc2ce754"
+    },
+    {
+      "name": "2026-10-12T11-53-12-473Z-workload-W4-D2-summary.json",
+      "bytes": 152289,
+      "sha256": "d7d802801071f00a6b858710f09c1bfaf92c930882b8674c9c0279a85cc28e82"
+    },
+    {
+      "name": "2026-10-12T11-53-12-473Z-workload-W4-D2.jsonl.gz",
+      "bytes": 4921938,
+      "sha256": "c9c59281bf3c533183c6d4c54db521da7fb64d29bc28bbce901267cc5212c43a"
+    },
+    {
+      "name": "2026-10-12T12-05-02-513Z-reconciliation.json.gz",
+      "bytes": 889442,
+      "sha256": "5d264fbbf2afb4d8db5dc1dd933d7411d4e44add41a77c86af3b1053c669c25e"
+    },
+    {
+      "name": "2026-10-12T12-09-07-640Z-durability.json.gz",
+      "bytes": 23525,
+      "sha256": "aa89ad8cbc92e8afbc96b1246528f5f401cc26b80dd46a7f1701f8e4eadd4b48"
+    },
+    {
+      "name": "2026-10-12T12-10-04-238Z-commit-uncertainty.json",
+      "bytes": 12789,
+      "sha256": "d15f2e85a3d3e8f76480ef42605a52eab83e7cbfd4174b5b1d4601e8deceeadb"
+    },
+    {
+      "name": "2026-10-12T12-10-41-322Z-workload-W1-D1-summary.json",
+      "bytes": 19148,
+      "sha256": "e2274abd6849707598380dace2d4b408d1136559b9ebe1cd225a5f97139aae79"
+    },
+    {
+      "name": "2026-10-12T12-10-41-322Z-workload-W1-D1.jsonl.gz",
+      "bytes": 976499,
+      "sha256": "f2631e37ef2393f71342742b85a9ecabc5c05fd9a0b4ac75b4f683881e79403d"
+    },
+    {
+      "name": "2026-10-12T12-14-07-582Z-workload-W2-D2-summary.json",
+      "bytes": 22618,
+      "sha256": "382c207e326ba51fe2fb1cb1854f521bacbd1b2803eb92fcee05e66fe5f05294"
+    },
+    {
+      "name": "2026-10-12T12-14-07-582Z-workload-W2-D2.jsonl.gz",
+      "bytes": 1135419,
+      "sha256": "994c3e39578f48870afe64276bea93ab07dabdd67157cf5d516f0652bd20df34"
+    },
+    {
+      "name": "2026-10-12T12-17-47-760Z-workload-W4-D1-summary.json",
+      "bytes": 22942,
+      "sha256": "0b18f141815ffeb874fe7260539c39a12af0c6203224164ea10078b2fddc78e3"
+    },
+    {
+      "name": "2026-10-12T12-17-47-760Z-workload-W4-D1.jsonl.gz",
+      "bytes": 1202373,
+      "sha256": "94aacc33c7c6587bfae338989753f515c6a96a3a43b2b4556bd9ee3e840d535b"
+    },
+    {
+      "name": "2026-10-12T12-20-35-973Z-workload-W4-D6-summary.json",
+      "bytes": 22624,
+      "sha256": "3020f9a22d153db3c37336af161453e366a56709647e4001610eda8c692817b7"
+    },
+    {
+      "name": "2026-10-12T12-20-35-973Z-workload-W4-D6.jsonl.gz",
+      "bytes": 1426716,
+      "sha256": "31c4fcf28168d1c738c63bdea2c519b05460deedf3d109597879735cae83ff34"
+    },
+    {
+      "name": "2026-10-12T12-23-14-164Z-workload-W4-D2-summary.json",
+      "bytes": 172353,
+      "sha256": "de8dbeda46fc7b2dfbb4de91f2c95a58c44dc19c4dd418d67e372d23df080db7"
+    },
+    {
+      "name": "2026-10-12T12-23-14-164Z-workload-W4-D2.jsonl.gz",
+      "bytes": 5998953,
+      "sha256": "093bdcba629c836ef78d9c7fe4de67aec6209ae3e1ef308d0844b5517832739a"
+    },
+    {
+      "name": "2026-10-12T12-34-58-717Z-regressions.json.gz",
+      "bytes": 75715,
+      "sha256": "49cf9283e85563527da2e5d006d90ebdf65ce4fcc301cbb46878ce687fb2af65"
+    },
+    {
+      "name": "2026-10-12T12-37-55-058Z-network-summary.json",
+      "bytes": 6086,
+      "sha256": "486a15c6e79a6eb8f695062eca30f3050bc26e155d3079b8295c845d749b0f0c"
+    },
+    {
+      "name": "2026-10-12T12-37-55-058Z-network.jsonl.gz",
+      "bytes": 33494,
+      "sha256": "f13ef7aa803fe7e0e775d93df5f8714dd8f2f8778523343c5e26cc4c8acd5ca7"
+    },
+    {
+      "name": "2026-10-12T12-44-56-467Z-packet-loss.json",
+      "bytes": 865,
+      "sha256": "ac7bc9940f07248bc7309ce0d4da7847796ca62943f2c7a5a0883a748e0eb237"
+    },
+    {
+      "name": "2026-10-12T12-45-27-662Z-reconciliation.json.gz",
+      "bytes": 909971,
+      "sha256": "e3633ffa73adb25840f82f66912823bd7d536d5671c9925ecd1e6131a5a75b4b"
+    },
+    {
+      "name": "2026-10-12T12-47-38-401Z-durability.json.gz",
+      "bytes": 23311,
+      "sha256": "904bc3f0a20b4a53a3cc884c4f57abac7249ec94ce39a63a8c47657e4b1be31f"
+    },
+    {
+      "name": "2026-10-12T13-09-11-271Z-late-db-callback.json",
+      "bytes": 14963,
+      "sha256": "1c5e94fdd874557ecf8507ef21750a187efa72a7abe003f90fa3cd1ac4e14cce"
+    },
+    {
+      "name": "2026-10-12T13-12-12-558Z-late-db-callback.json",
+      "bytes": 14811,
+      "sha256": "f67b08e0621f3c9e1ba8d01cd56d17f45faa21b92932175b9742f3f45bd2af2b"
+    },
+    {
+      "name": "2026-10-12T13-14-49-665Z-late-db-callback.json",
+      "bytes": 14813,
+      "sha256": "8c42366fbf53ac2b51aa3c97904923c2accb3c6b63da75fb30c675c7fecd2ea3"
+    },
+    {
+      "name": "2026-10-12T13-15-46-852Z-late-db-callback.json",
+      "bytes": 17436,
+      "sha256": "321071c8aef83a7d858ecf1a212b8cc3f9285dc5a51d12e16eae3787c3096b1a"
+    },
+    {
+      "name": "2026-10-12T13-27-03-447Z-late-db-callback.json",
+      "bytes": 17436,
+      "sha256": "8d7d350d19851860c2f3d022f2d2f1ec41844107b6a2fc8b1e4302f7ecec4199"
+    },
+    {
+      "name": "2026-10-12T13-27-12-384Z-durability.json.gz",
+      "bytes": 23258,
+      "sha256": "02bd4ce3060766c8c42a5382612e44c2a8e4f021fef006c072fdd16ab4af9b43"
+    },
+    {
+      "name": "2026-10-12T13-28-01-818Z-commit-uncertainty.json",
+      "bytes": 12782,
+      "sha256": "00846f2c7e75b206ca63de98e22f545fd608d9d4a61f92d83be531ab512d2092"
+    },
+    {
+      "name": "2026-10-12T13-29-48-173Z-reconciliation.json.gz",
+      "bytes": 18466,
+      "sha256": "2272ed3b0cfa079a92869bee59d4e10aa3617514720c59bcfbe8d54e71e7c660"
+    },
+    {
+      "name": "2026-10-12T13-34-13-771Z-reconciliation.json.gz",
+      "bytes": 1012983,
+      "sha256": "f364ebbe802e2debb6485ec139e94a01c70896c3ec6148173f35b64f7a80830d"
+    },
+    {
+      "name": "2026-10-12T13-41-18-197Z-workload-W4-D1-summary.json",
+      "bytes": 23231,
+      "sha256": "a8a37e683fdcd7a9d724420e62d489bbcfa9ef6e4550b3801cc5060b3f65e036"
+    },
+    {
+      "name": "2026-10-12T13-41-18-197Z-workload-W4-D1.jsonl.gz",
+      "bytes": 1246915,
+      "sha256": "ff4d5f714e7f3f605d439bc11e31dda9e0600dc21d30521ac441b9c81d254d5f"
+    },
+    {
+      "name": "2026-10-12T13-44-04-755Z-workload-W4-D2-summary.json",
+      "bytes": 171850,
+      "sha256": "fe9ca95e5bb5e5318423c35757b5548657532f368b783e396283373535c1f780"
+    },
+    {
+      "name": "2026-10-12T13-44-04-755Z-workload-W4-D2.jsonl.gz",
+      "bytes": 6380584,
+      "sha256": "eddf49c488000ab9387a65832ee8477013a6df70a74f5dbcfdbe800974087811"
+    },
+    {
+      "name": "2026-10-12T13-58-52-939Z-reconciliation.json.gz",
+      "bytes": 921161,
+      "sha256": "b6fc962e6890732dc42c9dfe1f97db1f26e920e6fc43bfd7a9feea6da394bbf8"
+    },
+    {
+      "name": "commit-uncertainty-initial-failure.json",
+      "bytes": 14973,
+      "sha256": "23a7fc9a4b00a62432212fbb4a5b15eb8e8e2d4657d6d9b88e3184eaa346a423"
+    },
+    {
+      "name": "commit-uncertainty.json",
+      "bytes": 12782,
+      "sha256": "00846f2c7e75b206ca63de98e22f545fd608d9d4a61f92d83be531ab512d2092"
+    },
+    {
+      "name": "db-startup-deadline.json",
+      "bytes": 90,
+      "sha256": "78078b1aba226ab434e7a611be54af68dac7ed2f7bf72e93f8e29655e90e7749"
+    },
+    {
+      "name": "durability-summary.json",
+      "bytes": 10152,
+      "sha256": "fc30aec20b5d6623f60e2ed78e7d661add5abed0ec4df199e44a2fbf0924a843"
+    },
+    {
+      "name": "fixture-verification.json",
+      "bytes": 607,
+      "sha256": "a3a6b16c76e23855ef28b1b23221fbe60c42cbbd01a0c1cadbfe00657971b109"
+    },
+    {
+      "name": "measurements.json",
+      "bytes": 185355,
+      "sha256": "e284b5358936c1e5900a106604740b59afe587abe4a87f665ccebdd2b98de0a0"
+    },
+    {
+      "name": "reconciliation-summary.json",
+      "bytes": 3418,
+      "sha256": "0b5eeb95ebf9038d264b5cb045d998bc790bc3cc590681bfe565f9c7651d8deb"
+    },
+    {
+      "name": "reference-restoration.json",
+      "bytes": 197,
+      "sha256": "4da46bb51c9f4e4a594d0203fd3c2039ea660c939297dc6d0eadc22a8ded1af9"
+    },
+    {
+      "name": "regression-summary.json",
+      "bytes": 132,
+      "sha256": "95a0215b993a8e329a27e90235aad0fde3129cf7969ba0f2a39fa3e3803da3d8"
+    },
+    {
+      "name": "search-evidence.json",
+      "bytes": 3934,
+      "sha256": "32378fbf35bd891973b7720e198e842c49bed08ea5f34769385b8dd913c69b85"
+    },
+    {
+      "name": "statement-failures.json",
+      "bytes": 375,
+      "sha256": "07d6d00def5c3cd3726cdf6d44d82f9751a3e26ad3b76441c397898658639e53"
+    },
+    {
+      "name": "turn-budget.json",
+      "bytes": 18590,
+      "sha256": "e2a41fa50bafa14eddee636259a16357b1dd7631bd5ea224230b2014ad9f843f"
+    }
+  ]
+}

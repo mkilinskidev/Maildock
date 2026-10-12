@@ -1,0 +1,227 @@
+{
+  "stamp": "2026-10-12T11-29-38-069Z",
+  "trace": "2026-10-12T11-29-38-069Z-network.jsonl.gz",
+  "results": [
+    {
+      "name": "local",
+      "delay": 0,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 540.1341999999995,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 30.849199999999655,
+        "p95": 32.12790000000041,
+        "p99": null,
+        "max": 32.131900000000314
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 1094564.6774761246,
+        "p95": null,
+        "p99": null,
+        "max": 1153169.0140845184
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 309.8685000000005,
+        "p95": null,
+        "p99": null,
+        "max": 359.51760000000104
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 141.14720000000125,
+        "p95": null,
+        "p99": null,
+        "max": 169.53359999999884
+      },
+      "proxyBytes": 660966,
+      "peakProxyBuffered": 50173,
+      "identities": 394,
+      "epoch": "1791804578",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 134.39509999999973
+    },
+    {
+      "name": "20ms-requested",
+      "delay": 10,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 638.3663000000015,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 31.020700000000943,
+        "p95": 31.6237000000001,
+        "p99": null,
+        "max": 110.76889999999912
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 357519.28483700607,
+        "p95": null,
+        "p99": null,
+        "max": 362689.0956071844
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 361.0076000000008,
+        "p95": null,
+        "p99": null,
+        "max": 514.3345999999983
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 161.12480000000141,
+        "p95": null,
+        "p99": null,
+        "max": 168.86189999999988
+      },
+      "proxyBytes": 683176,
+      "peakProxyBuffered": 52104,
+      "identities": 394,
+      "epoch": "1791804591",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 45.766999999999825
+    },
+    {
+      "name": "100ms-requested",
+      "delay": 50,
+      "bandwidth": 0,
+      "status": "PASS",
+      "firstMetadataMs": 2502.763899999998,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 124.12430000000313,
+        "p95": 125.318299999999,
+        "p99": null,
+        "max": 126.24119999999675
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 100923.36687629459,
+        "p95": null,
+        "p99": null,
+        "max": 133979.19246706704
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 1075.6402999999991,
+        "p95": null,
+        "p99": null,
+        "max": 1390.543399999995
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 515.763300000006,
+        "p95": null,
+        "p99": null,
+        "max": 582.2104000000036
+      },
+      "proxyBytes": 685622,
+      "peakProxyBuffered": 52882,
+      "identities": 394,
+      "epoch": "1791804606",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 63.03110000000015
+    },
+    {
+      "name": "128KiB-per-second",
+      "delay": 10,
+      "bandwidth": 131072,
+      "status": "PASS",
+      "firstMetadataMs": 1314.4812999999995,
+      "measuredNoopRttMs": {
+        "n": 20,
+        "p50": 31.379899999999907,
+        "p95": 32.175700000007055,
+        "p99": null,
+        "max": 32.20089999999618
+      },
+      "effectiveMetadataBytesPerSecond": {
+        "n": 3,
+        "p50": 94291.81996431111,
+        "p95": null,
+        "p99": null,
+        "max": 98934.8100095422
+      },
+      "arrivalMs": {
+        "n": 10,
+        "p50": 382.5155999999988,
+        "p95": null,
+        "p99": null,
+        "max": 432.7960999999923
+      },
+      "userTurnCompletionMs": {
+        "n": 10,
+        "p50": 173.34979999999632,
+        "p95": null,
+        "p99": null,
+        "max": 206.58710000000428
+      },
+      "proxyBytes": 690660,
+      "peakProxyBuffered": 53965,
+      "identities": 394,
+      "epoch": "1791804640",
+      "history": 1,
+      "fresh": 394,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 53.859800000005635
+    },
+    {
+      "name": "hang-after-search",
+      "status": "PASS",
+      "observed": {
+        "durationMs": 10016.892500000002,
+        "inducedError": true
+      },
+      "identities": 128,
+      "epoch": "1791804660",
+      "history": 1,
+      "fresh": 128,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 30.419900000008056
+    },
+    {
+      "name": "reset-after-search",
+      "status": "PASS",
+      "observed": {
+        "durationMs": 505.9064999999973,
+        "inducedError": true
+      },
+      "identities": 128,
+      "epoch": "1791804673",
+      "history": 1,
+      "fresh": 128,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 41.16130000000703
+    },
+    {
+      "name": "temporary-blackout",
+      "status": "PASS",
+      "observed": {
+        "durationMs": 5603.060700000002,
+        "inducedError": false
+      },
+      "identities": 128,
+      "epoch": "1791804677",
+      "history": 1,
+      "fresh": 128,
+      "missing": 0,
+      "duplicates": 0,
+      "oracleMs": 17.576499999995576
+    }
+  ]
+}
