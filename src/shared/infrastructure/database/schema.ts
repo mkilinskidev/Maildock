@@ -803,6 +803,64 @@ export const mailboxes = pgTable(
   ],
 );
 
+export const receivingCoordinator = pgTable(
+  "receiving_coordinator",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    owner: uuid("owner"),
+    generation: bigint("generation", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    expiresAt: timestamp("expires_at", { withTimezone: true })
+      .notNull()
+      .default(sql`'-infinity'::timestamptz`),
+  },
+  (table) => [
+    check("receiving_coordinator_singleton_check", sql`${table.singleton}`),
+    check(
+      "receiving_coordinator_generation_check",
+      sql`${table.generation}>=0`,
+    ),
+  ],
+);
+
+export const receivingMailboxes = pgTable(
+  "receiving_mailboxes",
+  {
+    mailboxId: uuid("mailbox_id")
+      .primaryKey()
+      .references(() => mailboxes.id, { onDelete: "restrict" }),
+    epoch: bigint("epoch", { mode: "bigint" }).notNull(),
+    revision: bigint("revision", { mode: "bigint" }).notNull(),
+    freshThrough: bigint("fresh_through", { mode: "bigint" }).notNull(),
+    historyBefore: bigint("history_before", { mode: "bigint" }).notNull(),
+    reconcileAfter: bigint("reconcile_after", { mode: "bigint" }).notNull(),
+  },
+  (table) => [
+    check(
+      "receiving_mailboxes_epoch_check",
+      sql`${table.epoch} between 1 and 4294967295`,
+    ),
+    check("receiving_mailboxes_revision_check", sql`${table.revision}>=0`),
+    check(
+      "receiving_mailboxes_fresh_through_check",
+      sql`${table.freshThrough} between 0 and 4294967295`,
+    ),
+    check(
+      "receiving_mailboxes_history_before_check",
+      sql`${table.historyBefore} between 1 and 4294967296`,
+    ),
+    check(
+      "receiving_mailboxes_reconcile_after_check",
+      sql`${table.reconcileAfter} between 0 and 4294967295`,
+    ),
+    check(
+      "receiving_mailboxes_check",
+      sql`${table.historyBefore}<=${table.freshThrough}+1`,
+    ),
+  ],
+);
+
 export const mailboxRoles = pgTable(
   "mailbox_roles",
   {
