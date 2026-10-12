@@ -36,6 +36,7 @@ export type Handler = (peer: Peer, command: Command) => boolean;
 export async function fixture(
   handler: Handler,
   options: Partial<ImapFlowOptions> = {},
+  greeting: "PREAUTH" | "OK" = "PREAUTH",
 ) {
   const origin = performance.now();
   const now = () => performance.now() - origin;
@@ -98,7 +99,9 @@ export async function fixture(
       sockets.delete(socket);
       events.push({ event: "server-close", connection: peer.id, ms: now() });
     });
-    peer.send(`* PREAUTH [CAPABILITY ${capabilities}] Disposable fixture\r\n`);
+    peer.send(
+      `* ${greeting} [CAPABILITY ${capabilities}] Disposable fixture\r\n`,
+    );
     let input = "";
     socket.on("data", (data) => {
       input += data.toString("ascii");
