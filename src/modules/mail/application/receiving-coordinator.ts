@@ -17,7 +17,7 @@ export const RECEIVING_COORDINATOR_DEFAULTS = Object.freeze({
   maxRetryMs: 30_000,
 });
 type Turn = Awaited<ReturnType<typeof receiveInboxTurn>>;
-type Config = Readonly<{
+export type ReceivingCoordinatorConfig = Readonly<{
   connection: ProviderConnection;
   executor: ReceivingExecutor;
   owner: ReceivingOwner;
@@ -37,33 +37,64 @@ type Config = Readonly<{
   onError?: (error: unknown, retryMs: number) => void;
 }>;
 
+export function receivingTiming(timing?: ReceivingCoordinatorConfig["timing"]) {
+  const result = { ...RECEIVING_COORDINATOR_DEFAULTS, ...timing };
+  for (const value of Object.values(result))
+    if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647)
+      throw new Error("Invalid receiving coordinator timing");
+  if (result.operationMs > 10_000 || result.maxRetryMs < result.retryMs)
+    throw new Error("Invalid receiving coordinator deadline/backoff");
+  return result;
+}
+
+/** One reusable operation; admission belongs exclusively to its caller. No
+ * autonomous loop, callback-created connection or retained interval here. */
+export async function runOneReceivingTurn(
+  config: ReceivingCoordinatorConfig,
+  kind: "fresh" | "history",
+  deadline: number,
+  signal: AbortSignal,
+) {
+  const assertCurrent = () => {
+    if (signal.aborted || performance.now() >= deadline)
+      throw new Error("Receiving turn stopped or expired");
+    config.authority.assertCurrent();
+  };
+  assertCurrent();
+  await config.executor.transaction(
+    async (db) => {
+      assertCurrent();
+      await config.authority.renew(db, config.owner);
+      assertCurrent();
+    },
+    { deadline: Math.min(deadline, performance.now() + 2000), signal },
+  );
+  assertCurrent();
+  return receiveInboxTurn(
+    { ...config, options: { kind, deadline, signal, assertCurrent } },
+    config.createClient,
+  );
+}
+
 /** Unwired, single-use account/INBOX lifetime. Serial loop owns C=1 and each
  * adapter invocation destroys its client before admitting PostgreSQL writes.
  * Caller owns the supplied executor; stop cancels only this lifetime's scopes. */
 export class ReceivingCoordinator {
-  private readonly config: Config;
+  private readonly config: ReceivingCoordinatorConfig;
   private readonly timing;
   private readonly cancellation = new AbortController();
   private lifetime?: Promise<void>;
   private state?: ReceivingState;
   private freshDue = 0;
 
-  constructor(config: Config) {
+  constructor(config: ReceivingCoordinatorConfig) {
     this.config = {
       ...config,
       connection: structuredClone(config.connection),
       owner: { ...config.owner },
       authority: { ...config.authority },
     };
-    this.timing = { ...RECEIVING_COORDINATOR_DEFAULTS, ...config.timing };
-    for (const value of Object.values(this.timing))
-      if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647)
-        throw new Error("Invalid receiving coordinator timing");
-    if (
-      this.timing.operationMs > 10_000 ||
-      this.timing.maxRetryMs < this.timing.retryMs
-    )
-      throw new Error("Invalid receiving coordinator deadline/backoff");
+    this.timing = receivingTiming(config.timing);
   }
 
   start(): void {
@@ -78,12 +109,6 @@ export class ReceivingCoordinator {
     this.cancellation.abort();
     await this.lifetime;
   }
-
-  private assertCurrent = () => {
-    if (this.cancellation.signal.aborted)
-      throw new Error("Receiving coordinator stopped");
-    this.config.authority.assertCurrent();
-  };
 
   private async wait(ms: number) {
     const signal = this.cancellation.signal;
@@ -111,31 +136,12 @@ export class ReceivingCoordinator {
         continue;
       }
       try {
-        this.assertCurrent();
         const deadline = performance.now() + this.timing.operationMs;
-        await this.config.executor.transaction(
-          async (db) => {
-            this.assertCurrent();
-            await this.config.authority.renew(db, this.config.owner);
-            this.assertCurrent();
-          },
-          {
-            deadline: Math.min(deadline, performance.now() + 2000),
-            signal: this.cancellation.signal,
-          },
-        );
-        this.assertCurrent();
-        const turn = await receiveInboxTurn(
-          {
-            ...this.config,
-            options: {
-              kind,
-              deadline,
-              signal: this.cancellation.signal,
-              assertCurrent: this.assertCurrent,
-            },
-          },
-          this.config.createClient,
+        const turn = await runOneReceivingTurn(
+          this.config,
+          kind,
+          deadline,
+          this.cancellation.signal,
         );
         this.state = turn.state;
         if (kind === "fresh")
