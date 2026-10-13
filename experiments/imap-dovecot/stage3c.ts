@@ -30,20 +30,27 @@ import { ReceivingExecutor } from "../../src/shared/infrastructure/database/rece
 import { ReceivingScheduler } from "../../src/modules/mail/application/receiving-scheduler";
 import type { ReceivingCoordinatorConfig } from "../../src/modules/mail/application/receiving-coordinator";
 import { generate, message } from "./fixture";
+import { FailureDiagnostics, checkDiagnostics } from "./stage3c-diagnostics";
+import { ReceivingPersistence } from "../../src/modules/mail/application/receiving-persistence";
+import { execFileSync } from "node:child_process";
 
 const image =
   "dovecot/dovecot:2.4.3-dev@sha256:d0db02b4aa9c16bc50c96faad68fcf5724c1453a98a39ada685409227e967898";
 if (process.argv.includes("--check")) {
   checkOracle();
+  checkDiagnostics();
   process.exit(0);
 }
 const started = performance.now();
-const deadline = started + 300_000;
+const failureOnly = process.argv.includes("--failure-only");
+const processBudget = failureOnly ? 120_000 : 300_000;
+const deadline = started + processBudget;
 const evidence: Record<string, unknown> = {
   started: new Date().toISOString(),
   image,
   outcomes: {},
   runs: [],
+  mode: failureOnly ? "failure-isolation-only" : "complete-smoke",
 };
 const outcomes = evidence.outcomes as Record<string, string>;
 const containers: StartedTestContainer[] = [];
@@ -53,9 +60,16 @@ let executor: ReceivingExecutor | undefined;
 let reader: postgres.Sql | undefined;
 let database: ReturnType<typeof createDatabase> | undefined;
 let captureFailure: (() => Promise<void>) | undefined;
+let diagnostic: FailureDiagnostics | undefined;
+let serverEvidence: (() => Promise<void>) | undefined;
 const save = () =>
   writeFileSync(
-    new URL("stage3c-evidence.json", import.meta.url),
+    new URL(
+      failureOnly
+        ? ".runtime/stage3c-failure-evidence.json"
+        : "stage3c-evidence.json",
+      import.meta.url,
+    ),
     JSON.stringify(
       evidence,
       (_, v) => (typeof v === "bigint" ? String(v) : v),
@@ -67,17 +81,17 @@ const expired = new Promise<never>((_, reject) => {
   expire = setTimeout(
     () =>
       reject(
-        new Error("PARTIAL: 280-second execution cutoff reserves cleanup time"),
+        new Error("PARTIAL: execution cutoff reserves 20 seconds for cleanup"),
       ),
-    280_000,
+    processBudget - 20_000,
   );
 });
 const hardStop = setTimeout(() => {
   evidence.hardStop =
-    "PARTIAL: 295-second emergency exit; launcher owns remaining container cleanup";
+    "PARTIAL: emergency exit; launcher owns remaining container cleanup";
   save();
   process.exit(2);
-}, 295_000);
+}, processBudget - 5_000);
 async function until(work: () => Promise<boolean>, name: string, ms = 20_000) {
   const end = Math.min(deadline - 15_000, performance.now() + ms);
   while (performance.now() < end) {
@@ -144,15 +158,20 @@ async function smoke() {
     AND ((p.uid>OLD.fresh_through AND p.uid<=NEW.fresh_through) OR (p.uid>=NEW.history_before AND p.uid<OLD.history_before))), '[]'::jsonb);
     RETURN NEW; END $$;
     CREATE TRIGGER stage3c_audit AFTER UPDATE ON receiving_mailboxes FOR EACH ROW EXECUTE FUNCTION stage3c_audit_progress();`);
-  await generate(1000);
-  await dovecot.copyFilesToContainer([
-    { source: `${root}fixtures/1000/mailbox.tar`, target: "/tmp/fixture.tar" },
-  ]);
-  await command(dovecot, [
-    "sh",
-    "-c",
-    "mkdir -p /tmp/fixture && tar -xf /tmp/fixture.tar -C /tmp/fixture",
-  ]);
+  if (!failureOnly) {
+    await generate(1000);
+    await dovecot.copyFilesToContainer([
+      {
+        source: `${root}fixtures/1000/mailbox.tar`,
+        target: "/tmp/fixture.tar",
+      },
+    ]);
+    await command(dovecot, [
+      "sh",
+      "-c",
+      "mkdir -p /tmp/fixture && tar -xf /tmp/fixture.tar -C /tmp/fixture",
+    ]);
+  }
   const users = Array.from({ length: 5 }, (_, i) => `stage3c-${i + 1}`);
   const inventories = new Map<
     string,
@@ -179,17 +198,19 @@ async function smoke() {
     return client;
   }
   for (const user of users) {
-    await command(dovecot, [
-      "doveadm",
-      "import",
-      "-u",
-      user,
-      "maildir:/tmp/fixture",
-      "",
-      "all",
-    ]);
+    if (!failureOnly) {
+      await command(dovecot, [
+        "doveadm",
+        "import",
+        "-u",
+        user,
+        "maildir:/tmp/fixture",
+        "",
+        "all",
+      ]);
+    }
     const client = await open(user);
-    await client.messageDelete("100,500", { uid: true });
+    if (!failureOnly) await client.messageDelete("100,500", { uid: true });
     await client.mailboxOpen("INBOX");
     assert(client.mailbox);
     const items = [];
@@ -199,8 +220,8 @@ async function smoke() {
       { uid: true },
     ))
       items.push({ uid: row.uid, id: row.envelope!.messageId! });
-    assert.equal(items.length, 998);
-    assert.equal(new Set(items.map((v) => v.id)).size, 998);
+    assert.equal(items.length, failureOnly ? 0 : 998);
+    assert.equal(new Set(items.map((v) => v.id)).size, items.length);
     for (const item of items)
       assert.match(item.id, /^<initial-2403-\d{6}@maildock.invalid>$/);
     inventories.set(user, {
@@ -212,8 +233,8 @@ async function smoke() {
   }
   evidence.fixture = {
     accounts: 5,
-    imported: 5000,
-    retained: 4990,
+    imported: failureOnly ? 0 : 5000,
+    retained: failureOnly ? 0 : 4990,
     setupMs: performance.now() - started,
     inventories: structuredClone(Object.fromEntries(inventories)),
   };
@@ -221,7 +242,7 @@ async function smoke() {
   evidence.serverInventory = Object.fromEntries(inventories);
   console.log(`Fixture ready in ${Math.round(performance.now() - started)}ms`);
   save();
-  for (const workers of [2, 4]) {
+  for (const workers of failureOnly ? [2] : [2, 4]) {
     const run: Record<string, unknown> = {
       workers,
       admissions: [],
@@ -278,7 +299,16 @@ async function smoke() {
     const [lease] =
       await db`select maildock_receiving_takeover(${actor},60000) as generation`;
     const owner = { actor, generation: BigInt(lease.generation) };
-    executor = new ReceivingExecutor(url, 2);
+    if (failureOnly) {
+      diagnostic = new FailureDiagnostics(
+        pg.getMappedPort(5432),
+        dovecot.getMappedPort(31993),
+      );
+      run.diagnosticTraces = diagnostic.traces;
+    }
+    executor = diagnostic
+      ? diagnostic.executor(url)
+      : new ReceivingExecutor(url, 2);
     run.timing = {
       pollMs: 5000,
       operationMs: 4000,
@@ -292,6 +322,7 @@ async function smoke() {
       liveOwned: records.filter((r) => !r.retired).length,
       activeSlots: scheduler?.snapshot.active,
       rssBytes: process.memoryUsage().rss,
+      ...(diagnostic?.resources() ?? {}),
     });
     for (const user of users) {
       const fixtureClient = await open(user);
@@ -346,11 +377,13 @@ async function smoke() {
           },
         },
         authority: {
-          assertCurrent: () => {},
+          assertCurrent: () => diagnostic?.assertCurrent(user),
           renew: async (tx) => {
+            diagnostic?.mark(user, "postgres.lease.lock-request");
             const [current] = await tx.execute(
               sql`select owner,generation,expires_at>clock_timestamp() as live from receiving_coordinator where singleton for update`,
             );
+            diagnostic?.mark(user, "postgres.lease.lock-acquired");
             assert(
               current.live &&
                 current.owner === actor &&
@@ -359,6 +392,7 @@ async function smoke() {
             await tx.execute(
               sql`update receiving_coordinator set expires_at=clock_timestamp()+interval '60 seconds' where singleton`,
             );
+            diagnostic?.mark(user, "postgres.lease.renewed");
           },
         },
         timing: {
@@ -369,8 +403,11 @@ async function smoke() {
         },
         createClient: (options) => {
           overlap ||= records.some((r) => r.user === user && !r.retired);
+          const observedOptions = diagnostic
+            ? diagnostic.imapOptions(user, options)
+            : options;
           const client = new ImapFlow({
-            ...options,
+            ...observedOptions,
             tls: { ...options.tls, ca, servername: "localhost" },
             ...(disabled && user === users[0]
               ? { auth: { user, pass: "disabled-fixture-password" } }
@@ -383,20 +420,35 @@ async function smoke() {
                   status: response.command,
                   at: performance.now(),
                 });
-              return options.receivingResponse?.(response, request);
+              return observedOptions.receivingResponse?.(response, request);
             },
           });
           const record = { user, client, retired: false };
           records.push(record);
           const retire = client.retireReceiving.bind(client);
           client.retireReceiving = async () => {
+            diagnostic?.mark(user, "imap.retirement-start");
             await retire();
+            diagnostic?.mark(user, "imap.retirement-end");
             record.retired = true;
             (run.retirements as unknown[]).push({
               user,
               at: performance.now(),
             });
           };
+          if (diagnostic) {
+            const connect = client.connect.bind(client);
+            client.connect = async () => {
+              diagnostic?.mark(user, "imap.connect-call");
+              try {
+                await connect();
+                diagnostic?.mark(user, "imap.connect-complete");
+              } catch (error) {
+                diagnostic?.mark(user, "imap.connect-error", String(error));
+                throw error;
+              }
+            };
+          }
           maxSockets = Math.max(
             maxSockets,
             records.filter((r) => !r.retired).length,
@@ -411,6 +463,7 @@ async function smoke() {
             at: performance.now(),
             error: String(error),
           });
+          diagnostic?.finish(user, retry);
         },
         onTurn: (kind, turn) => {
           turns.push({
@@ -421,6 +474,7 @@ async function smoke() {
             revision: String(turn.state.revision),
             at: performance.now(),
           });
+          diagnostic?.finish(user);
           // Global gate closes before another selection. Each account can have
           // at most one history turn in this wave; authority remains in SQL.
           if (wave && kind === "history") {
@@ -512,7 +566,11 @@ async function smoke() {
         executor: executor!,
         tuning: { workers },
         historyAllowed: () => history,
-        onAdmission: (a) => admissions.push(a),
+        onAdmission: (a) => {
+          admissions.push(a);
+          const identity = identities.find((i) => i.account === a.account)!;
+          diagnostic?.admit(identity.user, a);
+        },
       });
       scheduler.start();
     };
@@ -556,6 +614,142 @@ async function smoke() {
         await boundary(`history-${target}-wave`);
       }
     };
+    if (failureOnly) {
+      // Minimum receiving enrollment, with one pending real-server identity per
+      // account. No history, previous arrival batch or restart is replayed.
+      for (const a of identities)
+        await new ReceivingPersistence(executor).initialize(
+          owner,
+          a.mailbox,
+          {
+            complete: true,
+            epoch: BigInt(inventories.get(a.user)!.epoch),
+            uidNext: BigInt(a.baselineNext),
+          },
+          { deadline: performance.now() + 4000 },
+        );
+      await boundary("diagnostic-enrolled-empty");
+      await generate(1);
+      await dovecot.copyFilesToContainer([
+        {
+          source: `${root}fixtures/1/mailbox.tar`,
+          target: "/tmp/diagnostic.tar",
+        },
+      ]);
+      await command(dovecot, [
+        "sh",
+        "-c",
+        "mkdir -p /tmp/diagnostic && tar -xf /tmp/diagnostic.tar -C /tmp/diagnostic",
+      ]);
+      for (const user of users) {
+        await command(dovecot, [
+          "doveadm",
+          "import",
+          "-u",
+          user,
+          "maildir:/tmp/diagnostic",
+          "",
+          "all",
+        ]);
+        const client = await open(user);
+        const items = [];
+        for await (const row of client.fetch(
+          "1:*",
+          { uid: true, envelope: true },
+          { uid: true },
+        ))
+          items.push({ uid: row.uid, id: row.envelope!.messageId! });
+        assert.equal(items.length, 1);
+        inventories.get(user)!.items = items;
+        await client.logout();
+      }
+      evidence.fixture = {
+        accounts: 5,
+        imported: 5,
+        retained: 5,
+        setupMs: performance.now() - started,
+        inventories: structuredClone(Object.fromEntries(inventories)),
+      };
+      run.serverSamples = [];
+      const config = await dovecot.exec(["doveconf", "-a"]);
+      evidence.dovecotAuthSettings = {
+        exitCode: config.exitCode,
+        settings: config.output
+          .split(/\r?\n/)
+          .filter((line) =>
+            /^(auth_.*(?:delay|penalty|policy|timeout)|login_greeting_delay|auth_worker_max_count)\b/.test(
+              line,
+            ),
+          ),
+      };
+      const sample = async () => {
+        const at = performance.now();
+        const penalty = await dovecot.exec(["doveadm", "penalty"]);
+        const activity =
+          await db`select pid,state,wait_event_type,wait_event,extract(epoch from(clock_timestamp()-xact_start))*1000 as xact_ms from pg_stat_activity where application_name='maildock-receiving-stage1'`;
+        (run.serverSamples as unknown[]).push({
+          at,
+          completed: performance.now(),
+          penalty,
+          activity,
+        });
+        save();
+      };
+      serverEvidence = async () => {
+        evidence.dovecotLogs = execFileSync(
+          "docker",
+          ["logs", dovecot.getId()],
+          {
+            encoding: "utf8",
+            timeout: 5000,
+            maxBuffer: 1024 * 1024,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        await sample();
+      };
+      await sample();
+      disabled = true;
+      history = false;
+      diagnostic!.ready(users);
+      run.scenarioStart = performance.now();
+      start();
+      const end = performance.now() + 20_000;
+      while (performance.now() < end) {
+        await sample();
+        await boundary("failure-diagnostic-observation");
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.min(1000, Math.max(0, end - performance.now())),
+          ),
+        );
+      }
+      await stop();
+      diagnostic!.settleCancelled();
+      const final = await boundary("failure-diagnostic-final");
+      run.final = final;
+      run.healthyProgress = identities.slice(1).map((a) => ({
+        user: a.user,
+        state: final.states.find((s) => s.mailbox === a.mailbox),
+      }));
+      run.failedAccountRetries = errors.filter((e) => e.user === users[0]);
+      assert(
+        run.failedAccountRetries && errors.some((e) => e.user === users[0]),
+        "Unavailable account must enter retry",
+      );
+      run.healthyTimeouts = errors.filter(
+        (e) => e.user !== users[0] && /deadline/.test(e.error),
+      );
+      outcomes.W2 = "DIAGNOSTIC COMPLETE";
+      outcomes.W4 = "NOT RUN: diagnosis restricted to W=2";
+      evidence.result = "DIAGNOSTIC COMPLETE";
+      save();
+      console.log(
+        `Failure-only W=2 complete: ${errors.length} errors; healthy deadline failures ${(run.healthyTimeouts as unknown[]).length}`,
+      );
+      return;
+    }
     start();
     await until(
       async () => {
@@ -760,10 +954,15 @@ try {
   };
   await cleanup("scheduler-stop", async () => {
     await scheduler?.stop();
+    diagnostic?.settleCancelled();
   });
   await cleanup("final-independent-evidence", async () => {
     await captureFailure?.();
   });
+  await cleanup("server-evidence", async () => {
+    await serverEvidence?.();
+  });
+  diagnostic?.restore();
   for (const client of clients) client.close();
   await cleanup("executor-stop", async () => {
     await executor?.stop();

@@ -1,4 +1,263 @@
-# Stage 3C — corrected harness and one real-Dovecot evaluation
+# Stage 3C — healthy-account timeout diagnosis
+
+2026-10-13. **TEST ENVIRONMENT ISSUE — shared-IP Dovecot authentication penalty.**
+One W=2 failure-only diagnostic reproduced healthy-account deadline failures and
+localized them to waiting for AUTHENTICATE, before SELECT/SEARCH/FETCH or metadata
+persistence. Dovecot applied an authentication penalty to the shared fixture IP.
+When that observed penalty returned to zero, all four healthy accounts committed
+bounded metadata work with the same four-second deadline and capacities.
+No production fix or fixture-policy correction was implemented.
+
+## Base, execution mode and limits
+
+Started clean on `test/imap-sync-stage-3c-dovecot` at
+`44fd36205f751895741e6c758bd1a4321728afa4`. The existing harness now supports
+`--failure-only`, exposed by the existing PowerShell launcher as `-FailureOnly`.
+It reuses the same disposable Dovecot/PostgreSQL images, TLS, database migrations,
+account provisioning, Stage 1 executor, Stage 3B scheduler and independent oracle.
+
+Minimum fixture: five independently enrolled empty INBOXes with actual epoch and
+UIDNEXT=1, F=0/E=1/revision=0, followed by one `doveadm import` message per account.
+Actual UID/envelope reads recorded all five pending UID 1 identities. No receiving
+history, previous arrival batch or scheduler restart was replayed. Account 1 used
+the identical invalid-password factory method; the other four credentials were
+unchanged. History was disabled through the existing global gate.
+
+Exactly **one** diagnostic scheduler lifetime ran for a fixed **20 seconds** with
+W=2, D=2, C=1, `operationMs=4000`, `pollMs=5000`, retry delays 200/400/800ms and
+unchanged production selection policy. Scheduler-managed backoff retries are
+observations within that lifetime, not diagnostic reruns. No complete smoke or
+W=4 execution was performed.
+
+The process budget was reduced to 120 seconds, reserving 20 seconds for cleanup
+and an emergency evidence checkpoint five seconds before the outer limit. Actual
+fixture/enrollment/one-message preparation: **7,397.89 ms**; observed scenario
+through scheduler drain: **20,012.03 ms**; entire process including cleanup:
+**28,666.38 ms**. No deadline or capacity was increased.
+
+## Passive instrumentation and independent evidence
+
+All instrumentation is in `experiments/imap-dovecot/stage3c-diagnostics.ts` and the
+standalone harness. No production source or ImapFlow/postgres.js patch was edited.
+The helper observes the actual Node TCP/TLS streams without changing connection
+arguments or return values, and restores the process-local observers in `finally`.
+Authentication data is redacted: command observations contain verbs/tags only.
+
+Per-turn monotonic records cover scheduler admission, first execution guard,
+authority/lease and recovery transaction requests, actual transaction callback
+entry/exit, lease-row lock/renewal, TCP connect, TLS secure completion, IMAP greeting,
+command sends/tagged replies, native socket closure, IMAP retirement, persistence
+transaction settlement and scheduler allocation release. AsyncLocalStorage assigns
+owned executor sockets to the active account turn.
+
+`postgres.*.request → admitted-work-start` includes executor admission, TCP/driver
+startup, BEGIN and timeout setup; it is not mislabeled as pure queue wait.
+`work-end → settled-slot-released` includes COMMIT/ROLLBACK and driver retirement;
+no claim is made to separately time an internal COMMIT packet or driver `onclose`.
+Native socket close is independently recorded. Scheduler completion/error callbacks
+run after the implementation deletes its active allocation. Cancellation at stop
+is separately marked `scheduler.drained-on-stop`.
+
+The reported eligible wait precedes scheduler allocation and is derived from
+observed eligibility/previous completion/backoff. It is an observer estimate of
+waiting for W/selection, not operation execution duration. For these first fresh
+admissions the five accounts were simultaneously eligible; no history competed.
+The four-second turn deadline begins at admission, not at earlier eligibility.
+
+Once-per-second observations also capture `doveadm penalty` and PostgreSQL
+`pg_stat_activity`. `finally` preserved Dovecot logs, the final server sample,
+22 repeatable-read SQL boundaries, full placements, publication audit, connection
+counts, retirement, all ten errors and all 15 turn traces. All 22 SQL oracles
+passed, including the final failure/cleanup boundary and offline replay.
+
+## Phase timings: affected accounts 3 and 4
+
+All values are milliseconds. Eligible wait is outside the operation budget.
+Execution start, TLS, AUTH send/reply and total slot duration are relative to
+scheduler admission. Lease and recovery columns are whole transaction durations
+including connection/commit/retirement. A dash means AUTH did not reply before
+cancellation; consequently SELECT/SEARCH/FETCH/persistence were **not reached**.
+
+| Turn | Account   | Eligible wait outside deadline | Execution start | Lease transaction | Recovery transaction | TLS secure | AUTH sent | AUTH reply | Total allocated duration |
+| ---- | --------- | ------------------------------ | --------------- | ----------------- | -------------------- | ---------- | --------- | ---------- | ------------------------ |
+| 3    | stage3c-3 | 2135.55                        | 0.07            | 24.99             | 33.82                | 72.15      | 74.63     | -          | 4011.84                  |
+| 4    | stage3c-4 | 4003.06                        | 0.07            | 32.54             | 37.85                | 84.83      | 86.87     | -          | 4010.89                  |
+| 8    | stage3c-3 | 5675.17                        | 0.05            | 41.78             | 27.55                | 81.80      | 84.17     | -          | 4000.54                  |
+| 9    | stage3c-4 | 5941.41                        | 0.08            | 34.88             | 35.84                | 85.34      | 88.20     | -          | 4001.63                  |
+| 13   | stage3c-3 | 1518.21                        | 0.02            | 27.52             | 36.01                | 76.04      | 80.51     | 89.34      | 157.80                   |
+| 14   | stage3c-4 | 3.91                           | 0.07            | 43.75             | 25.54                | 83.31      | 86.41     | 92.78      | 165.88                   |
+
+For account 3's first affected turn, TCP connected at +61.26ms, TLS at +72.15ms,
+and AUTHENTICATE was sent at +74.63ms. There were **no further incoming bytes**
+before retirement at +4011.13ms. Account 4 similarly connected TCP at +73.06ms,
+secured TLS at +84.83ms and sent AUTHENTICATE at +86.87ms, with no subsequent
+incoming bytes before retirement at +4010.11ms. Thus approximately 3.92–3.94 seconds
+were spent waiting for authentication protocol progress, rather than fetching or
+publishing metadata. The few milliseconds beyond 4000 are timer dispatch and
+settlement observations, not an increased operation deadline.
+
+When the server penalty had cleared, account 3 authenticated in **8.83ms** and
+account 4 in **6.37ms**. Successful work then followed:
+
+| Successful turn    | SELECT round trip | UID SEARCH round trip | UID FETCH round trip | IMAP retirement | Persistence transaction including commit/retirement | Total allocated duration |
+| ------------------ | ----------------- | --------------------- | -------------------- | --------------- | --------------------------------------------------- | ------------------------ |
+| Account 3, turn 13 | 1.64              | 0.97                  | 1.97                 | 0.50            | 57.25                                               | 157.80                   |
+| Account 4, turn 14 | 1.98              | 1.32                  | 1.72                 | 0.63            | 61.42                                               | 165.88                   |
+
+Across all traces, admission-to-first-execution lag was at most **0.69ms**. Whole
+lease transactions were at most **54.17ms**, lease-row lock acquisition at most
+**15.60ms**, and whole recovery transactions at most **49.29ms**. Observed owned
+PostgreSQL sockets never exceeded D=2; every activity sample had no retained
+Stage 1 backend. The sampling could miss brief SQL locks, but per-turn timings
+bound them far below the failed authentication wait. No multi-second database
+or socket-retirement bottleneck was observed.
+
+## Server-side shared resource and root-cause assessment
+
+Before the scheduler started, `doveadm penalty` was empty. All fixture sessions
+were logged by Dovecot with source IP **172.17.0.1**, regardless of IMAP user.
+The next sample after the first invalid-password request showed:
+
+```text
+IP         penalty last_penalty        last_update
+172.17.0.1 1       2026-10-13 13:09:14   13:09:14
+```
+
+That score remained 1 throughout repeated healthy authentication stalls. The
+sample at monotonic 26604.12ms showed score **0**, after which successful healthy
+turns appeared. Dovecot's effective configuration reported
+`auth_failure_delay = 2 secs`; account 1's first AUTH failure reply took
+**2014.29ms**. Dovecot logs reported the failed healthy sessions as
+`auth_waiting_client`, with the SASL exchange unfinished at the client's close.
+That log label alone is not blamed on ImapFlow: the actual receive-byte observer
+shows no server continuation/reply reaching those clients after AUTHENTICATE.
+
+Dovecot documents that authentication penalties are tracked **per IP**, before
+password lookup, and grow from the initial two-second failed-auth response to
+four-second and longer delays. This is the server-side shared state that makes
+an invalid password on one fixture user affect other users connecting through
+Docker's same source IP. A four-second server auth delay does not fit within the
+remaining ~3.9 seconds of this turn's unchanged total operation budget.
+[Official Dovecot authentication penalty documentation](https://doc.dovecot.org/2.4.1/core/config/auth/penalty.html).
+
+**Assessment: TEST ENVIRONMENT ISSUE.** Reproduced phase localization, live shared
+penalty state, same source IP, absence of auth bytes during penalty and fast
+healthy authentication after the penalty cleared support this mechanism. The
+shared resource is Dovecot's IP-scoped authentication penalty, not a global
+PostgreSQL admission deadlock or lost connection retirement.
+
+Limitations: no server-internal penalty timer trace or penalty-disabled
+counterfactual was run, and this diagnosis does not prove the cause of every
+individual timeout in the earlier uninstrumented 5,000-message run. The documented
+four-second penalty is consistent with the observed premature client closes;
+its full server delay was not observed because the client deadline fired first.
+No universal healthy-account latency guarantee or repaired engine is claimed.
+
+## Durable progress, backoff and cleanup
+
+All five actual selected epochs were 1791896952 in this minimal fixture; epoch
+uniqueness across users is not assumed. The key is account/mailbox/epoch/UID.
+Independent final state:
+
+| Account   | Epoch      | F   | E   | Revision | Exact placements |
+| --------- | ---------- | --- | --- | -------- | ---------------- |
+| stage3c-1 | 1791896952 | 0   | 1   | 0        | 0                |
+| stage3c-2 | 1791896952 | 1   | 1   | 1        | 1                |
+| stage3c-3 | 1791896952 | 1   | 1   | 1        | 1                |
+| stage3c-4 | 1791896952 | 1   | 1   | 1        | 1                |
+| stage3c-5 | 1791896952 | 1   | 1   | 1        | 1                |
+
+Each healthy account durably published exactly its inventoried UID 1 and Message-ID
+with a single bounded fresh transaction. The bad account published nothing and
+retained F=0/E=1/revision=0. There were no duplicates or false frontier advances.
+Healthy progress occurred during the same diagnostic lifetime while the invalid
+password remained configured, without restoring account 1.
+
+Account 1's error/retry records were:
+
+| Error                                | Monotonic timestamp | Retry delay |
+| ------------------------------------ | ------------------- | ----------- |
+| `IMAP AUTHENTICATE failed`           | 12282.87ms          | 200ms       |
+| `Metadata window deadline exhausted` | 22169.94ms          | 400ms       |
+| `IMAP AUTHENTICATE failed`           | 27925.53ms          | 800ms       |
+
+Actual readmissions were later than retry eligibility because W=2 was occupied:
+first retry had an additional **5678.46ms** eligible wait, next **3767.82ms**.
+The scheduler did not admit the account before its backoff delay expired.
+A fourth account-1 turn was canceled at the fixed scenario stop and is recorded
+as cancellation, not a successful operation or retry error.
+
+Seven healthy deadline errors occurred: account 2 twice, account 3 twice, account 4
+twice and account 5 once. Those failed turns never reached SELECT/SEARCH/FETCH or
+metadata persistence. Four later healthy turns succeeded; one final bad-account
+turn was canceled. Maximum scheduler-owned IMAP connections: **2**, per-account
+overlap: **false**, maximum owned PostgreSQL sockets: **2**. Final owned IMAP/PG
+connections and scheduler execution slots were all zero. Both disposable containers
+were removed, and cleanup errors were empty.
+
+## Smallest recommended correction and exact outcome
+
+For a later authorized smoke evaluation, isolate the fixture's invalid-password
+fault from the IP-wide penalty. The smallest documented fixture-only correction
+is to disable the anvil authentication-penalty listener in the disposable Dovecot
+configuration:
+
+```text
+service anvil {
+  unix_listener anvil-auth-penalty {
+    mode = 0
+  }
+}
+```
+
+Keep the normal failed-password response delay, four-second turn deadline, W=2,
+D=2, C=1 and scheduler policy. The snippet is a **recommendation only**: it was
+neither applied nor tested here. No production configuration change is recommended
+from this fixture diagnosis. The same official documentation above specifies this
+listener setting; disabling `auth_failure_delay` alone would not address the
+shared-IP penalty mechanism.
+
+| Check                                             | Outcome                                                |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| Single isolated W=2 diagnostic                    | COMPLETE; symptom REPRODUCED                           |
+| Account 3/4 timeout phase                         | CONFIRMED: authentication protocol wait                |
+| Shared-IP penalty attribution                     | TEST ENVIRONMENT ISSUE, evidence and limitations above |
+| Bad-account bounded backoff                       | PASS: 200/400/800ms, no early readmission              |
+| Healthy-account bounded durable progress          | PASS: all four published UID 1 before stop             |
+| Independent final state and 22 boundary oracles   | PASS                                                   |
+| W/D/C limits and native resource settlement       | PASS                                                   |
+| Container cleanup and evidence in finally         | PASS                                                   |
+| Typecheck, lint, formatting, diagnostic preflight | PASS                                                   |
+| Penalty-disabled verification / correction        | NOT RUN / NOT IMPLEMENTED                              |
+| Complete Stage 3C smoke, W=4, Stage 4             | NOT RUN                                                |
+
+Stage 3C remains **PARTIAL** and Stage 4 readiness is unestablished. This diagnosis
+ends here; it does not implement a production fix or authorize another evaluation.
+
+## Retained evidence and reproduction
+
+`experiments/imap-dovecot/stage3c-failure-evidence.json.gz` preserves all per-turn
+monotonic events, effective failure-delay settings, 21 server samples, full
+Dovecot logs, ten errors, durable snapshots, UID inventory and retirement evidence.
+SHA-256 of uncompressed JSON:
+`10fa5bf7929d96fccd396964ec34c724c4789551bf7f610ea7b75c3d9bcee1f1`.
+Earlier smoke artifacts remain unchanged. Runtime JSON is under the ignored
+`.runtime` directory, and the launcher writes separate ignored failure-mode logs.
+
+```powershell
+node --import tsx experiments/imap-dovecot/stage3c.ts --check
+powershell -NoProfile -ExecutionPolicy Bypass -File experiments/imap-dovecot/stage3c.ps1 -FailureOnly
+```
+
+The preflight checks oracle negatives plus diagnostic attribution, deadline,
+credential redaction and observer restoration without starting a server scenario.
+The full smoke path is unchanged in scope and was not executed in this task.
+
+---
+
+## Previous corrected smoke evaluation — historical record
+
+### Stage 3C — corrected harness and one real-Dovecot evaluation
 
 2026-10-13. **PARTIAL.** The corrected W=2 run passed initial receiving, durable
 history, fresh-message visibility, the independent PostgreSQL oracle and restart.
