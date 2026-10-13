@@ -15,6 +15,13 @@ suite run. Current-first recovery and independently observed fresh visibility
 pass; the eight-account W=4 profile does not establish per-account historical
 progress. Historical results below are retained. See the finalization section
 at the end for assertion contracts, negative controls and measurements.
+
+Latest diagnosis: **CONFIRMED SCHEDULER DEFECT in the distribution of protected
+history opportunities**. A complete W=4 trace shows two aged, healthy accounts
+receiving zero history admissions despite 16 fully open opportunities each.
+Individual cursor choices were legal; fluctuating C=1 availability and the
+protected-active gate repeatedly bypassed the same waiting work. No fix was
+implemented. See the final diagnosis section; Stage 3B remains BLOCKED.
 Stop-on-critical-gate-failure was applied: no acceptance assertion was weakened,
 no Stage 1/2 repair was attempted, and Stage 4 was not started.
 
@@ -731,3 +738,232 @@ intermittent W=4 shutdown/cleanup timeout remains disclosed and unreproduced;
 this task did not launch a reproduction campaign solely for it. No new
 production correctness defect was conclusively isolated or fixed. Stage 4,
 production integration, real accounts, push, merge and PR remain out of scope.
+
+## W=4 history starvation diagnosis — 2026-10-13
+
+Started from clean, exact HEAD
+`5e2a5e253c9a770a05827d9f4cdf7598ba7d98c6` on the requested branch.
+Investigated only the unchanged eight-account W=4 sustained-demand scenario.
+**CONFIRMED SCHEDULER DEFECT: protected-history opportunity distribution is
+not fair under changing account availability.** This is an end-to-end
+fairness/liveness defect, not a corrupted cursor or an illegal individual
+selection. The original registration-order assertion is not reinstated and
+the current fairness requirement is not relaxed.
+
+### Bounded instrumentation and exact run scope
+
+The only command used for test execution was:
+
+```powershell
+pnpm exec vitest run tests/receiving-scheduler.integration.test.ts -t 'W=4 rotates continuously' --maxWorkers=1 --no-file-parallelism
+```
+
+Temporary diagnostics, enabled by `MAILDOCK_HISTORY_DIAGNOSTIC`, wrapped the
+existing selector without changing any branch, candidate, timing, capacity or
+policy. Each selection recorded the pre-selection account active/exclusion
+state, available accounts, due fresh, history eligibility/age, `historySince`,
+`freshDue`, `retryAt`, cursors, `lastProtected`, `protectedActive`, the exact
+fresh-wait predicate and chosen account/kind. Reasons included active C=1,
+backoff, unknown/complete history, insufficient age, fresh-wait envelope,
+startup barrier and both protected-history gates. Account UUIDs/mailbox UUIDs
+were mapped once to registration indices; time was monotonic and relative to
+this scheduler lifetime. No health callback was supplied, so its gate was the
+original default true; it was not re-invoked by instrumentation.
+
+The buffer was capped at 256 events and printed only after normal test cleanup
+stopped the scheduler. No per-decision terminal I/O, unbounded log collection,
+new timer, framework or benchmark was added. Test-only cleanup diagnostics
+then used the existing independent PostgreSQL reader/audit and exact publication
+oracle to verify committed F/E/revision/epoch, all covered UID placements,
+completed SEARCH/FETCH evidence and final closed-client/C=1/W allocations.
+
+| Run            | Result                       | Total duration | Evidence completeness                                                       |
+| -------------- | ---------------------------- | -------------: | --------------------------------------------------------------------------- |
+| Initial trace  | 1 failed, 27 skipped; exit 1 |        22.65 s | 256 recorded events; 100 later events dropped; complete final durable audit |
+| Complete trace | 1 failed, 27 skipped; exit 1 |        21.95 s | 154 selections + 31 completed history events = 185 events; zero dropped     |
+
+The second run removed **fresh completion logging only** from the buffer to
+retain all decisions within the same cap. It did not change the scenario or
+selection policy. Final fresh commits remain independently present in the SQL
+audit. The complete trace spans selection timestamps 0.27–14989.30 ms.
+Raw local evidence: `stage3b-history-diagnosis.log` and
+`stage3b-history-diagnosis-complete.log`; bounded derived summaries:
+`stage3b-history-diagnosis-summary.log` and
+`stage3b-history-diagnosis-complete-summary.log`. No full Stage 3B suite or
+shutdown-timeout reproduction was run, and no unhandled error was reported.
+
+### Durable state and completed historical work
+
+The complete run's post-retirement independent SQL audit produced:
+
+| Account index |    F |    E | Revision | History admissions | Completed historical commits | Committed E sequence          |
+| ------------- | ---: | ---: | -------: | -----------------: | ---------------------------: | ----------------------------- |
+| 1             | 2432 |    1 |       19 |                  8 |                            8 | 897,769,641,513,385,257,129,1 |
+| 2             | 2560 |  129 |       19 |                  7 |                            7 | 897,769,641,513,385,257,129   |
+| 3             | 3456 |  897 |       20 |                  1 |                            1 | 897                           |
+| 4             | 3328 |  897 |       19 |                  1 |                            1 | 897                           |
+| 5             | 2432 |    1 |       19 |                  8 |                            8 | 897,769,641,513,385,257,129,1 |
+| 6             | 2560 |  257 |       18 |                  7 |                            6 | 897,769,641,513,385,257       |
+| 7             | 3328 | 1025 |       18 |                  0 |                            0 | None                          |
+| 8             | 3328 | 1025 |       18 |                  0 |                            0 | None                          |
+
+All eight had zero receiving errors and epoch 7. Account 6's final admitted
+history operation was not committed before stop; admission is not publication.
+The resource and exact-placement audit passed for all accounts after cleanup.
+The 31 completed historical turns took approximately **309.91–605.15 ms** from
+selection observation to acknowledged turn completion, below the unchanged
+1000 ms history budget. This corroborates a serviceable fixture and actual
+historical publication elsewhere; it does not assert a provider SLA or that
+every hypothetical alternative operation would have succeeded.
+
+The initial trace independently finished with admissions
+`[8,8,4,0,8,8,3,0]`; accounts 4/8 had E=1025 and zero historical commits.
+The historical full-suite vector `[8,6,1,0,8,5,0,0]` is retained above. Thus the
+exact zero-history indices vary with timing: this is not a hard-coded exclusion
+of account indices 4/7/8. The same mechanism affected all three original index
+positions across these observations. The original run had no complete decision
+trace, so its individual past decisions cannot be reconstructed exactly.
+
+### Safe opportunities versus legitimate exclusions
+
+An **open opportunity for account i** below means that the scheduler really
+called selection with a free W allocation, account i was inactive (C=1 free),
+outside backoff, had known pending E>1, was fully aged, passed its fresh-wait
+guard, startup current opportunities were complete, and both protected gates
+were false. These are actual selection events, not hypothetical mid-operation
+preemption or an assumption that a busy account was available.
+
+| Complete trace                                                      | Account 4 | Account 7 | Account 8 |
+| ------------------------------------------------------------------- | --------: | --------: | --------: |
+| Pending/fully-aged selection observations                           |       143 |       142 |       142 |
+| Excluded as active with C=1 held                                    |        53 |        53 |        52 |
+| Available, fully aged and fresh-wait guard passed                   |        79 |        79 |        80 |
+| Of those, blocked by protectedActive                                |        63 |        63 |        64 |
+| Of those, protectedActive true and lastProtected false              |        47 |        44 |        48 |
+| Of those, lastProtected true (also protectedActive true)            |        16 |        19 |        16 |
+| Fully open opportunities                                            |        16 |        16 |        16 |
+| Open opportunity selected for this account's history                |         1 |         0 |         0 |
+| Open opportunity assigned to another history account                |        15 |        16 |        16 |
+| This account selected fresh despite being aged/available/guard-safe |        15 |        16 |        16 |
+
+Active exclusions are legitimate and account for part of the waiting, but do
+**not** explain the whole result. Accounts 7/8 were genuinely available at 16
+history-admission decisions each and were never chosen. Neither backoff,
+authority failure, unknown history nor missing account eligibility explains
+those 16 events. There were 17 selection events with a failed global
+fresh-wait predicate during the run; these legitimately paused protection but
+are excluded from the open-opportunity counts. The fresh-wait guard was not a
+permanent block for the zero-history accounts. No event for either account was
+blocked by `lastProtected` alone.
+
+The instrumented selections always had at most three existing active turns
+before admitting the fourth. The original C=1/W resource assertions passed.
+The trace found **zero violations of instantaneous protected-candidate
+round-robin**: each chosen historical account was exactly the first currently
+admissible candidate at/after the history cursor. The flaw appears across
+successive eligibility changes, not within one candidate list.
+
+### Exact mechanism: phase-dependent bypass with no missed-opportunity debt
+
+Early protected selections alternated between availability groups:
+
+| Relative time | History cursor before selection | Fully admissible history candidates | Active accounts | Selected history |
+| ------------- | ------------------------------: | ----------------------------------- | --------------- | ---------------: |
+| 580.23 ms     |                               1 | 1,2,3,4                             | 6,7,8           |                1 |
+| 892.65 ms     |                               2 | 5,6,7,8                             | 2,3,4           |                5 |
+| 1296.39 ms    |                               6 | 1,2,3,4                             | 6,7,8           |                1 |
+| 1661.03 ms    |                               2 | 5,6,7,8                             | 2,3,4           |                5 |
+| 2077.03 ms    |                               6 | 1,2,3,4                             | 6,7,8           |                1 |
+| 2510.18 ms    |                               2 | 5,6,7,8                             | 2,3,4           |                5 |
+
+At each individual boundary the cursor correctly skipped active accounts.
+However, those skipped accounts did not retain an effective claim on a later
+safe opportunity. When they were next available, a lower-index candidate
+appeared earlier on the advanced/wrapped cursor. When the cursor returned to
+their positions, they were again active with freshly admitted current work.
+After accounts 1/5 completed their eight windows, the same effect mostly
+alternated history between 2/6. At 8644.31 ms, cursor 7 skipped active 7/8 and
+selected 2 from candidates 2,3,4. At 9025.06 ms, available candidates were
+6,7,8, but cursor 3 selected 6. That pattern repeated through multiple cycles.
+
+Fresh resubmission sustains the phase pattern. At **974.02 ms**, account 7 had
+historySince=653.99 ms, freshDue=653.99 ms, retryAt=0 and was available.
+Its projected fresh wait was 1687.36 ms, safely below 5000 ms. `lastProtected`
+was false but `protectedActive` true, so fresh 7 was selected. At **1058.44 ms**,
+account 8 was similarly available/aged, with historySince/freshDue=693.94 ms,
+retryAt=0 and projected wait=1771.78 ms; fresh 8 was selected for the same gate
+reason. Their new fresh turns subsequently held C=1 as the cursor passed them.
+All 16 aged/guard-safe fresh resubmissions of each zero-history account occurred
+while `protectedActive` was true (account 7: 13 protected-only and 3 with both
+flags; account 8: 16 protected-only). Guard projections for those resubmissions
+ranged 1687.36–4811.79 ms and 1565.67–4851.25 ms respectively.
+
+`historySince` was not reset by those fresh turns: the waiting age correctly
+continued to accrue. But `select()` only converts age into a boolean threshold.
+Once all candidates are aged, a 14-second-old historical request has no more
+effective protection than a recently serviced request that again exceeds
+100 ms. `rotate()` advances beyond unavailable accounts without remembering
+their missed historical opportunities. Combined with serial protected-history
+execution and immediate fresh re-admission, that permits repeated bypass of
+the same waiting work even when later safe choices exist.
+
+### Contract finding and recommendation only
+
+The approved [D06 policy](../../design/imap-sync-engine/DECISIONS.md) and
+[architecture §14.4](../../design/imap-sync-engine/SYNC_ENGINE_ARCHITECTURE.md)
+require occasional safe historical opportunities under sustained current
+demand, with account rotation and transient eligible-wait/missed-opportunity
+protection. [Validation H3](../../design/imap-sync-engine/SYNC_ENGINE_VALIDATION.md)
+requires each aged candidate to receive a unit within one full safe history
+rotation. Global historical progress alone does not satisfy that per-account
+fairness requirement.
+
+**That end-to-end distribution contract is violated in the observed reference
+profile.** Accounts 7/8 were intermittently, not continuously, physically idle;
+the finding does not pretend otherwise. But their aged work repeatedly passed
+all real gates at 16 protected-history decisions without one grant, while
+other accounts received eight grants each. Thirty-two historical admissions
+were available globally, enough for the required sixteen first/second units.
+This is not solely hard overload, a permanently busy account, a mistaken demand
+for immediate preemption, or a fixed-registration-order assertion. Passing a
+weak instantaneous rotation check does not prove fair protection across the
+changing C=1 eligibility set.
+
+**Smallest justified recommendation, not implemented:** retain the current
+startup, W/C=1, health/backoff, fresh-wait guard, one active protected turn and
+fresh-between-exceptions gates. At the already-authorized protected-history
+selection boundary, make accumulated eligible wait effective when choosing
+among fully aged, admissible candidates: prefer the longest outstanding
+`historySince` and use the existing cursor for ties. Alternatively use the
+approved bounded transient missed-safe-opportunity counter, but that requires
+additional state; reusing the existing timestamp is the smaller candidate
+change. Keep ordinary spare-capacity history and fresh rotation unchanged.
+This is local tie/choice ordering inside the bounded exception, not a global
+continuous priority-score promotion, fixed quota, worker reservation, second
+scheduler or durable ledger. It needs separate implementation authorization
+and regression validation; no after-fix behavior is claimed here.
+
+Do not simply remove the protected-active gate, enlarge budgets or weaken the
+eight-account progress assertion: those changes would alter other guarantees
+without addressing the missing account-debt effect directly.
+
+### Remaining uncertainty, cleanup and disposition
+
+The diagnosis proves repeated safe-opportunity bypass in a bounded 15 s trace,
+not infinite starvation in every workload. Earlier historical operations can
+eventually complete and change candidate sets, and timing affects which account
+has zero or one grant. The exact historical zero vector cannot be replayed
+retroactively. The recommendation has not been executed or simulated and its
+effect on all fairness/latency gates remains untested. Configured budgets and
+the fixture's default-true health gate are the observed admission model, not a
+measurement of every hypothetical alternative DB/IMAP outcome.
+
+All temporary scheduler/test diagnostics and the local analysis script were
+removed. Production and test files were restored byte-for-byte from the base
+commit; `git diff -- src tests` is empty. Only this report is committed. Report
+formatting and `git diff --check` passed; no new typecheck/full suite/broad
+regression run was needed for the final documentation-only diff.
+
+**CONFIRMED SCHEDULER DEFECT; Stage 3B remains BLOCKED.** No correction was
+implemented, no other investigation was started, and no push, merge, PR, worker
+composition change or Stage 4 work was performed.
