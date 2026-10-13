@@ -171,6 +171,7 @@ patchedDependencies:
   imapflow@2.0.6: 6bd64b0c376d9ccbce62a58087cb3a5c9ebd6115fabe14fa296d8246d5a70361
   next@16.3.8: c6de0ed836e1f0915ff0ae22ca969bf11f17dc581fa52b201ea264d9cf24c7fb
   pg-boss@12.33.7: b9affbd73ab38cf158f4d6f9ec46569e4b31a7ae5a774f2c6528f2e231d5fe41
+  postgres@3.4.9: 3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512
 
 importers:
 
@@ -214,13 +215,13 @@ importers:
         version: 2.2.1
       better-auth:
         specifier: 1.7.7
-        version: 1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9))(next@16.3.8(patch_hash=c6de0ed836e1f0915ff0ae22ca969bf11f17dc581fa52b201ea264d9cf24c7fb)(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.10.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@types/node@24.10.9)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.10.9)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
+        version: 1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)))(next@16.3.8(patch_hash=c6de0ed836e1f0915ff0ae22ca969bf11f17dc581fa52b201ea264d9cf24c7fb)(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.10.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@types/node@24.10.9)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.10.9)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
       dompurify:
         specifier: 3.4.16
         version: 3.4.16
       drizzle-orm:
         specifier: 0.45.3
-        version: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9)
+        version: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512))
       imapflow:
         specifier: 2.0.6
         version: 2.0.6(patch_hash=6bd64b0c376d9ccbce62a58087cb3a5c9ebd6115fabe14fa296d8246d5a70361)
@@ -253,7 +254,7 @@ importers:
         version: 8.5.28
       postgres:
         specifier: 3.4.9
-        version: 3.4.9
+        version: 3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)
       qrcode.react:
         specifier: 4.2.0
         version: 4.2.0(react@19.3.0)
@@ -4852,12 +4853,12 @@ snapshots:
       nanostores: 1.5.3
       zod: 4.6.5
 
-  '@better-auth/drizzle-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9))':
+  '@better-auth/drizzle-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)))':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3)
       '@better-auth/utils': 0.4.2
     optionalDependencies:
-      drizzle-orm: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9)
+      drizzle-orm: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512))
 
   '@better-auth/kysely-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(kysely@0.29.6)':
     dependencies:
@@ -6385,10 +6386,10 @@ snapshots:
     dependencies:
       tweetnacl: 0.14.5
 
-  better-auth@1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9))(next@16.3.8(patch_hash=c6de0ed836e1f0915ff0ae22ca969bf11f17dc581fa52b201ea264d9cf24c7fb)(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.10.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@types/node@24.10.9)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.10.9)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))):
+  better-auth@1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)))(next@16.3.8(patch_hash=c6de0ed836e1f0915ff0ae22ca969bf11f17dc581fa52b201ea264d9cf24c7fb)(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.10.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@types/node@24.10.9)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.10.9)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))):
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3)
-      '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9))
+      '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)))
       '@better-auth/kysely-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(kysely@0.29.6)
       '@better-auth/memory-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)
       '@better-auth/mongo-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.3))(@better-auth/utils@0.4.2)
@@ -6406,7 +6407,7 @@ snapshots:
       zod: 4.6.5
     optionalDependencies:
       drizzle-kit: 0.31.11
-      drizzle-orm: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9)
+      drizzle-orm: 0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512))
       next: 16.3.8(patch_hash=c6de0ed836e1f0915ff0ae22ca969bf11f17dc581fa52b201ea264d9cf24c7fb)(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.10.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       pg: 8.23.0
       react: 19.3.0
@@ -6686,11 +6687,11 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.15
 
-  drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9):
+  drizzle-orm@0.45.3(kysely@0.29.6)(pg@8.23.0)(postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)):
     optionalDependencies:
       kysely: 0.29.6
       pg: 8.23.0
-      postgres: 3.4.9
+      postgres: 3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512)
 
   dunder-proto@1.0.1:
     dependencies:
@@ -8107,7 +8108,7 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  postgres@3.4.9: {}
+  postgres@3.4.9(patch_hash=3b8387ebfcb8f3a47cf11185b8f5dc69d24c1cfc011aaef16202200cd219a512): {}
 
   prelude-ls@1.2.1: {}
 

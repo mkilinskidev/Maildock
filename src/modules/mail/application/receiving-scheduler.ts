@@ -23,6 +23,7 @@ type Account = {
   retryAt: number;
   retryMs: number;
   historySince?: number;
+  initialFreshGranted: boolean;
 };
 export type ReceivingAdmission = Readonly<{
   account: string;
@@ -103,6 +104,7 @@ export class ReceivingScheduler {
         freshDue: performance.now(),
         retryAt: 0,
         retryMs: timing.retryMs,
+        initialFreshGranted: false,
       };
     });
   }
@@ -159,6 +161,16 @@ export class ReceivingScheduler {
       (a) => !a.active && a.retryAt <= now,
     );
     const fresh = available.filter((a) => a.freshDue <= now);
+    // Grant each runnable startup account its first current opportunity before
+    // any ordinary or protected history. Admission, not successful completion,
+    // satisfies the barrier: an unavailable account enters its own backoff.
+    const startup = fresh.filter((a) => !a.initialFreshGranted);
+    if (startup.length)
+      return {
+        account: this.rotate(startup, "fresh")!,
+        kind: "fresh" as const,
+        protectedHistory: false,
+      };
     let healthy = true;
     try {
       healthy = this.config.historyAllowed?.() ?? true;
@@ -215,6 +227,7 @@ export class ReceivingScheduler {
     const { account, kind, protectedHistory } = selection;
     const at = performance.now();
     account.active = true;
+    if (kind === "fresh") account.initialFreshGranted = true;
     if (protectedHistory) {
       this.lastProtected = true;
       this.protectedActive = true;
@@ -266,6 +279,7 @@ export class ReceivingScheduler {
           account.retryAt = account.freshDue + retry;
           // Recovery must observe fresh before old history becomes eligible.
           account.historySince = undefined;
+          account.initialFreshGranted = false;
           account.retryMs = Math.min(account.timing.maxRetryMs, retry * 2);
           this.diagnostic(() => account.config.onError?.(error, retry));
         }

@@ -29,7 +29,7 @@ export class ReceivingExecutor {
   private active = 0;
   private stopped = false;
   private readonly controllers = new Set<AbortController>();
-  private readonly waiting: (() => void)[] = [];
+  private readonly waiting: (() => boolean)[] = [];
 
   constructor(
     private readonly url: string,
@@ -112,8 +112,26 @@ export class ReceivingExecutor {
       if (this.active >= this.capacity) {
         if (this.waiting.length >= this.capacity)
           throw new ReceivingUnresolvedError("admission");
-        let wake!: () => void;
-        const available = new Promise<void>((resolve) => (wake = resolve));
+        let wake!: () => boolean;
+        const available = new Promise<void>((resolve) => {
+          wake = () => {
+            // Reserve synchronously before resolving the waiter. A returning
+            // borrower must not steal this slot during promise resumption.
+            if (
+              !valid ||
+              controller.signal.aborted ||
+              this.stopped ||
+              remaining() <= 0
+            ) {
+              resolve();
+              return false;
+            }
+            this.active++;
+            admitted = true;
+            resolve();
+            return true;
+          };
+        });
         this.waiting.push(wake);
         try {
           await bounded(available);
@@ -123,11 +141,12 @@ export class ReceivingExecutor {
         }
       }
       guard();
-      // Wake transfers one slot synchronously; no detached reserve can escape it.
-      if (this.active >= this.capacity)
-        throw new ReceivingUnresolvedError("admission");
-      this.active++;
-      admitted = true;
+      if (!admitted) {
+        if (this.active >= this.capacity)
+          throw new ReceivingUnresolvedError("admission");
+        this.active++;
+        admitted = true;
+      }
       phase = "transaction";
       // Documented postgres.js custom socket API, with public Node stream
       // ownership only. No BackendKeyData parsing or private connection access.
@@ -300,7 +319,8 @@ export class ReceivingExecutor {
       this.controllers.delete(controller);
       if (admitted) {
         this.active--;
-        this.waiting.shift()?.();
+        // Skip cancelled/expired waiters without consuming the returned slot.
+        while (this.waiting.length) if (this.waiting.shift()!()) break;
       }
     }
   }

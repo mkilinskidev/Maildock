@@ -1,7 +1,10 @@
 import { connect, createServer, type Socket } from "node:net";
 
 /** Same raw reply-loss technique as Stage 1; no PostgreSQL frame parser. */
-export async function receivingResponseRelay(url: string) {
+export async function receivingResponseRelay(
+  url: string,
+  onClientData?: (bytes: Buffer) => void,
+) {
   const target = new URL(url);
   const host = target.hostname,
     port = Number(target.port);
@@ -11,7 +14,10 @@ export async function receivingResponseRelay(url: string) {
     const upstream = connect(port, host);
     sockets.add(client);
     sockets.add(upstream);
-    client.on("data", (bytes) => upstream.write(bytes));
+    client.on("data", (bytes) => {
+      onClientData?.(bytes);
+      upstream.write(bytes);
+    });
     upstream.on("data", (bytes) => {
       if (!control.drop) client.write(bytes);
     });

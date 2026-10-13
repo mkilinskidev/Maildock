@@ -1,0 +1,13 @@
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..05c9b68b4bd82769744b5ecb319bf11240bb32ab 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -561,7 +561,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+       if (needsTypes) {
+         initial.reserve && (initial = null)
+-        return fetchArrayTypes()
++        return fetchArrayTypes().catch(error)
+       }
+ 
+       initial && !initial.reserve && execute(initial)

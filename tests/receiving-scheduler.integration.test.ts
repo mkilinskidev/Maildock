@@ -23,6 +23,7 @@ import {
 } from "@/shared/infrastructure/database/schema";
 import {
   ReceivingExecutor,
+  ReceivingUnresolvedError,
   type ReceivingDatabase,
 } from "@/shared/infrastructure/database/receiving-executor";
 import { ReceivingPersistence } from "@/modules/mail/application/receiving-persistence";
@@ -35,6 +36,7 @@ import {
   metadataPeer,
   type WindowPeerOptions,
 } from "./fixtures/imap-metadata-peer";
+import { receivingResponseRelay } from "./fixtures/receiving-response-relay";
 import { delay, until } from "../experiments/imap-transport/fixture";
 
 type Turn = Awaited<
@@ -242,6 +244,271 @@ describe("isolated shared receiving scheduler", () => {
         a.peer.commands.some((c) => /IDLE|SEARCH ALL|BODY\[\]/.test(c.command)),
       ).toBe(false);
   }
+
+  it.each([1, 2])(
+    "isolated DB waiter handoff supports sequential borrowers at D=%i",
+    async (capacity) => {
+      const exec = executor(capacity);
+      let held = 0;
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => (release = resolve));
+      const errors: unknown[] = [];
+      const visits: number[] = [];
+      const borrowers = Array.from({ length: capacity * 2 }, (_, actor) =>
+        (async () => {
+          for (let turn = 0; turn < 6; turn++) {
+            try {
+              await exec.transaction(
+                async (db) => {
+                  const [row] = await db.execute(
+                    sql`select ARRAY['\\Seen','a,b']::text[] as flags`,
+                  );
+                  expect(row.flags).toEqual(["\\Seen", "a,b"]);
+                  visits.push(actor);
+                  if (turn === 0 && actor < capacity) {
+                    held++;
+                    await barrier;
+                  }
+                },
+                { deadline: performance.now() + 5000 },
+              );
+            } catch (error) {
+              errors.push(error);
+            }
+          }
+        })(),
+      );
+      try {
+        await until(() => held === capacity, 5000);
+        release();
+        await Promise.all(borrowers);
+        expect(errors).toEqual([]);
+        expect(visits.length).toBe(capacity * 2 * 6);
+      } finally {
+        release();
+        await Promise.all(borrowers);
+      }
+    },
+  );
+
+  it("isolated DB cancellation after handoff returns its reserved slot", async () => {
+    const exec = executor(1),
+      abort = new AbortController();
+    let release!: () => void,
+      ready = false;
+    const barrier = new Promise<void>((resolve) => (release = resolve));
+    const first = exec.transaction(
+      async (db) => {
+        await db.execute(sql`select 1`);
+        ready = true;
+        await barrier;
+      },
+      { deadline: performance.now() + 5000 },
+    );
+    await until(() => ready, 5000);
+    let cancelledEntered = false;
+    const cancelled = exec
+      .transaction(
+        async () => {
+          cancelledEntered = true;
+        },
+        { deadline: performance.now() + 5000, signal: abort.signal },
+      )
+      .catch((error) => error);
+    // The retiring borrower's continuation runs before the bounded waiter's
+    // continuation. Cancellation must return even a synchronously granted slot.
+    const cancellation = first.then(() => abort.abort());
+    release();
+    await cancellation;
+    expect(await cancelled).toBeInstanceOf(ReceivingUnresolvedError);
+    expect(cancelledEntered).toBe(false);
+    expect(
+      await exec.transaction(
+        async (db) => (await db.execute(sql`select 32 as answer`))[0].answer,
+        { deadline: performance.now() + 2000 },
+      ),
+    ).toBe(32);
+  });
+
+  it("isolated DB cancellation during driver type discovery has no detached rejection", async () => {
+    const abort = new AbortController();
+    let discovered = false;
+    let bytesSeen = "";
+    const relay = await receivingResponseRelay(url, (bytes) => {
+      bytesSeen = (bytesSeen + bytes.toString("utf8")).slice(-4096);
+      if (!discovered && bytesSeen.includes("pg_catalog.pg_type")) {
+        discovered = true;
+        relay.control.drop = true;
+        setTimeout(() => abort.abort(), 0);
+      }
+    });
+    cleanup.push(relay.close);
+    const exec = new ReceivingExecutor(relay.url, 1);
+    cleanup.push(() => exec.stop());
+    const result = await exec
+      .transaction(
+        async () => {
+          throw new Error("Business work must not start");
+        },
+        { deadline: performance.now() + 2000, signal: abort.signal },
+      )
+      .catch((error) => error);
+    expect(discovered).toBe(true);
+    expect(result).toBeInstanceOf(ReceivingUnresolvedError);
+    // Vitest reports every unhandled rejection independently of this assertion.
+    await delay(50);
+    relay.control.drop = false;
+    expect(
+      await exec.transaction(
+        async (db) => (await db.execute(sql`select 1 as answer`))[0].answer,
+        { deadline: performance.now() + 2000 },
+      ),
+    ).toBe(1);
+  });
+
+  it.each(
+    [1, 2, 4].flatMap((workers) =>
+      [1, 2].map((capacity) => ({ workers, capacity })),
+    ),
+  )(
+    "targeted startup barrier W=$workers D=$capacity grants all fresh opportunities before history",
+    async ({ workers, capacity }) => {
+      const exec = executor(capacity),
+        accounts: Account[] = [];
+      for (let i = 0; i < 5; i++) {
+        const a = await account(exec, {
+          uids: [1, 1025, 1153, 1281],
+          uidNext: 1409,
+          taggedDelay: 15,
+        });
+        const record = a.config.onTurn!;
+        a.config.onTurn = (kind, turn) => {
+          record(kind, turn);
+          if (kind === "fresh") {
+            a.script.uids!.push(a.script.uidNext!);
+            a.script.uidNext! += 128;
+          }
+        };
+        accounts.push(a);
+      }
+      const run = scheduler(accounts, exec, {
+        tuning: { workers, historyWaitMs: 1, historyTurnMs: 1000 },
+      });
+      await until(
+        () => accounts.some((a) => a.turns.some((t) => t.kind === "history")),
+        10_000,
+      );
+      await run.instance.stop();
+      retired(accounts, run, Math.min(workers, 2 * capacity));
+      const firstHistory = run.admissions.findIndex(
+        (a) => a.kind === "history",
+      );
+      expect(firstHistory).toBeGreaterThanOrEqual(accounts.length);
+      expect(run.admissions.slice(0, 5).map((a) => a.account)).toEqual(
+        accounts.map((a) => a.id),
+      );
+      expect(run.admissions.slice(0, 5).map((a) => a.kind)).toEqual(
+        Array(5).fill("fresh"),
+      );
+      for (const a of accounts) expect(a.errors).toEqual([]);
+    },
+  );
+
+  it.each([1, 2, 4])(
+    "targeted startup barrier W=%i cannot be held by unavailable accounts",
+    async (workers) => {
+      const exec = executor(2),
+        bad = await account(exec, { select: "hung" });
+      bad.config.timing = {
+        pollMs: 50,
+        operationMs: 300,
+        retryMs: 200,
+        maxRetryMs: 400,
+      };
+      const healthy: Account[] = [];
+      for (let i = 0; i < 3; i++) {
+        const a = await account(exec);
+        a.config.timing = { pollMs: 1000 };
+        healthy.push(a);
+      }
+      const accounts = [bad, ...healthy];
+      const run = scheduler(accounts, exec, {
+        tuning: { workers, historyWaitMs: 1 },
+      });
+      await until(
+        () =>
+          bad.errors.length >= 2 &&
+          healthy.every((a) => a.turns.some((t) => t.kind === "history")),
+        5000,
+      );
+      await run.instance.stop();
+      retired(accounts, run, workers);
+      const firstHistory = run.admissions.findIndex(
+        (a) => a.kind === "history",
+      );
+      expect(
+        new Set(
+          run.admissions
+            .slice(0, firstHistory)
+            .filter((a) => a.kind === "fresh")
+            .map((a) => a.account),
+        ).size,
+      ).toBe(accounts.length);
+      expect(bad.errors.slice(0, 2).map((e) => e.retry)).toEqual([200, 400]);
+      for (const a of healthy) expect(a.errors).toEqual([]);
+    },
+  );
+
+  it.each([1, 2])(
+    "targeted recovery D=%i aborts active accounts and rediscovers fresh before history",
+    async (capacity) => {
+      const exec = executor(capacity),
+        accounts: Account[] = [];
+      for (let i = 0; i < 5; i++)
+        accounts.push(await account(exec, { select: "hung" }));
+      const limit = 2 * capacity;
+      const run = scheduler(accounts, exec, { tuning: { workers: 4 } });
+      await until(
+        () =>
+          accounts.filter((a) =>
+            a.peer.commands.some((c) => /^(SELECT|EXAMINE)/.test(c.command)),
+          ).length === limit,
+        5000,
+      );
+      await Promise.all([run.instance.stop(), run.instance.stop()]);
+      retired(accounts, run, limit);
+      const before = accounts.map((a) => a.peer.observed.length);
+      await delay(50);
+      expect(accounts.map((a) => a.peer.observed.length)).toEqual(before);
+      for (const a of accounts) {
+        a.script.select = undefined;
+        a.script.uids!.push(1025);
+        a.script.uidNext = 1026;
+        // Fresh recovery is independently tested; history completion remains in
+        // the preserved original acceptance scenario.
+        a.config.timing = { pollMs: 1000 };
+      }
+      const restarted = scheduler(accounts, exec, {
+        tuning: { workers: 4, historyWaitMs: 1 },
+      });
+      await waitFor(async () =>
+        (await Promise.all(accounts.map(state))).every(
+          (s) => BigInt(s.fresh_through) === 1025n,
+        ),
+      );
+      await restarted.instance.stop();
+      retired(accounts, restarted, limit);
+      expect(restarted.admissions.slice(0, 5).map((a) => a.kind)).toEqual(
+        Array(5).fill("fresh"),
+      );
+      for (const a of accounts) {
+        expect(a.errors).toEqual([]);
+        const rows = await placements(a);
+        expect(rows.filter((r) => BigInt(r.uid) === 1025n)).toHaveLength(1);
+        expect(rows.every((r) => BigInt(r.uid_validity) === 7n)).toBe(true);
+      }
+    },
+  );
 
   it.each([1, 2, 4])(
     "W=%i bounds simultaneous operations and safely cancels/restarts active accounts",

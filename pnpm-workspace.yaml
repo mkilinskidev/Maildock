@@ -13,6 +13,7 @@ patchedDependencies:
   imapflow@2.0.6: patches/imapflow@2.0.6.patch
   next@16.3.8: patches/next@16.3.8.patch
   pg-boss@12.33.7: patches/pg-boss@12.33.7.patch
+  postgres@3.4.9: patches/postgres@3.4.9.patch
 overrides:
   mailparser@3.9.28>nodemailer: 10.0.13
   source-map-js@1.2.1: 1.2.2
