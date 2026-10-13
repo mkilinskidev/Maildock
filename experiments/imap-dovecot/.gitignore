@@ -2,3 +2,4 @@
 fixtures/
 outputs/*.json
 !outputs/summary.json
+stage3c-evidence.json
