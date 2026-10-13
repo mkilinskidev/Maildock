@@ -1,7 +1,9 @@
 # Stage 3B results — isolated multi-account receiving scheduler
 
-Date: 2026-10-13. **BLOCKED: focused acceptance failed.** This is an
-unaccepted implementation checkpoint, disconnected from the running worker.
+Date: 2026-10-13. The original checkpoint below was **BLOCKED**. The separately
+authorized two-blocker repair and fresh validation are recorded in the final
+section: **PARTIAL repair; Stage 3B acceptance remains BLOCKED**. The component
+remains disconnected from the running worker.
 Stop-on-critical-gate-failure was applied: no acceptance assertion was weakened,
 no Stage 1/2 repair was attempted, and Stage 4 was not started.
 
@@ -190,3 +192,217 @@ Next work requires authorization to resolve the recorded blockers and rerun the
 unchanged acceptance gates, including a review of concurrent DB admission and
 the startup barrier. Stage 4 election, durable wakes, IDLE, worker composition
 and production cutover remain out of scope and were not begun.
+
+## Authorized two-blocker repair — 2026-10-13
+
+Continued on `feature/imap-sync-stage-3b-scheduler` from clean HEAD
+`f542ffd3800714501254a7c7bf4dbc0081e7fc13`. Scope was explicitly limited to the
+startup fresh barrier, the observed DB admission/unhandled rejection, targeted
+validation and **one** full Stage 3B rerun. The original 13 acceptance scenarios
+and their assertions remain unchanged. No Stage 4 work was started.
+
+### Startup and recovery root cause and change
+
+The selector previously allowed an account's freshly established history age
+to qualify for protection while other accounts still awaited their first fresh
+admission. Fresh being due at construction was insufficient: the exception was
+evaluated before normal fresh selection.
+
+`receiving-scheduler.ts` now keeps one transient `initialFreshGranted` flag per
+account. Before ordinary or protected history selection, it rotates through
+runnable fresh accounts whose initial opportunity is outstanding. Actual fresh
+admission sets the flag; every failure clears it and applies the existing
+account backoff. A new instance reconstructs this barrier without any durable
+startup state. A hung account has received its opportunity once admitted and
+cannot require a successful response before healthy accounts progress. A
+backing-off account is excluded until its retry becomes due; its recovery fresh
+then takes precedence over history exceptions. Account/W allocations and the
+shared selector are unchanged.
+
+### DB admission root cause and isolated proof
+
+The shared Stage 1 executor's waiter handoff resolved the waiter's promise but
+did not reserve the released slot. A returning borrower's continuation could
+start its next transaction before the bounded waiter's continuation resumed.
+The waiter then saw `active >= capacity` and failed with
+`ReceivingUnresolvedError("admission")`, despite having legitimately queued.
+
+The new **isolated DB waiter handoff** regression uses no IMAP turn and no
+authority renewal: 2D borrowers execute six sequential `SELECT` transactions
+each, with the first D transactions held at a barrier. Before the fix it
+reproduced **5 admission failures at D=1 and 10 at D=2**, in approximately
+296/187 ms against 5-second deadlines. Therefore the error did not require
+oversized turn concurrency, deadline expiry, history policy or fixture account
+interference. The receiving APIs also await each DB operation sequentially;
+there is no detached per-turn transaction fan-out.
+
+This isolated failing regression justified the Stage 1 modification.
+`receiving-executor.ts` now increments active allocation and marks the waiter
+admitted **synchronously before resolving its wake promise**. Resumption does
+not allocate a second slot. Slot return skips cancelled/expired waiters; a
+waiter cancelled after allocation returns that allocation through the existing
+retirement path. D executing/D queued bounds and all original deadlines stay
+unchanged. The scheduler's `min(W,2D)` admission cap remains unchanged.
+
+### Detached startup rejection root cause and fix
+
+A separate raw response-relay test detects the driver's actual
+`pg_catalog.pg_type` startup query, withholds replies and cancels the one
+receiving transaction. Before the fix, the transaction's own error was handled
+but Vitest still recorded an unhandled `CONNECTION_CLOSED` from that query.
+This happens with **one** borrower, independently of the admission race.
+
+In installed postgres.js 3.4.9, `ReadyForQuery` starts asynchronous
+`fetchArrayTypes()` from its synchronous protocol callback. Its returned promise
+has no rejection handler. Socket retirement rejects the internal query, and
+the async discovery promise becomes detached even though the caller correctly
+awaits/catches `reserve()` and the receiving transaction.
+
+`patches/postgres@3.4.9.patch` changes that one ESM driver call to
+`fetchArrayTypes().catch(error)`, forwarding rejection to the driver's existing
+connection-error path. The patch is registered in `pnpm-workspace.yaml` and
+`pnpm-lock.yaml`; package versions did not change. This is the ESM driver used
+by the isolated receiving executor, not a replacement DB abstraction. CommonJS
+and Cloudflare driver builds were not changed or claimed as validated.
+
+Type discovery stays enabled. The isolated borrower regression also verifies
+actual text-array decoding, including a comma-containing element. The startup
+cancellation test checks the expected receiving error, waits for late errors
+to surface through Vitest's unchanged global reporting, then successfully runs
+another transaction through the same executor. No global rejection suppression,
+larger pool or extended deadline was added.
+
+`receiving-response-relay.ts` gained an optional raw client-byte observer solely
+for this test. It does not parse protocol frames, backend secrets or driver
+internals. The first probe had a missing error-class import; after correcting
+that fixture typing/import, the test assertion passed while the same unhandled
+rejection still independently failed the pre-fix run.
+
+### Targeted validation
+
+Added 15 focused tests: D=1/2 direct waiter handoff; cancellation after handoff;
+cancelled driver type discovery; W=1/2/4 crossed with D=1/2 startup ordering;
+W=1/2/4 unavailable-account startup; and D=1/2 concurrent stop/restart with
+current-first durable visibility and placement identity. The fresh/history
+startup tests deliberately use ongoing bounded fresh demand and a 1 ms aging
+threshold so the original missing barrier would fail. Separate recovery tests
+check fresh recovery without replacing the original acceptance test's stronger
+requirement to complete all history.
+
+Final targeted command:
+
+```powershell
+pnpm exec vitest run tests/receiving-scheduler.integration.test.ts -t 'isolated DB|targeted startup|targeted recovery|backs off one|coalesces quiet' --maxWorkers=1 --no-file-parallelism
+```
+
+**PASS: 17/17 selected tests, 11 skipped, exit 0, 22.65 seconds, no unhandled
+errors.** This includes the unchanged hung-account-versus-healthy and quiet
+account/diagnostic-exception scenarios. Retained output:
+`stage3b-targeted-final.log`. An earlier run of the 15 added cases passed in
+18.76 seconds; the direct DB regressions alone passed after repair in
+8.16 seconds.
+
+Relevant Stage 1 cancellation/capacity regressions:
+
+```powershell
+pnpm exec vitest run tests/receiving-safety.integration.test.ts -t 'bounded admission|bounded startup retirement|shutdown revokes' --maxWorkers=1 --no-file-parallelism
+```
+
+**PASS: 5/5 selected tests, 21 skipped, exit 0, 6.54 seconds.** Output:
+`stage3b-stage1-targeted.log`. Existing queue overflow/deadline, stalled TCP/TLS
+startup and suspended-callback shutdown behavior remained correct.
+
+A preliminary run of the existing mixed cancellation/restart scenarios still
+failed W=1/2 at their **complete-history** barrier; W=4, the hung-account and
+quiet-account cases passed. That preliminary run also reported a W=1 cleanup
+hook timeout. An additional diagnostic rerun of just W=1 observed complete
+local DB reservation/driver retirement and the same history-completion barrier
+failure, with **no** hook timeout or unhandled rejection (16.45 seconds).
+The preliminary hook timeout's specific cause was not established. Temporary
+retirement diagnostics were removed; the original scenario was not changed.
+No unrelated history/polling/rotation repair was attempted.
+
+### One fresh full Stage 3B result and final checks
+
+The full suite was run **exactly once** after the final selected 17/17 pass:
+
+```powershell
+pnpm exec vitest run tests/receiving-scheduler.integration.test.ts --maxWorkers=1 --no-file-parallelism
+```
+
+**FAIL: 21 passed, 7 failed, 28 total, exit 1, 310.83 seconds. No unhandled
+promise rejections or other unhandled errors were reported.** Retained output:
+`stage3b-acceptance-rerun.log`. All 15 added focused regressions passed in this
+run. Of the original 13 scenarios, 6 passed and 7 failed. The unchanged
+sustained-demand W=1/2 scenarios now passed, including startup ordering,
+repeated protected commits, fair rotation and the configured wait guard.
+The unchanged hung-account, quiet-account and both health/latency-gate cases
+also passed.
+
+Remaining failures:
+
+| Original scenario                         | Fresh rerun failure                                                                                                          |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| W=1 restart with history completion       | 10-second durable completion barrier timed out                                                                               |
+| W=2 restart with history completion       | 10-second durable completion barrier timed out                                                                               |
+| W=4 cancellation/restart                  | Test timeout at 120 seconds, then cleanup hook timeout at 120 seconds                                                        |
+| W=1 occupied history/fresh responsiveness | Initial held-history fixture barrier timed out                                                                               |
+| W=2 occupied history/fresh responsiveness | Initial held-history fixture barrier timed out                                                                               |
+| W=4 occupied history/fresh responsiveness | First five post-injection admissions represented four distinct accounts, expected five                                       |
+| W=4 sustained-demand/history rotation     | First five protected history accounts were all distinct but in a different order from the required registration-order oracle |
+
+The startup barrier, reproduced DB waiter race and detached ESM discovery
+rejection are corrected and covered. **General concurrent teardown is not
+fully accepted:** the W=4 timeout above remains a blocker, even though the
+focused D=1/2 teardown tests passed. Its cause and any connection to the prior
+cleanup timeout are not established. There was no suppressed error, enlarged
+pool, raised timeout, oracle edit or automatic broad repair after this result.
+The next investigation must distinguish shutdown/resource retirement from
+history completion and fixture cleanup; no cause is assumed here.
+
+### Measurements from passing W=1/2 sustained-demand scenarios
+
+These are exact samples in ms from committed turns in the passing original
+scenarios. History cost measures admission through the successful turn callback
+after DB publication/local retirement. With W=1 it occupies the sole slot and
+therefore directly contributes this service time to waiting fresh work; the
+fresh wait samples also include earlier account rotation. This is not an
+independent injection-to-visibility measurement or an A/B latency comparison.
+
+| W   | Eligible history waits (10 samples, ms)                                               | Protected history costs (10 samples, ms)                                       | Maximum observed fresh admission wait |
+| --- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------: |
+| 1   | 669.57, 805.99, 956.27, 1071.73, 1217.60, 1400.42, 1443.24, 1485.74, 1534.29, 1546.52 | 161.82, 151.64, 137.51, 150.01, 162.34, 169.33, 160.09, 172.71, 161.82, 147.34 |                            1526.14 ms |
+| 2   | 158.18, 295.75, 312.85, 445.65, 434.55, 572.20, 555.71, 554.14, 598.96, 641.45        | 147.70, 150.39, 135.96, 136.43, 129.92, 133.58, 119.87, 187.74, 169.97, 152.66 |                             652.56 ms |
+
+Fresh admission waits, including startup, were:
+
+- W=1: 0.04, 174.58, 352.13, 508.36, 669.79, 831.41, 957.64, 1093.79,
+  1221.76, 1379.96, 1417.39, 1448.49, 1519.08, 1526.14, 1511.66 ms.
+- W=2: 0.02, 0.03, 145.94, 157.74, 292.92, 305.90, 446.18, 448.83,
+  582.09, 564.48, 551.85, 529.77, 595.61, 631.11, 652.56 ms.
+
+Both maxima remained below the 5000 ms admission guard. No percentile claim,
+passing W=4 fairness result or validated default-setting recommendation is made.
+Fresh injection-to-committed-metadata samples remain unavailable because all
+three independent-visibility acceptance scenarios failed before sample emission.
+
+### Final static checks and disposition
+
+`pnpm typecheck`, repository `pnpm lint`, changed-file Prettier check (including
+both YAML files) and `git diff --check` passed, exit 0. No new full Stage 1/2 or
+whole-repository test run was performed; the five relevant Stage 1 regressions
+above were the intentionally selected scope. The earlier checkpoint's 115/115
+regression result is retained as historical evidence, not a new regression pass
+for the driver patch.
+
+Code/test/driver repair commit:
+`d12559928bab75f8f9a9dfc8f9d90c415d7a677d`. The pinned dependency patch changes
+only the ESM discovery rejection handler; its effect on other consumers or
+unmodified CommonJS/Cloudflare builds has not been broadly tested.
+
+**PARTIAL for this limited repair request; BLOCKED for complete Stage 3B
+acceptance.** Work stopped after resolving the reproduced startup/admission/
+unhandled-rejection defects and collecting this one fresh full result.
+Unresolved W=4 retirement and the remaining history/fresh/rotation failures
+were recorded without expanding scope. No push, merge, PR, worker integration
+or Stage 4 implementation was performed.
