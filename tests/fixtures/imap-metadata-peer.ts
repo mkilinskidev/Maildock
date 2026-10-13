@@ -7,6 +7,9 @@ import {
 } from "../../experiments/imap-transport/fixture";
 
 export type WindowPeerOptions = {
+  /** Mutable small mailbox oracle for repeated coordinator connections. */
+  boundedMailbox?: boolean;
+  onCommand?: (peer: Peer, command: Command) => boolean | void;
   uids?: number[];
   uidNext?: number;
   epoch?: number;
@@ -94,6 +97,7 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
   };
   const peer = await fixture(
     (p, cmd) => {
+      if (options.onCommand?.(p, cmd)) return true;
       if (
         cmd.command.startsWith("LOGIN") ||
         cmd.command.startsWith("AUTHENTICATE")
@@ -133,7 +137,18 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
               ? [129, 129]
               : options.search === "invalid"
                 ? [0]
-                : uids;
+                : options.boundedMailbox
+                  ? uids.filter((uid) => {
+                      const range = /UID SEARCH UID (\d+):(\d+)/.exec(
+                        cmd.command,
+                      );
+                      return (
+                        range &&
+                        uid >= Number(range[1]) &&
+                        uid <= Number(range[2])
+                      );
+                    })
+                  : uids;
           p.send(
             options.search === "esearch"
               ? "* ESEARCH UID ALL 1:4294967295\r\n"
@@ -167,7 +182,19 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
                 ? [...uids, 1]
                 : options.fetch === "duplicate"
                   ? [...uids, uids[0]]
-                  : uids;
+                  : options.boundedMailbox
+                    ? uids.filter((uid) =>
+                        cmd.command
+                          .split(" ")[2]
+                          .split(",")
+                          .some((part) => {
+                            const [low, high = low] = part
+                              .split(":")
+                              .map(Number);
+                            return uid >= low && uid <= high;
+                          }),
+                      )
+                    : uids;
           for (const uid of rows)
             sendRow(
               p,

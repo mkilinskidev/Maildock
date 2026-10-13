@@ -23,6 +23,8 @@ export type MetadataWindowOptions = Readonly<{
   signal?: AbortSignal;
   /** Revocable caller turn/epoch guard; must throw when obsolete. */
   assertCurrent: () => void;
+  /** Additive Stage 3A selection; history remains the Stage 2 default. */
+  kind?: "history" | "fresh";
 }>;
 
 export class MetadataWindowError extends Error {}
@@ -420,15 +422,26 @@ export async function fetchInboxMetadataWindow(
         "Selected UIDVALIDITY mismatches receiving epoch",
       );
     const historyBefore = expected?.historyBefore ?? BigInt(selectedNext);
-    if (historyBefore > BigInt(selectedNext))
+    if (
+      historyBefore > BigInt(selectedNext) ||
+      (expected && expected.freshThrough >= BigInt(selectedNext))
+    )
       throw new MetadataWindowError(
         "Selected UIDNEXT regressed below coverage",
       );
     const metadata: ReturnType<typeof normalizeMessage>[] = [];
     let evidence: IntervalEvidence | null = null;
-    if (historyBefore > 1n) {
+    if (options.kind === "fresh" && expected) {
+      low = Number(expected.freshThrough + 1n);
+      high = Math.min(
+        selectedNext - 1,
+        low + METADATA_WINDOW_LIMITS.identities - 1,
+      );
+    } else if (options.kind !== "fresh") {
       high = Number(historyBefore - 1n);
       low = Math.max(1, high - METADATA_WINDOW_LIMITS.identities + 1);
+    }
+    if (low >= 1 && high >= low) {
       phase = "search";
       const result = await client.search(
         { uid: `${low}:${high}` },

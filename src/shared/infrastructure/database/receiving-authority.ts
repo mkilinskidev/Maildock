@@ -14,6 +14,41 @@ export type ReceivingState = Readonly<{
   reconcileAfter: bigint;
 }>;
 
+/** Stage 3A startup, including uncertain initialization. Existing Stage 1
+ * conflicting locks establish ordering even when enrollment has no row yet.
+ * The account/INBOX binding is checked before any receiving socket is opened.
+ */
+export async function recoverReceivingEnrollment(
+  exec: ReceivingExecutor,
+  owner: ReceivingOwner,
+  account: string,
+  mailbox: string,
+  options: Parameters<ReceivingExecutor["transaction"]>[1],
+): Promise<ReceivingState | null> {
+  return exec.transaction(async (db) => {
+    await db.execute(
+      sql`select maildock_receiving_lock(${owner.actor}::uuid,${owner.generation}::bigint,${mailbox}::uuid)`,
+    );
+    const [folder] = await db.execute(
+      sql`select account_id,remote_path from mailboxes where id=${mailbox}::uuid`,
+    );
+    if (folder?.account_id !== account || folder.remote_path !== "INBOX")
+      throw new Error("Receiving requires the configured account INBOX");
+    const [row] = await db.execute(
+      sql`select * from receiving_mailboxes where mailbox_id=${mailbox}::uuid for update`,
+    );
+    return row
+      ? {
+          epoch: BigInt(row.epoch as string),
+          revision: BigInt(row.revision as string),
+          freshThrough: BigInt(row.fresh_through as string),
+          historyBefore: BigInt(row.history_before as string),
+          reconcileAfter: BigInt(row.reconcile_after as string),
+        }
+      : null;
+  }, options);
+}
+
 export async function claimReceiving(
   db: ReceivingDatabase,
   owner: ReceivingOwner,
