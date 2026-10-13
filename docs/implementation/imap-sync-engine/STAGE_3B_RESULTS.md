@@ -967,3 +967,133 @@ regression run was needed for the final documentation-only diff.
 **CONFIRMED SCHEDULER DEFECT; Stage 3B remains BLOCKED.** No correction was
 implemented, no other investigation was started, and no push, merge, PR, worker
 composition change or Stage 4 work was performed.
+
+## Protected-history distribution correction — 2026-10-13
+
+Base: `14aedd579c7e18c9c2f00c144053584472123ceb`, on
+`feature/imap-sync-stage-3b-scheduler`. The earlier failed acceptance and
+diagnosis above remain historical evidence; this section evaluates the
+separately authorized correction.
+
+### Implementation and acceptance contract
+
+The confirmed defect was phase-biased distribution of safe protected-history
+opportunities: round-robin considered outstanding age only as a Boolean gate,
+allowing repeatedly available older accounts to lose to accounts earlier in
+the cursor's current scan. At the existing protected boundary,
+`receiving-scheduler.ts` now computes the minimum `historySince` **after** all
+existing eligibility/safety filtering, then passes only equal-oldest candidates
+to the existing history rotation. Exact ties therefore retain its cursor.
+There is no new persistent state, queue, counter, ledger or scheduler. Admission
+and completion timestamp resets, ordinary history selection, fresh rotation,
+startup barrier, W/C=1, retry, health, fresh-wait guard, `protectedActive` and
+fresh separation are unchanged. Stage 1/2, transport, persistence and worker
+composition are unchanged.
+
+The first corrected-production W=4 run retained the original oracle and failed
+after 2.03 s: it rejected a cursor bypass even though the selected candidate had
+older outstanding history. This is an oracle-policy conflict, not a completed
+durable-progress evaluation. The user explicitly authorized changing **only**
+the ordering oracle to oldest-first with round-robin ties. Under approved D06,
+architecture §14.4 and H2–H4, the end-to-end requirement remains bounded safe
+opportunities and durable descending E progress; this task authorizes the
+specific age-based ordering implementing that requirement.
+
+The sustained test's independent admission/completion replay now rejects a
+definitely older available fully-aged alternative and checks cyclic order for
+equal observed ages. Its existing 2 ms observer-clock exclusion is used for
+age comparisons as well as threshold edges; no deadline, polling interval,
+capacity or fairness bound was increased. Exact timestamp ordering and tie
+rotation are additionally tested deterministically at the actual private
+selection boundary, without adding a production diagnostic API. This W=1/2/4
+probe verifies ages `[800,700,700]` select accounts 2 then 3, active/retrying
+oldest candidates remain excluded, protected-active/separation/fresh-wait gates
+still select fresh, and ordinary history retains its original rotation.
+
+All other acceptance assertions remain: fewer than eight consecutively missed
+safe opportunities per continuously eligible account, exercised alternatives,
+no consecutive protected exceptions, initial fresh barrier, W/C=1/socket
+retirement, fresh wait below 5 s, exact PostgreSQL audit and revision/epoch/F/E
+chain, SEARCH/FETCH correspondence, exact placements without duplicates, no
+account errors, and at least two committed history windows ending at E=897 and
+769 for **every** account. The added per-account admissions/commits/E output is
+bounded test-only measurement; it does not replace the database assertions.
+
+### Targeted validation and negative control
+
+Using the existing disposable PostgreSQL and scripted IMAP fixtures:
+
+- Corrected W=4 sustained scenario plus deterministic W=1/2/4 boundary probes:
+  **4 passed, 0 failed, 27 skipped**, 12.81 s. All eight accounts committed at
+  least two exact descending E windows. There were 17 selections with eligible
+  alternatives and at most two consecutively missed safe opportunities; maximum
+  protected cost was 385.71 ms, maximum fresh wait 1276.01 ms.
+- Negative control: temporarily restore **only** the original protected
+  `rotate(protectedCandidates, "history")` selection. With the corrected tests,
+  **4 failed, 0 passed, 27 skipped**, 8.44 s. All three deterministic probes
+  selected account 1 instead of the older account 2, and W=4's independent
+  replay rejected older-account bypasses. The production fix was restored
+  immediately afterward; no mutated implementation is retained.
+- Corrected W=1/2 sustained scenarios plus boundary probes: **5 passed,
+  0 failed, 26 skipped**, 18.28 s. Each account committed two windows to E=769.
+  W=1 had 16 alternative choices, maximum skipped 7, maximum fresh wait
+  2518.72 ms. W=2 had 17 choices, maximum skipped 6, maximum fresh wait
+  1960.16 ms. W=2's extra admitted history turn was canceled at stop, with only
+  acknowledged history publications included in the database audit.
+- Fresh-boundary durable-visibility W=1/2/4 plus health/latency gates:
+  **5 passed, 0 failed, 26 skipped**, 15.46 s. Injection-to-durable-visibility
+  samples (ms): W=1 `[803.77,966.01,1122.69,1308.53,1474.65]`;
+  W=2 `[858.97,886.77,1059.62,1079.30,1287.92]`;
+  W=4 `[969.13,996.82,1070.44,1095.58,1366.30]`.
+
+### Bounded acceptance rerun and remaining risks
+
+The complete Stage 3B suite was run **once** after targeted validation:
+**31 passed, 0 failed, 0 skipped**, 62.29 s (28 retained acceptance cases plus
+three new boundary probes). No unhandled promise rejection was reported.
+The original hung-account relative-callback assertion and cancellation/restart
+cases passed without changes.
+
+| Sustained demand | History admissions by registration index | Durable history commits | Final E   | Alternative choices | Maximum consecutive skipped safe opportunities | Maximum history wait / cost / fresh wait (ms) |
+| ---------------- | ---------------------------------------- | ----------------------- | --------- | ------------------- | ---------------------------------------------- | --------------------------------------------- |
+| W=1              | `[2,2,2,2,2,2,2,2]`                      | `[2,2,2,2,2,2,2,2]`     | all `769` | 16                  | 7                                              | `2697.78 / 195.73 / 2681.16`                  |
+| W=2              | `[3,2,2,2,2,2,2,2]`                      | `[2,2,2,2,2,2,2,2]`     | all `769` | 17                  | 6                                              | `1537.16 / 248.76 / 2279.46`                  |
+| W=4              | `[2,3,2,2,2,2,2,2]`                      | `[2,2,2,2,2,2,2,2]`     | all `769` | 17                  | 2                                              | `3238.26 / 453.22 / 1593.35`                  |
+
+Every account's first two history publications were exactly
+`1025 → 897 → 769`, independently audited in PostgreSQL against frontier,
+revision, epoch, script UID oracle and exact durable placements. The extra
+W=2/4 admissions were canceled during controlled stop and did not create an
+extra audit publication. All account errors were empty and all original
+resource/retirement/separation checks passed. These are bounded fixture
+measurements, not a universal latency guarantee under arbitrary arrivals.
+
+Full-rerun fresh injection-to-durable-visibility samples (ms):
+W=1 `[747.07,871.58,1024.20,1165.81,1315.07]`;
+W=2 `[745.51,762.33,868.46,889.76,1008.43]`;
+W=4 `[900.31,923.49,964.17,984.79,1165.32]`.
+
+The historical intermittent W=4 shutdown/cleanup timeout remains a disclosed
+risk, not a claimed repair; this passing acceptance run neither establishes
+its cause nor proves it absent. No separate reproduction campaign or unrelated
+investigation was undertaken.
+
+Impacted Stage 1–3A regression selection: **115 passed, 0 failed**, six files,
+48.43 s: `receiving-coordinator.integration`, `receiving-safety.integration`,
+`receiving-retirement-gate.integration`, `receiving-inbox-window.integration`,
+`imap-metadata-window` and `imap-conditional-store`. Stage 3A's measured fresh
+durable visibility was 451.76 ms with E=257. No unhandled rejection was reported.
+
+`pnpm typecheck` (app and worker), `pnpm lint`, changed-file Prettier and
+`git diff --check` passed. Local ignored logs are
+`stage3b-history-fix-{w4,targeted,negative,w12,fresh,full,regressions,typecheck,lint}.log`;
+the first W=4 log preserves the pre-authorization oracle conflict. No logs or
+temporary production diagnostics are committed.
+
+**PASS for this correction and the fresh bounded Stage 3B acceptance evaluation.**
+There are no still-failing scenarios in this run. Remaining risks are the
+previously intermittent W=4 teardown timeout and timing sensitivity of the
+historical hung-account relative-callback assertion; their passing results do
+not constitute separate fixes. The fairness repair is limited to the specified
+protected-candidate ordering. Only the scheduler, focused tests and this report
+are committed; no push, merge, PR or Stage 4 work was performed.

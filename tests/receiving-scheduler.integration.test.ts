@@ -868,6 +868,49 @@ describe("isolated shared receiving scheduler", () => {
   );
 
   it.each([1, 2, 4])(
+    "W=%i selects oldest safe protected history and rotates exact age ties",
+    async (workers) => {
+      const exec = executor(2);
+      const accounts = await Promise.all(
+        Array.from({ length: 3 }, () => account(exec)),
+      );
+      const instance = new ReceivingScheduler({
+        executor: exec,
+        accounts: accounts.map((a) => a.config),
+        tuning: { workers, historyWaitMs: 100, historyTurnMs: 1000 },
+      });
+      // Deterministic boundary probe: no running turn or clock rounding can
+      // obscure the distinction between outstanding age and exact age ties.
+      const candidates = instance["accounts"];
+      for (const [index, a] of candidates.entries()) {
+        a.initialFreshGranted = true;
+        a.freshDue = 900;
+        a.historySince = index === 0 ? 800 : 700;
+      }
+      const choose = () => instance["select"](1000);
+      expect(choose()?.account.config.account).toBe(accounts[1].id);
+      expect(choose()?.account.config.account).toBe(accounts[2].id);
+      candidates[1].active = true;
+      candidates[2].retryAt = 1001;
+      expect(choose()?.account.config.account).toBe(accounts[0].id);
+      candidates[1].active = false;
+      candidates[2].retryAt = 0;
+      instance["protectedActive"] = true;
+      expect(choose()?.kind).toBe("fresh");
+      instance["protectedActive"] = false;
+      instance["lastProtected"] = true;
+      expect(choose()?.kind).toBe("fresh");
+      instance["lastProtected"] = false;
+      candidates.forEach((a) => (a.freshDue = -5000));
+      expect(choose()?.kind).toBe("fresh");
+      candidates.forEach((a) => (a.freshDue = 1001));
+      // Ordinary spare-capacity history still uses the unfiltered rotation.
+      instance["historyCursor"] = 0;
+      expect(choose()?.account.config.account).toBe(accounts[0].id);
+    },
+  );
+
+  it.each([1, 2, 4])(
     "W=%i rotates continuously busy fresh accounts and gives repeated protected history opportunities",
     async (workers) => {
       const exec = executor(2),
@@ -964,7 +1007,9 @@ describe("isolated shared receiving scheduler", () => {
           if (admission.kind !== "history") continue;
           // Completion observers are slightly later than scheduler completion.
           // A 2 ms exclusion band omits ambiguous threshold-edge candidates;
-          // fully eligible accounts must never be skipped in cyclic rotation.
+          // Fully eligible older accounts must never be bypassed. Exact age
+          // ties use cyclic rotation; the boundary probe above tests those
+          // without the observer's completion-clock skew.
           const eligible = accounts.filter((a) => {
             const o = observed.get(a.id)!;
             return (
@@ -978,12 +1023,22 @@ describe("isolated shared receiving scheduler", () => {
             (a) => a.id === admission.account,
           );
           if (eligible.some((a) => a.id !== admission.account)) choices++;
+          const selectedSince = observed.get(admission.account)!.historySince!;
+          for (const a of eligible)
+            if (observed.get(a.id)!.historySince! + 2 < selectedSince)
+              rotationViolations.push(a.id);
           for (
             let index = cursor;
             index !== selected;
             index = (index + 1) % accounts.length
           )
-            if (eligible.some((a) => a.id === accounts[index].id))
+            if (
+              eligible.some(
+                (a) =>
+                  a.id === accounts[index].id &&
+                  observed.get(a.id)!.historySince === selectedSince,
+              )
+            )
               rotationViolations.push(accounts[index].id);
           for (const a of accounts) {
             if (!eligible.includes(a) || a.id === admission.account)
@@ -1002,7 +1057,7 @@ describe("isolated shared receiving scheduler", () => {
         }
         expect(
           rotationViolations,
-          "no available fully-aged account can be bypassed by a history rotation",
+          "oldest available fully-aged history wins; exact ties rotate",
         ).toEqual([]);
         return { choices, maxSkipped };
       }
@@ -1022,6 +1077,11 @@ describe("isolated shared receiving scheduler", () => {
           expect(fresh[i]).toBe(accounts[i % accounts.length].id);
       }
       expect(Math.max(...freshWaits)).toBeLessThan(5000);
+      const durableHistory: {
+        admissions: number;
+        commits: number;
+        e: string;
+      }[] = [];
       for (const a of accounts) {
         const audit = await verifyPublication(a);
         const history = audit.filter((r) => BigInt(r.new_e) < BigInt(r.old_e));
@@ -1037,6 +1097,13 @@ describe("isolated shared receiving scheduler", () => {
         ).toBe(true);
         expect(a.errors).toEqual([]);
         const saved = await state(a);
+        durableHistory.push({
+          admissions: admissions.filter(
+            (entry) => entry.account === a.id && entry.kind === "history",
+          ).length,
+          commits: history.length,
+          e: String(saved.history_before),
+        });
         expect(BigInt(saved.fresh_through)).toBeGreaterThan(1024n);
         expect(BigInt(saved.history_before)).toBeLessThanOrEqual(769n);
         const rows = await placements(a);
@@ -1045,7 +1112,7 @@ describe("isolated shared receiving scheduler", () => {
         ).toBe(rows.length);
       }
       process.stdout.write(
-        `Stage3B sustained W=${workers}: eligible choices=${rotation.choices}, max skipped=${rotation.maxSkipped}; history wait=[${historyWaits.map((n) => n.toFixed(2))}]; protected cost=[${historyDurations.map((n) => n.toFixed(2))}]; fresh waits=[${freshWaits.map((n) => n.toFixed(2))}] ms\n`,
+        `Stage3B sustained W=${workers}: durable history=${JSON.stringify(durableHistory)}; eligible choices=${rotation.choices}, max skipped=${rotation.maxSkipped}; history wait=[${historyWaits.map((n) => n.toFixed(2))}]; protected cost=[${historyDurations.map((n) => n.toFixed(2))}]; fresh waits=[${freshWaits.map((n) => n.toFixed(2))}] ms\n`,
       );
     },
   );

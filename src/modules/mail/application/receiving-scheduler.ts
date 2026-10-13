@@ -201,8 +201,16 @@ export class ReceivingScheduler {
       !this.protectedActive &&
       protectedCandidates.length
     ) {
+      const oldestHistorySince = Math.min(
+        ...protectedCandidates.map((a) => a.historySince!),
+      );
       return {
-        account: this.rotate(protectedCandidates, "history")!,
+        account: this.rotate(
+          protectedCandidates.filter(
+            (a) => a.historySince === oldestHistorySince,
+          ),
+          "history",
+        )!,
         kind: "history" as const,
         protectedHistory: true,
       };
