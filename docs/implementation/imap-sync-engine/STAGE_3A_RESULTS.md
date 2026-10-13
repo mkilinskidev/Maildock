@@ -1,9 +1,11 @@
 # Stage 3A results — isolated single-account receiving coordinator
 
-Date: 2026-10-13. **BLOCKED: focused acceptance suite is not green.**
-Implementation and validation stopped after the first focused run reported a
-mandatory test failure, as requested. This is an isolated, unwired component;
-this report does not approve Stage 3B or production cutover.
+Date: 2026-10-13. **PASS: isolated Stage 3A acceptance.** The authorized oracle
+correction and rerun passed all 11 focused tests and all 104 selected Stage 1/2
+regressions. Production coordinator logic is unchanged. The original failed
+assertion and stopped run are retained below as historical evidence. This is an
+isolated, unwired component; this report does not authorize Stage 3B or
+production cutover.
 
 ## Git and scope
 
@@ -90,7 +92,7 @@ UIDVALIDITY mismatch fails closed: there is no old-epoch publication or frontier
 movement. Automatic epoch replacement/cleanup is not integrated in this stage;
 the mismatch remains retryable with capped backoff until explicitly resolved.
 
-## Validation results and blocker
+## Historical validation results and blocker — before oracle correction
 
 Environment: Windows, Node 24.21.0, pnpm 12.7.0, Docker Desktop engine 28.5.1.
 PostgreSQL tests create disposable `postgres:17.6-alpine` containers, migrate the
@@ -122,23 +124,28 @@ unique authoritative placements, fresh as the first restarted turn, and local
 client retirement. C=1 is exercised through the serial lifecycle, rather than a
 multi-account or distributed connection-cap harness.
 
-The failed mandatory case is **"repeated fresh arrivals never reset historical
-coverage"**. It expected historical E to remain `[257, 257, 257]` across three
+The original failed mandatory case was **"repeated fresh arrivals never reset historical
+coverage"**. Its assertion was:
+
+```typescript
+expect(frontiers).toEqual([257n, 257n, 257n]);
+```
+
+It expected historical E to remain `[257, 257, 257]` across three
 fresh publications. Observed E was **`[257, 129, 1]`**. Those values are descending
-history progress, not an upward reset; the test currently disallows legitimate
-history turns between polling deadlines. This run establishes a test-oracle
-discrepancy, not evidence of E regression. Nevertheless, the mandatory test is
-red and has not been weakened or rerun: the explicit stop-on-failure condition
-applies. Acceptance requires reviewing that oracle and another authorized run.
+history progress, not an upward reset; the original test disallowed legitimate
+history turns between polling deadlines. That run established a test-oracle
+discrepancy, not evidence of E regression. The mandatory test was red, and work
+stopped under the explicit stop-on-failure condition. The later user request
+authorized reviewing and correcting the oracle and rerunning acceptance.
 
 The key focused scenario passed: UIDs 385/386 became queryable through an
 independent PostgreSQL reader while E remained greater than 1, then restart
 checked UID 387 before completing history. The test computed injection-to-durable
 visibility with `performance.now()` and emitted a console sample, but the
 captured Vitest result did **not** return its numeric value. Numeric fresh
-visibility is therefore **unavailable in this report**, and no latency/SLA claim
-is made. Retaining that measurement in an accessible result artifact remains
-unfinished.
+visibility was therefore **unavailable in the original report**. The authorized
+rerun now captures the measurement below; no SLA is inferred.
 
 Regression command:
 
@@ -148,12 +155,12 @@ pnpm exec vitest run tests/receiving-safety.integration.test.ts tests/receiving-
 
 ## Remaining risks and readiness
 
-Stage 3A is **BLOCKED pending focused acceptance**, so Stage 3B is **not ready**.
-Review the failed test's monotonic-history oracle and retain a numeric visibility
-artifact before another acceptance attempt. Unknown initialization and capped
-backoff across repeated persistence outages have implementation paths but no
-new focused fault-injection case here. Callback integrations must honor the
-documented authority and synchronous diagnostic contracts.
+Stage 3A is **PASS for the isolated single-account component**, providing the
+prerequisite for separately authorized Stage 3B work. Stage 3B was not started.
+Unknown initialization and capped backoff across repeated persistence outages
+have implementation paths but no new focused fault-injection case here.
+Callback integrations must honor the documented authority and synchronous
+diagnostic contracts.
 
 Continuous fresh backlog may postpone history indefinitely; Stage 3B protection
 was explicitly excluded. Sparse numeric domains retain fixed 128-UID windows.
@@ -163,4 +170,50 @@ fencing cannot eliminate process suspension or remote partition limitations.
 Automatic epoch replacement, distributed scheduling, pg-boss delivery, worker
 integration and full production resource/release validation remain future work.
 
-No further implementation was attempted after the mandatory focused failure.
+No production implementation was changed during the oracle correction.
+
+## Accepted oracle correction and rerun
+
+The correction changes only `tests/receiving-coordinator.integration.test.ts`
+and this report. It also removes the unused `options` helper and an empty import.
+The existing visibility sample is emitted directly to stdout so it is retained
+in the captured test output.
+
+The repeated-arrival fixture starts at F=1024/E=1025 with a small sparse history
+and injects three fresh UIDs, 1025/1026/1027. Historical SEARCH completion is held
+for 200 ms against a 150 ms polling interval, allowing complete history windows
+between due fresh turns. No assertion requires E to remain fixed between fresh
+operations.
+
+A fixture-only PostgreSQL AFTER UPDATE trigger records old/new epoch, revision,
+F/E and the interval's placement set in the same transaction as each receiving
+mutation. Rollback removes the audit row too. The independent reader inspects
+the committed audit after stop, verifies contiguous revisions, monotonic E,
+F increments for all three arrivals and unchanged E within each fresh commit.
+At least two history commits must decrease E by their complete 128-UID windows,
+leave F unchanged and contain the exact expected metadata identities. Every
+interval is matched to completed SEARCH/FETCH in the TLS peer transcript. Fresh
+placements are committed while E>1, then independently queried through
+`receiving_current_placements`. Final F/E/revision must match the durable audit.
+Callbacks only control injection and stop; they are not the state oracle. The
+audit table/function/trigger are created and dropped solely inside the disposable
+fixture; production persistence and schema are unchanged.
+
+| Check                                                         | Accepted rerun result                                |
+| ------------------------------------------------------------- | ---------------------------------------------------- |
+| Focused coordinator suite, same command above                 | **PASS: 11/11**, one file, exit 0, 12.28 seconds     |
+| Stage 1/2 and conditional STORE selection, same command above | **PASS: 104/104**, five files, exit 0, 33.81 seconds |
+| `pnpm typecheck`                                              | PASS, exit 0                                         |
+| `pnpm lint`                                                   | PASS, exit 0, no errors or warnings                  |
+| Changed test/report Prettier check                            | PASS                                                 |
+| `git diff --check`                                            | PASS                                                 |
+| Full repository suite / full repository formatting            | NOT RUN                                              |
+
+The existing key acceptance fixture measured **401.68 ms** from injection of
+UIDs 385/386 during a held history SEARCH to their first observed committed
+visibility through an independent PostgreSQL reader. At observation **E=257**,
+so history was unfinished. This is one local scripted-TLS/PostgreSQL sample,
+including the 200 ms historical SEARCH barrier and the reader's 5 ms polling
+cadence/query overhead. It measures observable durable visibility, not an exact
+server-side COMMIT timestamp, latency distribution or provider SLA. Restart then
+discovered UID 387 and completed history with seven unique placements.

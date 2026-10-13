@@ -24,7 +24,6 @@ import {
   ReceivingExecutor,
   ReceivingUnresolvedError,
 } from "@/shared/infrastructure/database/receiving-executor";
-import {} from "@/shared/infrastructure/database/receiving-authority";
 import { sql } from "drizzle-orm";
 import { ReceivingPersistence } from "@/modules/mail/application/receiving-persistence";
 import { ReceivingCoordinator } from "@/modules/mail/application/receiving-coordinator";
@@ -143,7 +142,6 @@ describe("single-account autonomous receiving coordinator", () => {
       budget(),
     );
   }
-  const options = () => ({ ...budget(9000), assertCurrent: () => {} });
 
   type Peer = Awaited<ReturnType<typeof wire>>;
   type Turn = Awaited<ReturnType<typeof receiveInboxTurn>>;
@@ -260,8 +258,8 @@ describe("single-account autonomous receiving coordinator", () => {
     expect(BigInt(visible.history_before)).toBeGreaterThan(1n);
     await first.instance.stop();
     expect(first.errors).toEqual([]);
-    console.info(
-      `Stage3A fresh durable visibility: ${visibilityMs.toFixed(2)} ms; E=${visible.history_before}`,
+    process.stdout.write(
+      `Stage3A fresh durable visibility: ${visibilityMs.toFixed(2)} ms; E=${visible.history_before}\n`,
     );
     const savedE = BigInt((await state()).history_before);
     script.uids!.push(387);
@@ -340,31 +338,138 @@ describe("single-account autonomous receiving coordinator", () => {
 
   it("repeated fresh arrivals never reset historical coverage", async () => {
     const exec = executor();
-    await initialize(exec);
+    await new ReceivingPersistence(exec).initialize(
+      owner(),
+      mailbox,
+      { complete: true, epoch: 7n, uidNext: 1025n },
+      budget(),
+    );
+    // Fixture-only transactional observations: rolled-back mutations cannot
+    // leave audit rows. Each snapshot captures placements in the same commit
+    // as F/E, independently of the coordinator's diagnostic callbacks.
+    await reader.unsafe(`
+      CREATE TABLE stage3a_progress_audit (
+        mailbox uuid, epoch bigint, old_epoch bigint, revision bigint,
+        old_f bigint, new_f bigint, old_e bigint, new_e bigint, uids bigint[]
+      );
+      CREATE FUNCTION stage3a_audit_progress() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO stage3a_progress_audit
+        SELECT NEW.mailbox_id, NEW.epoch, OLD.epoch, NEW.revision,
+          OLD.fresh_through, NEW.fresh_through, OLD.history_before, NEW.history_before,
+          ARRAY(SELECT uid FROM mailbox_messages
+            WHERE mailbox_id=NEW.mailbox_id AND uid_validity=NEW.epoch
+              AND ((uid>OLD.fresh_through AND uid<=NEW.fresh_through)
+                OR (uid>=NEW.history_before AND uid<OLD.history_before)) ORDER BY uid);
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER stage3a_audit AFTER UPDATE ON receiving_mailboxes
+        FOR EACH ROW EXECUTE FUNCTION stage3a_audit_progress();
+    `);
     const script: WindowPeerOptions = {
-      uids: [257],
-      uidNext: 258,
+      uids: [1, 129, 257, 385, 513, 641, 769, 897, 1024, 1025],
+      uidNext: 1026,
       boundedMailbox: true,
+      onCommand: (p, command) => {
+        const range = /^UID SEARCH UID (\d+):(\d+)$/.exec(command.command);
+        if (range && Number(range[2]) <= 1024) {
+          const hits = script.uids!.filter(
+            (uid) => uid >= Number(range[1]) && uid <= Number(range[2]),
+          );
+          p.send(`* SEARCH ${hits.join(" ")}\r\n`, command);
+          // Make fresh due at the completed history boundary, without changing
+          // production scheduling or requiring a particular callback E value.
+          p.later(200, () => p.ok(command));
+          return true;
+        }
+      },
     };
     const peer = await wire(script);
-    const frontiers: bigint[] = [];
+    let arrivals = 0;
     const run = coordinator(peer, exec, {
-      timing: { pollMs: 1 },
+      timing: { pollMs: 150 },
       onTurn: (kind, turn) => {
         if (kind === "fresh" && turn.count) {
-          frontiers.push(turn.state.historyBefore);
-          if (frontiers.length < 3) {
+          arrivals++;
+          if (arrivals < 3) {
             script.uids!.push(Number(turn.state.freshThrough + 1n));
             script.uidNext!++;
           } else void run.instance.stop();
         }
       },
     });
-    await until(() => frontiers.length === 3, 5000);
-    await run.instance.stop();
-    expect(frontiers).toEqual([257n, 257n, 257n]);
-    expect(BigInt((await state()).fresh_through)).toBe(259n);
-    expect(await count()).toBe(3);
+    try {
+      await until(() => arrivals === 3, 5000);
+      await run.instance.stop();
+      expect(run.errors).toEqual([]);
+      const committed =
+        await reader`select * from stage3a_progress_audit where mailbox=${mailbox} order by revision`;
+      let previousF = 1024n,
+        previousE = 1025n,
+        revision = 0n;
+      const fresh: bigint[] = [];
+      let history = 0;
+      for (const row of committed) {
+        const oldF = BigInt(row.old_f),
+          newF = BigInt(row.new_f);
+        const oldE = BigInt(row.old_e),
+          newE = BigInt(row.new_e);
+        expect(BigInt(row.epoch)).toBe(7n);
+        expect(BigInt(row.old_epoch)).toBe(7n);
+        expect(BigInt(row.revision)).toBe(++revision);
+        expect(oldF).toBe(previousF);
+        expect(oldE).toBe(previousE);
+        expect(newE).toBeLessThanOrEqual(oldE);
+        let low: bigint, high: bigint;
+        if (newF > oldF) {
+          expect(newF).toBe(oldF + 1n);
+          expect(newE).toBe(oldE); // Fresh publication cannot reset E.
+          expect(newE).toBeGreaterThan(1n); // Arrival visible before history completes.
+          fresh.push(newF);
+          low = oldF + 1n;
+          high = newF;
+        } else {
+          expect(newF).toBe(oldF);
+          expect(newE).toBe(oldE - 128n);
+          history++;
+          low = newE;
+          high = oldE - 1n;
+        }
+        // Durable placement set must match the complete bounded wire window.
+        const hits = script.uids!.filter(
+          (uid) => BigInt(uid) >= low && BigInt(uid) <= high,
+        );
+        expect(row.uids.map(BigInt)).toEqual(hits.map(BigInt));
+        const search = peer.commands.find(
+          (c) => c.command === `UID SEARCH UID ${low}:${high}`,
+        );
+        expect(search?.taggedMs).not.toBeNull();
+        expect(search).toBeDefined();
+        const fetch = peer.commands.find(
+          (c) =>
+            c.connection === search!.connection &&
+            c.command.startsWith("UID FETCH"),
+        );
+        expect(fetch).toBeDefined();
+        expect(fetch?.taggedMs).not.toBeNull();
+        previousF = newF;
+        previousE = newE;
+      }
+      expect(fresh).toEqual([1025n, 1026n, 1027n]);
+      expect(history).toBeGreaterThanOrEqual(2);
+      const saved = await state();
+      expect(BigInt(saved.fresh_through)).toBe(previousF);
+      expect(BigInt(saved.history_before)).toBe(previousE);
+      expect(BigInt(saved.revision)).toBe(revision);
+      const visible =
+        await reader`select uid from receiving_current_placements where mailbox_id=${mailbox} and uid>=1025 order by uid`;
+      expect(visible.map((row) => BigInt(row.uid))).toEqual(fresh);
+    } finally {
+      await run.instance.stop();
+      await reader.unsafe(
+        "DROP TRIGGER stage3a_audit ON receiving_mailboxes; DROP FUNCTION stage3a_audit_progress(); DROP TABLE stage3a_progress_audit;",
+      );
+    }
   });
 
   it.each(["search", "fetch"] as const)(
