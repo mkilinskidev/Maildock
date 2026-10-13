@@ -1,3 +1,112 @@
+# Stage 3C — final acceptance attempt
+
+2026-10-13. **BLOCKED: fixture startup failed; acceptance remains PARTIAL.**
+Continued on `test/imap-sync-stage-3c-dovecot`, clean at the requested base
+`a2ac46f81d4bd30fd6a15c72f851f969fcdfb168`. Read the latest diagnosis below first.
+Production Stage 1–3B code, IMAP settings, operation deadlines, retry limits,
+executor capacities and scheduling policy were not changed. No regressions,
+push, merge, PR or Stage 4 work were performed.
+
+## Fixture correction and effective configuration
+
+Stage 3C mounts its own `stage3c-dovecot.conf`, which includes the unchanged
+shared experiment configuration. The supported Dovecot 2.4 setting is:
+
+```text
+dovecot_config_version = 2.4.3
+!include /etc/dovecot/stage3c-base.conf
+service anvil {
+  unix_listener anvil-auth-penalty {
+    mode = 0
+  }
+}
+```
+
+The listener setting follows the
+[official Dovecot 2.4 documentation](https://doc.dovecot.org/2.4.1/core/config/auth/penalty.html).
+The final file was checked with the pinned Dovecot 2.4.3 image using its actual
+`doveconf -n` parser, without starting a server or receiving scenario. Exit code
+was **0**, and effective output contains the exact anvil listener with `mode = 0`,
+the static passdb, required TLS and the original rootless listener ports. Normal
+password configuration and `auth_failure_delay` were not edited. This confirms
+the configured disabling, **not runtime absence of penalties or password rejection**.
+
+## Single attempted execution and stopping evidence
+
+One invocation of the existing `-FailureOnly` launcher was attempted at
+2026-10-13 19:13:29 Europe/Warsaw (17:13:29 UTC). The new wrapper initially omitted
+the first-setting version declaration. The attempt failed during Dovecot fixture
+startup with HTTP 409:
+
+```text
+container stopped/paused - container
+2da8109d5bd5f299cbfd3a335f937cc80b87097cdfa3be07dadc33bee2455382 is not running
+```
+
+A subsequent parser-only diagnostic returned exit **89** and:
+
+```text
+doveconf: Fatal: Error in configuration file /etc/dovecot/dovecot.conf line 2:
+The first setting must be dovecot_config_version
+```
+
+The missing declaration was corrected, then parser validation passed. There was
+**no second smoke invocation**. W=4 was not dispatched after the failure, as
+required by the mandatory-condition stop rule. No deadline was raised.
+
+The harness recorded **2,434.27 ms**, including its cleanup. The outer execution
+measured **6,041 ms**, including launcher cleanup, well below the combined
+300-second budget. Cleanup errors were empty. A post-run Docker query found no
+containers labeled `maildock.stage3c=disposable`. No scheduler or owned receiving
+resources were created. Testcontainers removed the failed startup container before
+the harness could retain server logs; the raw Docker error, launcher logs and
+independent parser diagnostic are retained. No live penalty samples were obtained.
+
+## Harness preparation, validation and exact outcomes
+
+The failure-only path now checks all four healthy durable frontiers, exact
+200/400/800ms backoff, no early readmission, empty IP penalty samples and existing
+SQL/resource oracles. It saves the failed-account boundary separately, restores
+valid credentials and captures independent recovery state. `--workers=4` selects
+only the existing W=4 scenarios; its evidence filename is separate. Passive
+diagnostics also measure D=2 PostgreSQL socket ownership in W=4. The launcher can
+receive a reduced remaining process budget; the original caps cannot increase.
+These new runtime checks are **unexecuted** because fixture startup failed.
+
+| Mandatory check                                                       | Outcome | Evidence                                                               |
+| --------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------- |
+| Supported fixture setting and final effective parser configuration    | PASS    | Dovecot 2.4.3 `doveconf -n`, exit 0, listener mode 0                   |
+| Disposable fixture startup in the single smoke attempt                | FAIL    | HTTP 409; parser diagnostic identifies missing initial version setting |
+| Runtime penalty disabling and invalid-password rejection              | NOT RUN | Server scenario never started                                          |
+| W=2 failure isolation, durable healthy progress and bounded backoff   | NOT RUN | No scheduler lifetime or SQL snapshots                                 |
+| Restored-account recovery                                             | NOT RUN | No failure/recovery lifetime                                           |
+| W=4 initial fresh discovery, exactly 2–3 history windows              | NOT RUN | Stopped after fixture failure                                          |
+| W=4 durable E progression, F, epochs, revisions and all placements    | NOT RUN | No W=4 SQL state; no per-account E values to report                    |
+| W=4 old-dated fresh visibility and E preservation                     | NOT RUN | No injections or latency measurements                                  |
+| W=4 same-state restart, no duplicates/overlap and resource retirement | NOT RUN | No W=4 execution                                                       |
+| Cleanup of attempted fixture                                          | PASS    | Empty cleanup errors and no labeled containers remaining               |
+| Focused oracle/diagnostic preflight, typecheck, lint, formatting      | PASS    | Checks completed; no regression suites                                 |
+
+The previous accepted W=2 durable history, fresh visibility and restart evidence
+below remains unchanged. It does not establish this attempt's failure isolation
+or W=4 acceptance. The historical intermittent W=4 teardown timeout remains an
+unresolved risk; neither reproduction nor resolution is claimed here. The repaired
+fixture and new harness assertions still require a separately authorized bounded
+acceptance execution. **Final Stage 3C: PARTIAL; Stage 4 readiness: NOT ESTABLISHED.**
+Work stops after Stage 3C.
+
+## Retained evidence
+
+`experiments/imap-dovecot/stage3c-final-acceptance-evidence.json.gz` preserves the
+unchanged raw smoke JSON, launcher stdout/stderr, failed and repaired parser output,
+and exact report classifications. The raw JSON's fixture `NOT RUN` is a preexisting
+recording limitation for startup failure; the fixture attempt is **FAIL** above.
+Older compressed evidence artifacts remain unchanged. Runtime files remain ignored.
+SHA-256 of the uncompressed final evidence JSON:
+`b977e6733d36f161a7ca21a27bb477b5fa529aff962bc25d48ad81ab22d09e24`.
+
+---
+
 # Stage 3C — healthy-account timeout diagnosis
 
 2026-10-13. **TEST ENVIRONMENT ISSUE — shared-IP Dovecot authentication penalty.**

@@ -1,4 +1,4 @@
-param([switch]$FailureOnly)
+param([switch]$FailureOnly, [switch]$WorkersFourOnly, [int]$BudgetMs = 300000)
 $ErrorActionPreference = 'Stop'
 # Pre-pull images before invoking this script. No download time is hidden here.
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -8,10 +8,13 @@ $process = $null
 try {
     $smokeArguments = @('--import', 'tsx', 'experiments/imap-dovecot/stage3c.ts')
     if ($FailureOnly) { $smokeArguments += '--failure-only' }
+    if ($WorkersFourOnly) { $smokeArguments += '--workers=4' }
+    $processBudgetMs = [Math]::Min($BudgetMs, $(if ($FailureOnly) { 120000 } else { 300000 }))
+    $previousBudget = $env:STAGE3C_BUDGET_MS
+    $env:STAGE3C_BUDGET_MS = "$processBudgetMs"
     $process = Start-Process -FilePath 'node' -ArgumentList $smokeArguments -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errorPath -PassThru
     # Keep the process handle open so ExitCode remains available after exit.
     $processHandle = $process.Handle
-    $processBudgetMs = $(if ($FailureOnly) { 120000 } else { 300000 })
     if (!$process.WaitForExit($processBudgetMs)) {
         $process.Kill($true)
         throw "PARTIAL: strict $processBudgetMs ms process budget exhausted"
@@ -19,6 +22,7 @@ try {
     $process.Refresh()
     if ($process.ExitCode -ne 0) { throw "Smoke failed, exit $($process.ExitCode); inspect $errorPath and the selected mode's evidence JSON" }
 } finally {
+    $env:STAGE3C_BUDGET_MS = $previousBudget
     # Also cleans interrupted fixture preparation or the hard watchdog path.
     $fixtureContainers = @(& docker ps -aq --filter 'label=maildock.stage3c=disposable')
     foreach ($containerId in $fixtureContainers) {

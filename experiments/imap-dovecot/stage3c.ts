@@ -43,14 +43,23 @@ if (process.argv.includes("--check")) {
 }
 const started = performance.now();
 const failureOnly = process.argv.includes("--failure-only");
-const processBudget = failureOnly ? 120_000 : 300_000;
+const workersFourOnly = process.argv.includes("--workers=4");
+const processBudget = Math.min(
+  failureOnly ? 120_000 : 300_000,
+  Number(process.env.STAGE3C_BUDGET_MS ?? 300_000),
+);
+assert(Number.isFinite(processBudget) && processBudget > 20_000);
 const deadline = started + processBudget;
 const evidence: Record<string, unknown> = {
   started: new Date().toISOString(),
   image,
   outcomes: {},
   runs: [],
-  mode: failureOnly ? "failure-isolation-only" : "complete-smoke",
+  mode: failureOnly
+    ? "failure-isolation-only"
+    : workersFourOnly
+      ? "w4-only"
+      : "complete-smoke",
 };
 const outcomes = evidence.outcomes as Record<string, string>;
 const containers: StartedTestContainer[] = [];
@@ -67,7 +76,9 @@ const save = () =>
     new URL(
       failureOnly
         ? ".runtime/stage3c-failure-evidence.json"
-        : "stage3c-evidence.json",
+        : workersFourOnly
+          ? ".runtime/stage3c-w4-final-evidence.json"
+          : "stage3c-evidence.json",
       import.meta.url,
     ),
     JSON.stringify(
@@ -117,8 +128,13 @@ async function smoke() {
     .withAddedCapabilities("SYS_CHROOT")
     .withBindMounts([
       {
-        source: `${root}dovecot.conf`,
+        source: `${root}stage3c-dovecot.conf`,
         target: "/etc/dovecot/dovecot.conf",
+        mode: "ro",
+      },
+      {
+        source: `${root}dovecot.conf`,
+        target: "/etc/dovecot/stage3c-base.conf",
         mode: "ro",
       },
       { source: `${root}.runtime/tls`, target: "/etc/dovecot/ssl", mode: "ro" },
@@ -144,6 +160,34 @@ async function smoke() {
   database = createDatabase({ databaseUrl: url, databasePoolSize: 2 });
   reader = postgres(url, { max: 3 });
   const db = reader;
+  serverEvidence = async () => {
+    evidence.dovecotLogs = execFileSync("docker", ["logs", dovecot.getId()], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    evidence.finalPenalty = await dovecot.exec(["doveadm", "penalty"]);
+  };
+  const effectiveConfig = await command(dovecot, ["doveconf", "-n"]);
+  evidence.dovecotFixtureConfig = {
+    effectiveConfig,
+    authFailureDelay: await command(dovecot, [
+      "doveconf",
+      "-h",
+      "auth_failure_delay",
+    ]),
+    penaltySocketAbsent: await command(dovecot, [
+      "sh",
+      "-c",
+      "test ! -S /run/dovecot/anvil-auth-penalty && echo absent",
+    ]),
+  };
+  save();
+  assert.match(
+    effectiveConfig,
+    /unix_listener anvil-auth-penalty \{\s*mode = 0\s*\}/,
+  );
   await migrate(database.db, { migrationsFolder: "db/migrations" });
   evidence.versions = {
     dovecot: await command(dovecot, ["dovecot", "--version"]),
@@ -242,7 +286,7 @@ async function smoke() {
   evidence.serverInventory = Object.fromEntries(inventories);
   console.log(`Fixture ready in ${Math.round(performance.now() - started)}ms`);
   save();
-  for (const workers of failureOnly ? [2] : [2, 4]) {
+  for (const workers of failureOnly ? [2] : workersFourOnly ? [4] : [2, 4]) {
     const run: Record<string, unknown> = {
       workers,
       admissions: [],
@@ -299,7 +343,7 @@ async function smoke() {
     const [lease] =
       await db`select maildock_receiving_takeover(${actor},60000) as generation`;
     const owner = { actor, generation: BigInt(lease.generation) };
-    if (failureOnly) {
+    {
       diagnostic = new FailureDiagnostics(
         pg.getMappedPort(5432),
         dovecot.getMappedPort(31993),
@@ -540,6 +584,7 @@ async function smoke() {
       assert(!overlap);
       assert(maxSockets <= workers);
       assert(admissions.every((a) => a.active <= workers));
+      assert(diagnostic!.maxPgSockets <= 2);
       result.oracle = "PASS";
       save();
       return snapshot;
@@ -741,9 +786,59 @@ async function smoke() {
       run.healthyTimeouts = errors.filter(
         (e) => e.user !== users[0] && /deadline/.test(e.error),
       );
-      outcomes.W2 = "DIAGNOSTIC COMPLETE";
-      outcomes.W4 = "NOT RUN: diagnosis restricted to W=2";
-      evidence.result = "DIAGNOSTIC COMPLETE";
+      assert(
+        errors.every(
+          (e) => e.user === users[0] && /AUTHENTICATE failed/.test(e.error),
+        ),
+      );
+      assert.deepEqual(
+        errors.slice(0, 3).map((e) => e.retry),
+        [200, 400, 800],
+      );
+      assert(
+        final.states.every(
+          (s) => s.f === (s.mailbox === identities[0].mailbox ? 0 : 1),
+        ),
+      );
+      for (const error of errors) {
+        const next = diagnostic!.traces.find(
+          (t) => t.user === error.user && t.admission > error.at,
+        );
+        if (next) assert(next.admission >= error.at + error.retry);
+      }
+      for (const entry of run.serverSamples as {
+        penalty: { exitCode: number; output: string };
+      }[]) {
+        assert.equal(entry.penalty.exitCode, 0);
+        assert.equal(
+          entry.penalty.output.trim().split(/\r?\n/).length <= 1,
+          true,
+          "IP penalty table must remain empty",
+        );
+      }
+      run.failureIsolation = "PASS";
+      disabled = false;
+      const restoredAt = performance.now();
+      start();
+      await until(
+        async () =>
+          (await capture()).states.find(
+            (s) => s.mailbox === identities[0].mailbox,
+          )!.f === 1,
+        "restored account recovery",
+        20_000,
+      );
+      await stop();
+      diagnostic!.settleCancelled();
+      run.recovery = await boundary("recovery-final");
+      run.recoveryVisibilityMs = performance.now() - restoredAt;
+      await sample();
+      assert.equal(diagnostic!.resources().livePgSockets, 0);
+      await executor.stop();
+      executor = undefined;
+      outcomes.W2 = "PASS";
+      outcomes.W4 = "NOT RUN: separate W=4 invocation";
+      evidence.result = "PASS";
       save();
       console.log(
         `Failure-only W=2 complete: ${errors.length} errors; healthy deadline failures ${(run.healthyTimeouts as unknown[]).length}`,
@@ -913,10 +1008,18 @@ async function smoke() {
         failed.states.find((s) => s.mailbox === identities[0].mailbox)!.f,
     );
     run.failureIsolation = "PASS";
+    assert(
+      errors.every(
+        (e) => e.user === users[0] && /AUTHENTICATE failed/.test(e.error),
+      ),
+    );
+    assert.equal(diagnostic!.resources().livePgSockets, 0);
     run.maxLatencyMs = Math.max(...injections.map((s) => s.latencyMs!));
     run.final = recovered;
     await executor.stop();
     executor = undefined;
+    diagnostic!.restore();
+    diagnostic = undefined;
     outcomes[`W${workers}`] = "PASS";
     captureFailure = undefined;
     save();
@@ -930,6 +1033,11 @@ try {
   await Promise.race([smoke(), expired]);
 } catch (error) {
   evidence.result = "PARTIAL";
+  if (outcomes.fixture !== "PASS")
+    outcomes.fixture = "FAIL: fixture preparation";
+  for (const key of ["W2", "W4"])
+    if (outcomes[key] === "PARTIAL: started")
+      outcomes[key] = "FAIL: mandatory acceptance condition";
   evidence.error =
     error instanceof Error
       ? { message: error.message, stack: error.stack }
