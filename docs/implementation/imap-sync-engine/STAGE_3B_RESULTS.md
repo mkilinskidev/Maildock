@@ -9,6 +9,12 @@ Follow-up W=4 shutdown investigation: the timeout did **not** reproduce in five
 selected runs, including three with temporary ownership/retirement diagnostics.
 Its root cause remains unestablished; no shutdown fix is claimed. See the final
 section for the scoped 12/12 shutdown validation.
+
+Latest acceptance finalization: **BLOCKED**, 26/28 in the one corrected full
+suite run. Current-first recovery and independently observed fresh visibility
+pass; the eight-account W=4 profile does not establish per-account historical
+progress. Historical results below are retained. See the finalization section
+at the end for assertion contracts, negative controls and measurements.
 Stop-on-critical-gate-failure was applied: no acceptance assertion was weakened,
 no Stage 1/2 repair was attempted, and Stage 4 was not started.
 
@@ -513,3 +519,215 @@ timeout, W=1/2 history completion after restart, W=1/2/4 fresh-responsiveness
 scenarios and W=4 history-rotation assertion. These independent passes do not
 replace that full-suite result or authorize fixes to its other scenarios.
 No push, merge, PR, Stage 4 or production integration was performed.
+
+## Acceptance finalization — 2026-10-13
+
+Started on the requested branch with a clean working tree and exact HEAD
+`7b90d23f02598db36721636e4322bef255f52fd0`. Re-read the affected scenarios,
+scheduler and approved D06 policy, the Stage 3B authorization's D10-style
+mechanism, architecture §14.4 and validation H1–H7. The final code changes are
+confined to the integration test and this report. Stage 1/2, driver patches,
+persistence, transport, worker composition and scheduler policy remain unchanged.
+
+### Assertion contracts and replacements
+
+| Modified scenarios           | Approved invariant                                                                                                                                             | Invalid original assumption                                                                                                                       | Direct replacement                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Restart W=1/2/4              | Architecture §14.4 current-first restart; validation H6; durable epoch/F/E and placement correctness                                                           | Every account must finish eight historical windows within 10 s while fresh polls are due every 50 ms                                              | First restart retains the 50 ms profile, gates history, and reads exact epoch=7, F=1025, E=1025 and UID 1025 through the independent DB reader. A separate quiet lifetime must finish the same eight windows and exact placements under the unchanged 10 s barrier. Its 30 s poll ensures no new fresh probe becomes due within that barrier.                                                                                                                                                  |
+| Fresh responsiveness W=1/2/4 | Fresh-first selection at safe completed-operation boundaries; C=1/W limits; fresh visibility independent of history                                            | History starts even though fresh stays continuously due; first five post-injection admissions must be five distinct registered accounts           | All initial probes complete before history eligibility opens. A 500 ms fixture poll leaves a controlled spare-capacity interval. W actual SEARCH commands are explicitly held, arrivals are injected, and the 550 ms hold makes all polling observations due. Releasing tagged completions returns real slots. The observer rejects ordinary history whenever a known available due-fresh account exists; exact durable UID/F/epoch and incomplete E are independently read for every account. |
+| History fairness W=1/2/4     | Approved D06, architecture §14.4, validation H2–H4: bounded protected opportunities, available-account rotation, no consecutive exceptions, durable E progress | First five protected accounts must follow registration order even when some accounts are busy; five accounts at W=4 always exercise a real choice | Use H3's moderate eight-account profile to expose multiple available candidates at W=4. Replay actual admission/completion observations against an independent cyclic-order oracle, rejecting skipped fully-aged available candidates and more than seven consecutive missed safe opportunities for any continuously eligible account. Require real candidate alternatives to be exercised and at least two independently committed descending E windows per account.                          |
+
+The quiet fixture's poll adjustment does not change a test/operation timeout or
+product default. A 2 s trial quiet poll still introduced fresh work within the
+10 s completion barrier and left E=129 at its boundary; it was not a controlled
+all-history execution interval. The final 30 s quiet poll corrects that fixture
+eligibility while all fresh responsiveness and sustained-demand cases remain.
+All eight original history windows, metadata identities and completion checks
+are retained. W=4 restart is corrected consistently with W=1/2; the prior
+intermittent shutdown risk is not declared fixed.
+
+Eligibility observations come from admission, completion and actual owned
+clients, outside the selector's private state. Completion timestamps are
+slightly later than the selector's own timestamps: a 2 ms exclusion band omits
+ambiguous due/age threshold-edge candidates from rotation/priority comparison.
+It does not add a scheduling grace period. The decisive fresh fixture has a
+550 ms held interval versus a 500 ms due interval; its known candidates are
+well outside that band. Exact threshold-edge timing is not claimed as measured.
+
+### Independent publication and resource oracle
+
+The disposable PostgreSQL fixture now adds `stage3b_audit` and an AFTER UPDATE
+trigger; these are test-only DDL, not a migration or durable scheduler ledger.
+Each row atomically records old/new F/E, old/new epoch, revision and the exact
+placement UID set for that published interval. Rolled-back updates cannot leave
+audit evidence. The independent reader verifies:
+
+- Every revision increments exactly once, epoch remains 7 and each old frontier
+  equals the previous committed frontier.
+- Fresh publication advances F by at most 128 and leaves E unchanged; sustained
+  sparse fresh windows advance exactly 128. History leaves F unchanged and
+  lowers E by exactly one bounded window, down to 1.
+- The interval's complete placement set equals the scripted mailbox oracle,
+  with completed SEARCH/FETCH evidence on that account's actual connection.
+- Final F/E/revision match the entire durable audit; all covered placements
+  match exact UID/epoch identities with no duplicates or missing covered mail.
+
+Restart also retains exact final placement/epoch checks and the complete E
+sequence `[897,769,641,513,385,257,129,1]` for every account. Fresh tests read
+each injected UID independently, assert F=1025/epoch=7 while E>1 at visibility,
+and verify exactly one UID 1025 placement afterward. Callback counters are not
+the durability oracle. Original socket overlap/C=1, W, cancellation, closed
+clients, no extra connections and excluded-command checks remain in place.
+
+### Negative controls and restoration
+
+Temporary targeted mutations were applied only to `receiving-scheduler.ts`,
+one at a time, and restored to the exact starting implementation after every
+run. No mutation is part of the final diff. All final controls produced the
+intended failures for W=1/2/4, rather than being accepted as passing tests:
+
+| Control                                                            | Corresponding defect and exact rejection                                                                                                                  | Result / retained output                                                                                          |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Execute history in place of the restart's selected fresh operation | Direct independent-reader assertion rejected E=897 instead of E=1025 before fresh recovery                                                                | 3/3 rejected, exit 1, 11.23 s; `stage3b-negative-recovery-exact.log`                                              |
+| Disable all history candidates                                     | Quiet fixture independently rejected unchanged E=1025 instead of complete E=1                                                                             | 3/3 rejected on the final 30 s quiet-poll profile, exit 1, 42.81 s; `stage3b-negative-history-progress-final.log` |
+| Select ordinary history before fresh                               | Replayed real boundaries rejected history while an available fresh account was already due; checked during visibility polling, not merely after a timeout | 3/3 rejected, exit 1, 12.53 s; `stage3b-negative-fresh-priority-exact.log`                                        |
+| Reset history cursor to zero after every selection                 | Available fully-aged accounts were bypassed; cyclic-order assertion failed during independent durable-progress polling                                    | 3/3 rejected, exit 1, 20.36 s; `stage3b-negative-history-rotation-final.log`                                      |
+
+The first five-account rotation-control trial rejected W=1/2 but **accepted
+W=4** (2 failed, 1 passed). That exposed an insufficient test choice set, not
+proof that cursor-zero was correct. Moving to the approved eight-account
+profile and requiring alternative candidates made the corrected W=4 test
+reject the same defect. This strengthens, rather than relaxes, acceptance.
+
+Draft fixture wiring initially failed typecheck and 3/9 affected cases before
+message injection; the held-command variable was corrected and all three fresh
+cases then passed. A preliminary recovery mutation produced timeout rejections;
+the final exact control above instead immediately rejected the independently
+observed incorrect E. The initial progress-disabled control already rejected
+exact E at W=1/2/4 (43.36 s). The initial priority control rejected W=2/4 directly
+and W=1 by the visibility barrier; the final control checks the priority
+violation during polling for all three W values. These exploratory results are
+retained in local logs, not substituted for the final integrity controls.
+
+### Bounded positive validation and remaining failures
+
+Affected scenarios were tested before the single complete rerun. An early
+trial had 6/9 pass and three held-fixture wiring failures (59.82 s). After the
+wiring correction, the fresh subset passed 3/3 (14.59 s). With the stronger
+eight-account fairness profile, the final affected run was **6 passed, 3
+failed, 19 skipped**, exit 1, 80.26 s. Failures: the 2 s quiet-poll completion
+assumption, a leftover modulo-5 test index after changing to eight accounts, and
+W=4 durable progress. The first two test-fixture issues were corrected; the
+remaining W=4 condition was instrumented with independent state snapshots,
+without increasing its 15 s barrier or the 1 s history deadline.
+
+The complete Stage 3B focused suite was then run **once**:
+
+```powershell
+pnpm exec vitest run tests/receiving-scheduler.integration.test.ts --maxWorkers=1 --no-file-parallelism
+```
+
+**FAIL: 26 passed, 2 failed, 28 total; exit 1; 98.55 s. No unhandled errors were
+reported.** Retained output: `stage3b-finalization-full.log`. All corrected
+restart scenarios and fresh responsiveness scenarios passed. W=1/2 protected
+history tests passed their cyclic-opportunity, publication and wait checks.
+
+**Failure 1: W=4 per-account durable historical progress remains unverified.**
+After 15 s, the independent reader reported the following exact states. Account
+numbers below are registration indices for readability, not a required service
+order. All eight had revision=17 and no receiving errors.
+
+| Account index |    F |    E | Historical admissions |
+| ------------- | ---: | ---: | --------------------: |
+| 1             | 2176 |    1 |                     8 |
+| 2             | 2432 |  257 |                     6 |
+| 3             | 3072 |  897 |                     1 |
+| 4             | 3200 | 1025 |                     0 |
+| 5             | 2176 |    1 |                     8 |
+| 6             | 2560 |  385 |                     5 |
+| 7             | 3200 | 1025 |                     0 |
+| 8             | 3200 | 1025 |                     0 |
+
+This is not dismissed as a registration-order discrepancy: three healthy
+accounts repeatedly committed fresh metadata but had no historical admission,
+while two completed all history. The test did not observe a skipped fully-aged
+available candidate at a protected selection boundary; per-account availability
+under C=1 and the single active protected-operation gate may constrain which
+accounts reach those boundaries. A precise implementation defect versus a
+missing safe opportunity has **not** been proven. The required progress
+guarantee is therefore unverified and acceptance is BLOCKED. No policy change,
+deadline increase, gate removal or broad refactoring was guessed from this
+snapshot. The 15 s reference barrier is an observation bound, not a production
+promise; its failure prevents this fixture from proving the required guarantee.
+
+**Failure 2: unchanged hung-account timing assertion.** The existing test
+required the healthy account's first callback to occur before the hung
+account's 300 ms timeout callback. Observed timestamps were 92755.1399 and
+92719.9810 ms respectively: healthy success occurred **35.1589 ms after** that
+failure callback. Other assertions in that test had passed, including healthy
+F=1025/E=1, no healthy errors, bad-account unchanged F and retries `[200,400]`.
+This relative callback deadline is not a stated product guarantee of immediate
+admission or completion. It is newly failed and outside the three requested
+scenario corrections; it was recorded without silently changing its assertion
+or running a broad repair loop. Its proper independent acceptance oracle needs
+separate review.
+
+### Fresh visibility and historical measurements
+
+These are exact independent-reader injection-to-durable-visibility samples from
+the full rerun, in ms; polling observation makes them upper bounds on actual
+commit latency. Each includes the deliberately imposed 550 ms held-command
+interval. Every sample's corresponding UID was visible with epoch=7, F=1025
+and E>1; all placement and resource assertions passed.
+
+| W   | Individual samples (ms)                     |    Maximum |
+| --- | ------------------------------------------- | ---------: |
+| 1   | 916.89, 1092.07, 1262.48, 1452.73, 1634.46  | 1634.46 ms |
+| 2   | 873.26, 901.40, 1142.36, 1176.81, 1417.81   | 1417.81 ms |
+| 4   | 1068.68, 1091.11, 1185.99, 1204.33, 1432.65 | 1432.65 ms |
+
+Five samples per W are reported without p50/p95 claims or provider SLA inference.
+All were below the unchanged 5000 ms reference visibility guard.
+
+| Passing sustained-demand profile | Real alternative history choices checked | Maximum consecutive skipped eligible opportunities | Historical wait range | Committed protected-turn cost range | Maximum fresh admission wait |
+| -------------------------------- | ---------------------------------------: | -------------------------------------------------: | --------------------- | ----------------------------------- | ---------------------------- |
+| W=1, eight accounts              |                                       16 |               7 (below one eight-account rotation) | 1651.12–3273.41 ms    | 169.89–268.11 ms                    | 3292.68 ms                   |
+| W=2, eight accounts              |                                       43 |                                                  3 | 500.41–10704.88 ms    | 195.43–396.54 ms                    | 4724.72 ms                   |
+
+Every account in these two profiles independently committed at least the exact
+E sequence `[897,769]`, with complete interval placements and no fresh reset of
+E. Full individual diagnostic wait/cost samples are retained in
+`stage3b-finalization-full.log`. History costs include admitted transport/DB
+service through the acknowledged publication callback; these diagnostics are
+corroborated by the independent atomic audit. W=1 time in history directly
+occupies the sole slot, but no A/B incremental-latency claim is made. Both fresh
+wait maxima remained below the existing 5000 ms guard. W=4 has no accepted
+historical fairness/progress measurement.
+
+### Final regression/static results and disposition
+
+Impacted regressions passed **115/115 tests in six files**, exit 0, 59.39 s;
+no unhandled errors were reported. Output: `stage3b-finalization-regressions.log`.
+The single-account Stage 3A sample was 524.54 ms, E=257, and is not a Stage 3B
+measurement. Command:
+
+```powershell
+pnpm exec vitest run tests/receiving-coordinator.integration.test.ts tests/receiving-safety.integration.test.ts tests/receiving-retirement-gate.integration.test.ts tests/receiving-inbox-window.integration.test.ts tests/imap-metadata-window.test.ts tests/imap-conditional-store.test.ts --maxWorkers=1 --no-file-parallelism
+```
+
+The final history-disabled control rejected all three W cases on the final
+quiet fixture with direct E=1025 versus E=1 assertions, exit 1, 42.81 s.
+Thus all four final controls rejected 3/3 corresponding defects each (12/12
+intentional rejections). The scheduler file was restored after every control;
+`git diff -- src` is empty. The full Stage 3B suite was not rerun.
+
+Typecheck, repository lint, changed-file Prettier and `git diff --check` passed,
+exit 0. No test/operation deadline, DB capacity or product default was raised.
+
+**BLOCKED for Stage 3B readiness.** The original assumption errors have direct
+replacement oracles and verified defect-detection controls, but green corrected
+restart/fresh cases do not prove per-account historical progress at W=4. The
+intermittent W=4 shutdown/cleanup timeout remains disclosed and unreproduced;
+this task did not launch a reproduction campaign solely for it. No new
+production correctness defect was conclusively isolated or fixed. Stage 4,
+production integration, real accounts, push, merge and PR remain out of scope.
