@@ -4,6 +4,11 @@ Date: 2026-10-13. The original checkpoint below was **BLOCKED**. The separately
 authorized two-blocker repair and fresh validation are recorded in the final
 section: **PARTIAL repair; Stage 3B acceptance remains BLOCKED**. The component
 remains disconnected from the running worker.
+
+Follow-up W=4 shutdown investigation: the timeout did **not** reproduce in five
+selected runs, including three with temporary ownership/retirement diagnostics.
+Its root cause remains unestablished; no shutdown fix is claimed. See the final
+section for the scoped 12/12 shutdown validation.
 Stop-on-critical-gate-failure was applied: no acceptance assertion was weakened,
 no Stage 1/2 repair was attempted, and Stage 4 was not started.
 
@@ -406,3 +411,105 @@ unhandled-rejection defects and collecting this one fresh full result.
 Unresolved W=4 retirement and the remaining history/fresh/rotation failures
 were recorded without expanding scope. No push, merge, PR, worker integration
 or Stage 4 implementation was performed.
+
+## W=4 shutdown-only investigation — 2026-10-13
+
+Continued from clean `3520e0ddd34ecabece18bb37d1015c302005de27` on the requested
+branch. Investigated only the preserved W=4 cancellation/restart scenario and
+shutdown regressions. **The 120-second test/cleanup timeout was not reproduced.
+No precise failing await or concrete production/fixture defect was established,
+and the timeout is not declared fixed.**
+
+### Independent reproduction attempts
+
+The original W=4 scenario, including complete durable F/E and placement
+assertions, was run without changing its timeout or any acceptance assertion:
+
+```powershell
+pnpm exec vitest run tests/receiving-scheduler.integration.test.ts -t 'W=4 bounds simultaneous' --maxWorkers=1 --no-file-parallelism
+```
+
+| Attempt                     | Instrumentation                        | Result                                        |          Total run time | Retained local output                |
+| --------------------------- | -------------------------------------- | --------------------------------------------- | ----------------------: | ------------------------------------ |
+| Baseline                    | None                                   | 1/1 PASS, 27 skipped                          |                 14.47 s | `stage3b-w4-shutdown-baseline.log`   |
+| Trace 1                     | Temporary ownership/retirement logging | 1/1 PASS, 27 skipped                          |                 14.56 s | `stage3b-w4-shutdown-trace1.log`     |
+| Trace 2                     | Same logging                           | 1/1 PASS, 27 skipped                          |                 12.04 s | `stage3b-w4-shutdown-trace2.log`     |
+| Trace 3                     | Same logging                           | 1/1 PASS, 27 skipped                          |                 10.91 s | `stage3b-w4-shutdown-trace3.log`     |
+| Final selected shutdown run | All logging removed                    | W=4 scenario PASS within 12/12 selected tests | 25.52 s for three files | `stage3b-w4-shutdown-validation.log` |
+
+Every command completed with exit 0 and no unhandled errors. No full Stage 3B
+suite was run in this task. Instrumentation can affect timing; both the baseline
+and final uninstrumented case also passed, but five passing cases do not prove
+that the historical sporadic timeout is gone.
+
+### Await boundaries and observed resource ownership
+
+Temporary diagnostics used monotonic `performance.now()` timestamps, a unique
+DB transaction sequence, account UUID/turn kind, IMAP fixture port and ordered
+cleanup identifiers. They bracketed:
+
+- Scheduler `stop()` and each active receiving turn's final settlement.
+- IMAP `retireReceiving()` at the actual transport finally boundary.
+- PostgreSQL `reserve()`, native socket closure, retirement's awaited reserve
+  promise, driver `onclose`/`driverClosed`, and `client.end()`.
+- The eight reverse-order `afterEach` cleanup callbacks and the separate
+  reader/database/Docker `afterAll` cleanup.
+
+The traces showed no outstanding final await. At the initial stop, four active
+accounts retired their hung SELECTs; after restart, all required durable state
+and placement assertions completed, followed by safe retirement of remaining
+fresh turns. In trace 2, three turns remained active at the second stop; in the
+other traces, four remained active. The case's resource assertions verified
+zero active scheduler allocations, C=1, at most four local clients and closed
+clients after stop.
+
+| Trace | Initial scheduler stop | Post-restart scheduler stop | Reader/database/Docker cleanup |
+| ----- | ---------------------: | --------------------------: | -----------------------------: |
+| 1     |                4.05 ms |                     4.89 ms |                      379.29 ms |
+| 2     |                3.80 ms |                    14.30 ms |                      344.97 ms |
+| 3     |                3.07 ms |                     9.82 ms |                      407.53 ms |
+
+These values are differences between diagnostic timestamp samples, not timeout
+or performance promises. Already-stopped scheduler cleanup calls also returned.
+Observed `client.end()` completions followed reservation and driver retirement;
+all peer cleanup callbacks and final Docker cleanup completed. Local closure
+does not independently prove immediate server-backend disappearance.
+
+The historical timeout stack names the test body and its `afterEach` hook.
+Docker shutdown belongs to `afterAll`, so that stack does not identify Docker
+shutdown as the direct blocked await. Without reproduction or instrumentation
+from the historical failed run, it also does **not** distinguish a receiving
+resource deadlock from peer/executor fixture cleanup or identify a particular
+reservation/socket. Neither production leakage nor fixture interference has
+been demonstrated by this investigation.
+
+### Final targeted shutdown regressions
+
+After restoring all four temporarily instrumented source/test files byte for
+byte from the starting commit, ran only the following selected tests:
+
+```powershell
+pnpm exec vitest run tests/receiving-scheduler.integration.test.ts tests/receiving-safety.integration.test.ts tests/receiving-coordinator.integration.test.ts -t 'W=4 bounds simultaneous|targeted recovery|isolated DB cancellation|bounded startup retirement|shutdown revokes|bounded admission|cancels during' --maxWorkers=1 --no-file-parallelism
+```
+
+**PASS: 12 tests, 53 skipped, three files, exit 0, 25.52 seconds; no unhandled
+rejections.** Coverage: the unchanged W=4 acceptance case; D=1/2 concurrent
+stop/restart; cancellation after DB waiter handoff and during type discovery;
+Stage 1 bounded admission, stalled TCP/TLS startup and suspended callback
+shutdown; Stage 3A cancellation during SEARCH/FETCH.
+
+### Changes and remaining blockers
+
+Only this results document is changed for the final commit. All temporary
+diagnostics were removed, with no production change, new speculative regression,
+modified acceptance assertion, increased timeout or Stage 1/2 modification.
+Changed-document formatting and `git diff --check` passed. TypeScript and lint
+were not rerun because the final change is documentation only; the previous
+repair's successful static checks are retained above as historical evidence.
+
+**Investigation completed; timeout unresolved/not reproduced.** Complete Stage
+3B remains BLOCKED by the last full acceptance result: sporadic W=4 shutdown
+timeout, W=1/2 history completion after restart, W=1/2/4 fresh-responsiveness
+scenarios and W=4 history-rotation assertion. These independent passes do not
+replace that full-suite result or authorize fixes to its other scenarios.
+No push, merge, PR, Stage 4 or production integration was performed.
