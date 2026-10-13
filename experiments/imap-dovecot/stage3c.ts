@@ -1,7 +1,16 @@
 /** Standalone real-server smoke; never imported by worker composition. */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import {
+  checkOracle,
+  historyCandidates,
+  verifySnapshot,
+  type Snapshot,
+  type Placement,
+  type Identity,
+} from "./stage3c-oracle";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { sql } from "drizzle-orm";
@@ -24,6 +33,10 @@ import { generate, message } from "./fixture";
 
 const image =
   "dovecot/dovecot:2.4.3-dev@sha256:d0db02b4aa9c16bc50c96faad68fcf5724c1453a98a39ada685409227e967898";
+if (process.argv.includes("--check")) {
+  checkOracle();
+  process.exit(0);
+}
 const started = performance.now();
 const deadline = started + 300_000;
 const evidence: Record<string, unknown> = {
@@ -40,10 +53,31 @@ let executor: ReceivingExecutor | undefined;
 let reader: postgres.Sql | undefined;
 let database: ReturnType<typeof createDatabase> | undefined;
 let captureFailure: (() => Promise<void>) | undefined;
-const watchdog = setTimeout(() => {
-  console.error("BLOCKED: five-minute watchdog expired");
+const save = () =>
+  writeFileSync(
+    new URL("stage3c-evidence.json", import.meta.url),
+    JSON.stringify(
+      evidence,
+      (_, v) => (typeof v === "bigint" ? String(v) : v),
+      2,
+    ) + "\n",
+  );
+let expire!: ReturnType<typeof setTimeout>;
+const expired = new Promise<never>((_, reject) => {
+  expire = setTimeout(
+    () =>
+      reject(
+        new Error("PARTIAL: 280-second execution cutoff reserves cleanup time"),
+      ),
+    280_000,
+  );
+});
+const hardStop = setTimeout(() => {
+  evidence.hardStop =
+    "PARTIAL: 295-second emergency exit; launcher owns remaining container cleanup";
+  save();
   process.exit(2);
-}, 300_000);
+}, 295_000);
 async function until(work: () => Promise<boolean>, name: string, ms = 20_000) {
   const end = Math.min(deadline - 15_000, performance.now() + ms);
   while (performance.now() < end) {
@@ -57,7 +91,7 @@ async function command(container: StartedTestContainer, args: string[]) {
   assert.equal(result.exitCode, 0, result.output);
   return result.output.trim();
 }
-try {
+async function smoke() {
   console.log(
     "Preparing disposable real Dovecot/PostgreSQL (budget includes setup)",
   );
@@ -102,10 +136,12 @@ try {
     postgres: (await db`select version()`)[0].version,
     node: process.version,
   };
-  await db.unsafe(`CREATE TABLE stage3c_audit (mailbox uuid, epoch bigint, revision bigint, old_f bigint, new_f bigint, old_e bigint, new_e bigint, uids bigint[]);
+  await db.unsafe(`CREATE TABLE stage3c_audit (mailbox uuid, epoch bigint, revision bigint, old_f bigint, new_f bigint, old_e bigint, new_e bigint, metadata jsonb);
     CREATE FUNCTION stage3c_audit_progress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-    INSERT INTO stage3c_audit SELECT NEW.mailbox_id, NEW.epoch, NEW.revision, OLD.fresh_through, NEW.fresh_through, OLD.history_before, NEW.history_before,
-    ARRAY(SELECT uid FROM mailbox_messages WHERE mailbox_id=NEW.mailbox_id AND uid_validity=NEW.epoch AND ((uid>OLD.fresh_through AND uid<=NEW.fresh_through) OR (uid>=NEW.history_before AND uid<OLD.history_before)) ORDER BY uid);
+    INSERT INTO stage3c_audit SELECT NEW.mailbox_id,NEW.epoch,NEW.revision,OLD.fresh_through,NEW.fresh_through,OLD.history_before,NEW.history_before,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('uid',p.uid,'epoch',p.uid_validity::text,'account',m.account_id::text,'id',m.rfc_message_id) ORDER BY p.uid)
+    FROM mailbox_messages p JOIN messages m ON m.id=p.message_id WHERE p.mailbox_id=NEW.mailbox_id AND p.uid_validity=NEW.epoch
+    AND ((p.uid>OLD.fresh_through AND p.uid<=NEW.fresh_through) OR (p.uid>=NEW.history_before AND p.uid<OLD.history_before))), '[]'::jsonb);
     RETURN NEW; END $$;
     CREATE TRIGGER stage3c_audit AFTER UPDATE ON receiving_mailboxes FOR EACH ROW EXECUTE FUNCTION stage3c_audit_progress();`);
   await generate(1000);
@@ -179,20 +215,25 @@ try {
     imported: 5000,
     retained: 4990,
     setupMs: performance.now() - started,
-    inventories: Object.fromEntries(inventories),
+    inventories: structuredClone(Object.fromEntries(inventories)),
   };
   outcomes.fixture = "PASS";
+  evidence.serverInventory = Object.fromEntries(inventories);
   console.log(`Fixture ready in ${Math.round(performance.now() - started)}ms`);
+  save();
   for (const workers of [2, 4]) {
     const run: Record<string, unknown> = {
       workers,
       admissions: [],
+      completedEvidence: [],
+      turns: [],
       errors: [],
       injections: [],
-      phases: {},
+      boundaries: [],
+      retirements: [],
     };
     (evidence.runs as unknown[]).push(run);
-    outcomes[`W${workers}`] = "FAIL: run started but not completed";
+    outcomes[`W${workers}`] = "PARTIAL: started";
     const admissions = run.admissions as {
       account: string;
       kind: string;
@@ -205,34 +246,64 @@ try {
       at: number;
       error: string;
     }[];
+    const turns = run.turns as {
+      user: string;
+      kind: string;
+      f: string;
+      e: string;
+      revision: string;
+      at: number;
+    }[];
     const injections = run.injections as {
       user: string;
       uid: number;
       id: string;
       ack: string;
+      ackMs: number;
       visible?: string;
       latencyMs?: number;
     }[];
+    const records: { user: string; client: ImapFlow; retired: boolean }[] = [];
+    const identities: Identity[] = [];
+    run.accounts = identities;
+    const accounts: Omit<ReceivingCoordinatorConfig, "executor">[] = [];
+    let history = false,
+      wave = false,
+      waveSettled = false,
+      disabled = false;
+    let maxSockets = 0,
+      overlap = false;
     const actor = randomUUID();
     await db`update receiving_coordinator set expires_at='-infinity'`;
     const [lease] =
       await db`select maildock_receiving_takeover(${actor},60000) as generation`;
     const owner = { actor, generation: BigInt(lease.generation) };
     executor = new ReceivingExecutor(url, 2);
-    let history = true;
-    // Test-only observation gate prevents quiet accounts draining their archive
-    // while the independent oracle waits for a slower account. Not authority.
-    const observedHistory = new Map<string, number>();
-    let maxSockets = 0;
-    let overlap = false;
-    let disabled = false;
-    const sockets = new Map<string, ImapFlow[]>();
-    const accounts: Omit<ReceivingCoordinatorConfig, "executor">[] = [];
+    run.timing = {
+      pollMs: 5000,
+      operationMs: 4000,
+      retryMs: 200,
+      maxRetryMs: 800,
+      historyWaitMs: 30000,
+    };
+    const resourceSnapshot = () => ({
+      maxSockets,
+      overlap,
+      liveOwned: records.filter((r) => !r.retired).length,
+      activeSlots: scheduler?.snapshot.active,
+      rssBytes: process.memoryUsage().rss,
+    });
     for (const user of users) {
-      const id = randomUUID(),
+      const fixtureClient = await open(user);
+      assert(fixtureClient.mailbox);
+      const baselineNext = fixtureClient.mailbox.uidNext;
+      inventories.get(user)!.next = baselineNext;
+      await fixtureClient.logout();
+      const account = randomUUID(),
         mailbox = randomUUID();
+      identities.push({ user, account, mailbox, baselineNext });
       await database.db.insert(mailAccounts).values({
-        id,
+        id: account,
         displayName: `Stage3C W${workers} ${user}`,
         email: `${user}@example.invalid`,
         imapHost: "fixture.invalid",
@@ -253,16 +324,15 @@ try {
       });
       await database.db.insert(mailboxes).values({
         id: mailbox,
-        accountId: id,
+        accountId: account,
         remotePath: "INBOX",
         name: "INBOX",
         selectable: true,
         firstDiscoveredAt: new Date(),
         lastDiscoveredAt: new Date(),
       });
-      sockets.set(user, []);
       accounts.push({
-        account: id,
+        account,
         mailbox,
         owner,
         connection: {
@@ -292,110 +362,231 @@ try {
           },
         },
         timing: {
-          pollMs: 250,
+          pollMs: 5000,
           operationMs: 4000,
           retryMs: 200,
           maxRetryMs: 800,
         },
         createClient: (options) => {
-          overlap ||= sockets.get(user)!.some((c) => !c.isClosed);
+          overlap ||= records.some((r) => r.user === user && !r.retired);
           const client = new ImapFlow({
             ...options,
             tls: { ...options.tls, ca, servername: "localhost" },
             ...(disabled && user === users[0]
               ? { auth: { user, pass: "disabled-fixture-password" } }
               : {}),
+            receivingResponse: (response, request) => {
+              if (request?.sent && response.tag === request.tag)
+                (run.completedEvidence as unknown[]).push({
+                  user,
+                  command: request.command,
+                  status: response.command,
+                  at: performance.now(),
+                });
+              return options.receivingResponse?.(response, request);
+            },
           });
-          sockets.get(user)!.push(client);
+          const record = { user, client, retired: false };
+          records.push(record);
+          const retire = client.retireReceiving.bind(client);
+          client.retireReceiving = async () => {
+            await retire();
+            record.retired = true;
+            (run.retirements as unknown[]).push({
+              user,
+              at: performance.now(),
+            });
+          };
           maxSockets = Math.max(
             maxSockets,
-            [...sockets.values()].flat().filter((c) => !c.isClosed).length,
+            records.filter((r) => !r.retired).length,
           );
+          run.resources = resourceSnapshot();
           return client;
         },
-        onError: (error, retry) =>
+        onError: (error, retry) => {
           errors.push({
             user,
             retry,
             at: performance.now(),
             error: String(error),
-          }),
-        onTurn: (kind) => {
-          if (kind !== "history") return;
-          const count = (observedHistory.get(user) ?? 0) + 1;
-          observedHistory.set(user, count);
-          if (count >= 3) history = false;
+          });
+        },
+        onTurn: (kind, turn) => {
+          turns.push({
+            user,
+            kind,
+            f: String(turn.state.freshThrough),
+            e: String(turn.state.historyBefore),
+            revision: String(turn.state.revision),
+            at: performance.now(),
+          });
+          // Global gate closes before another selection. Each account can have
+          // at most one history turn in this wave; authority remains in SQL.
+          if (wave && kind === "history") {
+            history = false;
+            waveSettled = true;
+          }
         },
       });
     }
-    const states = async () =>
-      db`select mailbox_id,epoch,fresh_through,history_before,revision from receiving_mailboxes where mailbox_id in ${db(accounts.map((a) => a.mailbox))} order by mailbox_id`;
-    const historyCounts = async () =>
-      db`select mailbox,count(*)::int as n from stage3c_audit where mailbox in ${db(accounts.map((a) => a.mailbox))} and new_e<old_e group by mailbox`;
-    run.accounts = accounts.map((a) => ({
-      user: a.connection.username,
-      account: a.account,
-      mailbox: a.mailbox,
-    }));
-    captureFailure = async () => {
-      await scheduler?.stop();
-      run.failureStates = await states();
-      run.failureAudit =
-        await db`select * from stage3c_audit where mailbox in ${db(accounts.map((a) => a.mailbox))} order by mailbox,revision`;
-      run.resources = {
-        maxSockets,
-        overlap,
-        retired: [...sockets.values()].flat().every((c) => c.isClosed),
-        activeSlots: scheduler?.snapshot.active,
+    run.accounts = identities;
+    const capture = async (): Promise<Snapshot> =>
+      db.begin("isolation level repeatable read read only", async (tx) => {
+        const rows =
+          await tx`select * from receiving_mailboxes where mailbox_id in ${tx(identities.map((a) => a.mailbox))} order by mailbox_id`;
+        const audit =
+          await tx`select * from stage3c_audit where mailbox in ${tx(identities.map((a) => a.mailbox))} order by mailbox,revision`;
+        const placements =
+          await tx`select p.mailbox_id,p.uid,p.uid_validity,m.account_id,m.rfc_message_id from mailbox_messages p join messages m on m.id=p.message_id where p.mailbox_id in ${tx(identities.map((a) => a.mailbox))} order by p.mailbox_id,p.uid`;
+        return {
+          at: new Date().toISOString(),
+          states: rows.map((r) => ({
+            mailbox: r.mailbox_id,
+            epoch: String(r.epoch),
+            f: Number(r.fresh_through),
+            e: Number(r.history_before),
+            revision: Number(r.revision),
+            history: audit.filter(
+              (p) =>
+                p.mailbox === r.mailbox_id && Number(p.new_e) < Number(p.old_e),
+            ).length,
+            placements: placements
+              .filter((p) => p.mailbox_id === r.mailbox_id)
+              .map((p) => ({
+                uid: Number(p.uid),
+                epoch: String(p.uid_validity),
+                account: p.account_id,
+                id: p.rfc_message_id,
+              })),
+          })),
+          audit: audit.map((p) => ({
+            mailbox: p.mailbox,
+            epoch: String(p.epoch),
+            revision: Number(p.revision),
+            oldF: Number(p.old_f),
+            f: Number(p.new_f),
+            oldE: Number(p.old_e),
+            e: Number(p.new_e),
+            metadata: p.metadata as Placement[],
+          })),
+        };
+      });
+    const boundary = async (name: string) => {
+      const snapshot = await capture();
+      const result = {
+        name,
+        snapshot,
+        resources: resourceSnapshot(),
+        oracle: "PENDING",
       };
-      outcomes[`W${workers}`] = String(evidence.result);
+      (run.boundaries as unknown[]).push(result);
+      save();
+      verifySnapshot(snapshot, identities, inventories);
+      assert(!overlap);
+      assert(maxSockets <= workers);
+      assert(admissions.every((a) => a.active <= workers));
+      result.oracle = "PASS";
+      save();
+      return snapshot;
     };
-    const startScheduler = () => {
+    captureFailure = async () => {
+      await boundary("failure-finally");
+    };
+    const stop = async () => {
+      const at = performance.now();
+      await scheduler?.stop();
+      run.resources = resourceSnapshot();
+      assert.equal(scheduler?.snapshot.active, 0);
+      assert(records.every((r) => r.retired));
+      (run.retirements as unknown[]).push({
+        schedulerStopMs: performance.now() - at,
+        active: 0,
+        liveOwned: 0,
+      });
+      save();
+    };
+    const start = (selected = accounts) => {
       scheduler = new ReceivingScheduler({
-        accounts,
+        accounts: selected,
         executor: executor!,
-        historyAllowed: () => history,
         tuning: { workers },
+        historyAllowed: () => history,
         onAdmission: (a) => admissions.push(a),
       });
       scheduler.start();
     };
-    const stopScheduler = async () => {
-      const at = performance.now();
-      await scheduler!.stop();
-      assert.equal(scheduler!.snapshot.active, 0);
-      assert([...sockets.values()].flat().every((c) => c.isClosed));
-      return performance.now() - at;
+    const phaseEnd = () =>
+      Math.min(performance.now() + 25_000, deadline - 20_000);
+    const runHistory = async (target: number) => {
+      const end = phaseEnd();
+      while (true) {
+        const current = await capture();
+        verifySnapshot(current, identities, inventories);
+        const candidates = historyCandidates(current, identities, target);
+        const selected = accounts.filter((a) =>
+          candidates.some((c) => c.mailbox === a.mailbox),
+        );
+        if (!selected.length) {
+          assert(current.states.every((s) => s.history === target));
+          return;
+        }
+        if (performance.now() >= end)
+          throw new Error(
+            `PARTIAL: durable history target ${target} exceeded fixed 25-second phase deadline`,
+          );
+        history = true;
+        wave = true;
+        waveSettled = false;
+        start(selected);
+        await until(
+          async () => waveSettled,
+          `history wave target ${target}`,
+          Math.max(1, Math.floor(end - performance.now())),
+        );
+        // Gate has closed: allow every already-admitted turn to settle, never
+        // cancel acknowledged work just to make the count fit.
+        await until(
+          async () => scheduler!.snapshot.active === 0,
+          "history wave settlement",
+          Math.max(1, Math.floor(end - performance.now())),
+        );
+        await stop();
+        wave = false;
+        await boundary(`history-${target}-wave`);
+      }
     };
-    startScheduler();
-    await until(async () => {
-      const s = await states();
-      return (
-        s.length === 5 &&
-        s.every(
-          (r) => Number(r.history_before) > 1 && Number(r.fresh_through) > 0,
-        )
-      );
-    }, "initial durable fresh");
-    run.initial = await states();
+    start();
+    await until(
+      async () => {
+        const s = await capture();
+        return (
+          s.states.length === 5 &&
+          turns.filter((t) => t.kind === "fresh").length >= 5 &&
+          scheduler!.snapshot.active === 0
+        );
+      },
+      "initial five fresh completions",
+      20_000,
+    );
+    await stop();
     assert.equal(new Set(admissions.slice(0, 5).map((a) => a.account)).size, 5);
     assert(admissions.slice(0, 5).every((a) => a.kind === "fresh"));
-    await until(async () => {
-      const rows =
-        await db`select p.mailbox_id,count(*)::int as n from mailbox_messages p where p.mailbox_id in ${db(accounts.map((a) => a.mailbox))} group by p.mailbox_id`;
-      const s = await states();
-      return (
-        rows.length === 5 &&
-        rows.every((r) => r.n > 0) &&
-        s.every((r) => Number(r.history_before) > 1)
-      );
-    }, "recent metadata durable before history completion");
-    await until(async () => {
-      const counts = await historyCounts();
-      return counts.length === 5 && counts.every((r) => r.n >= 2);
-    }, "two historical windows per account");
+    await boundary("initial-fresh");
+    await runHistory(1);
+    const recent = await boundary("recent-metadata");
+    assert.equal(recent.states.length, 5);
+    assert(recent.states.every((s) => s.e > 1 && s.placements.length > 0));
+    await runHistory(2);
+    const initialHistory = await boundary("initial-history-two");
+    assert(initialHistory.states.every((s) => s.history === 2 && s.e > 1));
+    assert.equal(
+      errors.length,
+      0,
+      "No unexpected errors during initial receiving",
+    );
     history = false;
-    run.beforeInjection = await states();
+    start();
     async function inject(targets = users, count = 3) {
       for (const user of targets) {
         const client = await open(user);
@@ -410,7 +601,8 @@ try {
             [],
             new Date(fixture.date),
           );
-          const ack = new Date().toISOString();
+          const ackMs = performance.now(),
+            ack = new Date().toISOString();
           assert(result && result.uid && result.uidValidity);
           assert.equal(
             String(result.uidValidity),
@@ -424,181 +616,173 @@ try {
             uid: result.uid,
             id: fixture.messageId,
             ack,
+            ackMs,
           });
+          save();
         }
         await client.logout();
       }
     }
     async function visible() {
       for (const sample of injections.filter((s) => !s.visible)) {
-        const a = accounts[users.indexOf(sample.user)];
+        const a = identities.find((a) => a.user === sample.user)!;
         const rows =
-          await db`select p.uid from mailbox_messages p join messages m on m.id=p.message_id where p.mailbox_id=${a.mailbox} and p.uid=${sample.uid} and m.account_id=${a.account} and m.rfc_message_id=${sample.id}`;
+          await db`select p.uid from mailbox_messages p join messages m on m.id=p.message_id where p.mailbox_id=${a.mailbox} and p.uid_validity=${inventories.get(sample.user)!.epoch} and p.uid=${sample.uid} and m.account_id=${a.account} and m.rfc_message_id=${sample.id}`;
         if (rows.length) {
+          assert.equal(rows.length, 1);
           sample.visible = new Date().toISOString();
-          sample.latencyMs =
-            Date.parse(sample.visible) - Date.parse(sample.ack);
+          sample.latencyMs = performance.now() - sample.ackMs;
+          save();
         }
       }
       return injections.every((s) => s.visible);
     }
-    await inject();
-    await until(visible, "fresh injection visibility");
-    run.afterInjection = await states();
-    history = true;
-    await until(async () => {
-      const counts = await historyCounts();
-      return counts.length === 5 && counts.every((r) => r.n >= 3);
-    }, "history after fresh");
+    // Observer runs during APPENDs, not only after the entire delivery batch.
+    let polling = true;
+    const observer = (async () => {
+      while (polling) {
+        await visible();
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    })();
+    try {
+      await inject();
+      await until(visible, "fresh PostgreSQL visibility", 20_000);
+    } finally {
+      polling = false;
+      await observer;
+    }
+    await stop();
+    const fresh = await boundary("fresh-injections-visible");
+    assert(
+      fresh.states.every(
+        (s) =>
+          s.e > 1 &&
+          s.e === initialHistory.states.find((p) => p.mailbox === s.mailbox)!.e,
+      ),
+    );
+    await runHistory(3);
+    const saved = await boundary("history-after-fresh-three");
+    assert(saved.states.every((s) => s.history === 3 && s.e > 1));
+    const beforeRestart = admissions.length,
+      turnIndex = turns.length;
     history = false;
-    run.stopMs = await stopScheduler();
-    const beforeRestart = await states();
-    run.beforeRestart = beforeRestart;
-    const restartIndex = admissions.length;
-    startScheduler();
+    start();
     await until(
       async () =>
-        admissions.length >= restartIndex + 5 &&
-        scheduler!.snapshot.active === 0,
-      "restart discovery",
+        turns.length >= turnIndex + 5 && scheduler!.snapshot.active === 0,
+      "restart current discovery",
+      20_000,
     );
+    await stop();
     assert(
       admissions
-        .slice(restartIndex, restartIndex + 5)
+        .slice(beforeRestart, beforeRestart + 5)
         .every((a) => a.kind === "fresh"),
     );
-    assert.deepEqual(await states(), beforeRestart);
-    run.restart = "PASS: fresh first; persisted F/E/epoch/revision unchanged";
+    const restarted = await boundary("restart");
+    assert.deepEqual(restarted.states, saved.states);
+    run.restart = "PASS";
     disabled = true;
     const errorIndex = errors.length;
+    start();
     await until(
       async () => errors.length >= errorIndex + 3,
-      "account retry/backoff",
-      15_000,
+      "account bounded backoff",
+      20_000,
     );
     assert(errors.slice(errorIndex).every((e) => e.user === users[0]));
     assert.deepEqual(
       errors.slice(errorIndex, errorIndex + 3).map((e) => e.retry),
       [200, 400, 800],
     );
-    const failedBefore = (await states()).find(
-      (r) => r.mailbox_id === accounts[0].mailbox,
-    );
+    const failed = await boundary("account-unavailable");
     await inject(users.slice(1), 1);
-    await until(visible, "healthy progress during failure");
+    await until(visible, "healthy progress during account failure", 20_000);
+    const healthy = await boundary("healthy-progress");
     assert.deepEqual(
-      (await states()).find((r) => r.mailbox_id === accounts[0].mailbox),
-      failedBefore,
+      healthy.states.find((s) => s.mailbox === identities[0].mailbox),
+      failed.states.find((s) => s.mailbox === identities[0].mailbox),
     );
+    for (const a of identities.slice(1))
+      assert(
+        healthy.states.find((s) => s.mailbox === a.mailbox)!.f >
+          failed.states.find((s) => s.mailbox === a.mailbox)!.f,
+      );
     disabled = false;
     await inject([users[0]], 1);
-    await until(visible, "restored account recovery");
+    await until(visible, "restored account recovery", 20_000);
+    await stop();
+    const recovered = await boundary("recovery-final");
+    assert(
+      recovered.states.find((s) => s.mailbox === identities[0].mailbox)!.f >
+        failed.states.find((s) => s.mailbox === identities[0].mailbox)!.f,
+    );
     run.failureIsolation = "PASS";
-    run.finalStopMs = await stopScheduler();
-    run.final = await states();
-    const audit =
-      await db`select * from stage3c_audit where mailbox in ${db(accounts.map((a) => a.mailbox))} order by mailbox,revision`;
-    for (const a of accounts) {
-      const inventory = inventories.get(a.connection.username)!;
-      const rows = audit.filter((r) => r.mailbox === a.mailbox);
-      let previous: (typeof rows)[number] | undefined;
-      for (const r of rows) {
-        assert.equal(String(r.epoch), inventory.epoch);
-        if (previous) {
-          assert.equal(r.old_f, previous.new_f);
-          assert.equal(r.old_e, previous.new_e);
-          assert.equal(BigInt(r.revision), BigInt(previous.revision) + 1n);
-        }
-        assert(
-          Number(r.new_f) >= Number(r.old_f) &&
-            Number(r.new_e) <= Number(r.old_e),
-        );
-        assert(Number(r.old_e) - Number(r.new_e) <= 128);
-        if (r.new_f !== r.old_f) assert.equal(r.new_e, r.old_e);
-        const expected = inventory.items
-          .filter(
-            (v) =>
-              (v.uid > Number(r.old_f) && v.uid <= Number(r.new_f)) ||
-              (v.uid >= Number(r.new_e) && v.uid < Number(r.old_e)),
-          )
-          .map((v) => v.uid)
-          .sort((a, b) => a - b);
-        assert.deepEqual(r.uids.map(Number), expected);
-        previous = r;
-      }
-      const placements =
-        await db`select p.uid,p.uid_validity,m.account_id,m.rfc_message_id from mailbox_messages p join messages m on m.id=p.message_id where p.mailbox_id=${a.mailbox}`;
-      const state = (await states()).find((r) => r.mailbox_id === a.mailbox)!;
-      const expected = inventory.items.filter(
-        (v) =>
-          v.uid >= Number(state.history_before) &&
-          v.uid <= Number(state.fresh_through),
-      );
-      assert.equal(placements.length, expected.length);
-      assert.equal(
-        new Set(placements.map((r) => r.uid)).size,
-        placements.length,
-      );
-      for (const p of placements) {
-        assert.equal(p.account_id, a.account);
-        assert.equal(String(p.uid_validity), inventory.epoch);
-        assert.equal(
-          p.rfc_message_id,
-          expected.find((v) => v.uid === Number(p.uid))!.id,
-        );
-      }
-    }
-    assert(!overlap);
-    assert(maxSockets <= workers);
-    assert(admissions.every((a) => a.active <= workers));
-    run.resources = {
-      maxSockets,
-      overlap,
-      retired: true,
-      activeSlots: scheduler!.snapshot.active,
-      rssBytes: process.memoryUsage().rss,
-    };
-    run.audit = audit;
     run.maxLatencyMs = Math.max(...injections.map((s) => s.latencyMs!));
+    run.final = recovered;
     await executor.stop();
     executor = undefined;
     outcomes[`W${workers}`] = "PASS";
     captureFailure = undefined;
+    save();
     console.log(
-      `W=${workers} PASS; maximum observed visibility latency ${run.maxLatencyMs}ms`,
+      `W=${workers} PASS; final E ${recovered.states.map((s) => s.e)}; maximum observed visibility latency ${run.maxLatencyMs}ms`,
     );
   }
   evidence.result = "PASS";
+}
+try {
+  await Promise.race([smoke(), expired]);
 } catch (error) {
-  evidence.result = String(error).includes("PARTIAL") ? "PARTIAL" : "FAIL";
+  evidence.result = "PARTIAL";
   evidence.error =
     error instanceof Error
       ? { message: error.message, stack: error.stack }
       : String(error);
   console.error(error);
-  try {
-    await captureFailure?.();
-  } catch (captureError) {
-    evidence.captureError = String(captureError);
-  }
   process.exitCode = 1;
 } finally {
+  // Persist before every potentially failing cleanup. Even cleanup exceptions
+  // cannot skip the final evidence write. Launcher owns forced-exit cleanup.
+  save();
   for (const key of ["fixture", "W2", "W4"]) outcomes[key] ??= "NOT RUN";
-  await scheduler?.stop();
+  const cleanupErrors: string[] = [];
+  const cleanup = async (name: string, work: () => Promise<unknown>) => {
+    try {
+      await work();
+    } catch (error) {
+      cleanupErrors.push(`${name}: ${String(error)}`);
+    } finally {
+      evidence.cleanupErrors = cleanupErrors;
+      save();
+    }
+  };
+  await cleanup("scheduler-stop", async () => {
+    await scheduler?.stop();
+  });
+  await cleanup("final-independent-evidence", async () => {
+    await captureFailure?.();
+  });
   for (const client of clients) client.close();
-  await executor?.stop();
-  await reader?.end({ timeout: 0 });
-  await database?.client.end({ timeout: 0 });
-  for (const container of containers.reverse()) await container.stop();
+  await cleanup("executor-stop", async () => {
+    await executor?.stop();
+  });
+  await cleanup("reader-close", async () => {
+    await reader?.end({ timeout: 0 });
+  });
+  await cleanup("database-close", async () => {
+    await database?.client.end({ timeout: 0 });
+  });
+  for (const container of containers.reverse())
+    await cleanup("container-stop", () => container.stop());
   evidence.elapsedMs = performance.now() - started;
-  evidence.cleanup = "PASS: owned containers stopped";
-  clearTimeout(watchdog);
-  await writeFile(
-    new URL("stage3c-evidence.json", import.meta.url),
-    JSON.stringify(
-      evidence,
-      (_, v) => (typeof v === "bigint" ? String(v) : v),
-      2,
-    ) + "\n",
-  );
+  evidence.cleanup = cleanupErrors.length ? "PARTIAL" : "PASS";
+  if (cleanupErrors.length) {
+    evidence.result = "PARTIAL";
+    process.exitCode = 1;
+  }
+  save();
+  clearTimeout(expire);
+  clearTimeout(hardStop);
 }

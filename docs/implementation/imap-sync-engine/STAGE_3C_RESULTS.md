@@ -1,4 +1,234 @@
-# Stage 3C — real Dovecot integration smoke
+# Stage 3C — corrected harness and one real-Dovecot evaluation
+
+2026-10-13. **PARTIAL.** The corrected W=2 run passed initial receiving, durable
+history, fresh-message visibility, the independent PostgreSQL oracle and restart.
+During the mandatory account-failure scenario, two healthy accounts exceeded
+their four-second operation deadlines. The errors-only-on-unavailable-account
+assertion failed. Evidence was preserved and execution stopped. **W=4 is NOT RUN.**
+Exactly one complete smoke invocation was attempted in this follow-up.
+
+## Base and scope
+
+Continued on `test/imap-sync-stage-3c-dovecot`, initially clean at
+`9e8cd9b29cb6540cfe2829c73eaf82fc9919931a`. Only the harness, its small independent
+oracle, diagnostic artifact and this report changed. No Stage 1–3B source,
+production defaults, fairness policy or worker composition changed. No push,
+merge, PR, production account or Stage 4 work was performed.
+
+## Harness corrections and preflight
+
+The scheduler's existing `historyAllowed` API is global. The harness now runs
+non-overlapping bounded waves through that gate. Before each wave an independent
+SQL read selects only accounts below the durable history-publication target.
+Accounts at target are omitted. Selected accounts still start with fresh discovery.
+Test-only `pollMs=5000` provides quiet opportunities for ordinary history;
+`historyWaitMs=30000` and scheduling policy remain unchanged. This does not replace
+the sustained-fresh fairness evaluation in Stage 3B.
+
+The first successful history completion closes the global gate synchronously.
+Already-admitted turns settle before stopping the scheduler and independently
+reading SQL. No same-account second history turn is admitted in that wave.
+Targets are one window for recent metadata, two before injection and three after
+fresh progress. Each account actually committed exactly three windows. Scheduler
+instances are sequential; no parallel scheduler or full-archive download was added.
+
+Each boundary captures frontiers, epochs, revisions, complete placement identities
+and audit rows in an independent PostgreSQL repeatable-read, read-only transaction.
+The fixture-only trigger records account/epoch/UID/Message-ID metadata inside the
+same transaction as frontier publication. The oracle checks revision and old/new
+F/E continuity, one advancing frontier, 128-numeric-UID bounds and exact inventory
+membership in every published interval and current coverage. It rejects duplicates,
+missing metadata, wrong identity/account/epoch and false frontier advancement.
+
+Admissions, tagged command responses and successful-turn callbacks remain separate
+from authoritative SQL publications. Actual `retireReceiving()` promises are
+wrapped to mark ownership retired only after native retirement settles. Boundary
+resource records include maximum ownership, per-account overlap, active slots and
+sampled RSS. Fixture delivery connections are outside scheduler W/C measurements.
+
+The independent visibility observer runs during APPENDs, approximately every 25ms.
+Each sample preserves actual acknowledgement and first-observed visibility
+timestamps plus monotonic elapsed time. Visibility is an observation upper bound,
+not the exact commit instant.
+
+`finally` saves diagnostics before cleanup, captures a final SQL boundary after
+scheduler settlement, and saves after each cleanup attempt. Cleanup errors cannot
+skip evidence emission. A 280-second cutoff reserves cleanup time; a 295-second
+emergency checkpoint and the launcher's outer 300-second limit handle interruption.
+
+Preflight passed:
+
+- `node --import tsx experiments/imap-dovecot/stage3c.ts --check`: a valid sparse
+  interval and ten rejecting controls for missing/duplicate placements, wrong
+  account/identity/epoch, absent atomic metadata, broken frontier chain, revision
+  mismatch and invalid advance. The actual candidate helper excludes accounts at
+  target and rejects target overshoot.
+- Launcher PowerShell syntax and retained-process-handle exit-code probe.
+- `pnpm typecheck`, `pnpm lint`, changed-file Prettier and `git diff --check`.
+
+These preflight checks did not execute another smoke scenario.
+
+## Environment, workload and budget
+
+Observed environment: Docker engine **28.5.1**, Docker Desktop **4.50.0**,
+Dovecot **2.4.3 (`c1b22ef978`)**, PostgreSQL **17.6** on Alpine x86_64, Node
+**v24.21.0**, patched ImapFlow **2.0.6**, pnpm **12.7.0**. The existing pinned
+Dovecot digest and `postgres:17.6-alpine` were cached. No installation or image
+download was needed. Actual Dovecot, ImapFlow, verified TLS and a disposable
+`stage3c` PostgreSQL database were used.
+
+Five independent accounts imported 1,000 deterministic messages each. Actual UID
+100 and 500 were expunged in each INBOX, leaving **4,990 seeded messages**. Full
+account-qualified UID/Message-ID inventories and UIDVALIDITY were read from
+Dovecot. Gaps exist but fall outside the three historical windows exercised here;
+sparse-interval handling therefore has only the offline oracle control in this
+evaluation. Mixed 2001/2024 dates and different MIME/header sizes remain in the
+reused fixture. Fifteen extra old-dated messages, three per account, were APPENDed
+with actual acknowledged UIDs 1001–1003.
+
+Fixture setup including containers, migrations and inventory: **27,936.94 ms**.
+Entire process including cleanup: **53,025.81 ms**. Each history-target phase had
+a fixed 25-second deadline; discovery, visibility, restart and failure phases had
+20-second deadlines. No deadline was automatically extended. The stop was an
+assertion failure, not exhaustion of the total execution budget.
+
+## W=2 durable results
+
+All five accounts received initial fresh discovery. The recent-metadata boundary
+had 128 queryable placements/account and E=873, before historical completion.
+Each second window moved E to 745. All 15 injected identities became queryable
+while E remained 745; afterward a third historical window moved E to 617.
+
+| Account   | Epoch      | Durable historical E chain | Final F | Final E | Revision | Exact placements |
+| --------- | ---------- | -------------------------- | ------- | ------- | -------- | ---------------- |
+| stage3c-1 | 1791895316 | 1001 → 873 → 745 → 617     | 1003    | 617     | 4        | 387              |
+| stage3c-2 | 1791895320 | 1001 → 873 → 745 → 617     | 1003    | 617     | 4        | 387              |
+| stage3c-3 | 1791895324 | 1001 → 873 → 745 → 617     | 1003    | 617     | 4        | 387              |
+| stage3c-4 | 1791895328 | 1001 → 873 → 745 → 617     | 1003    | 617     | 5        | 387              |
+| stage3c-5 | 1791895333 | 1001 → 873 → 745 → 617     | 1003    | 617     | 4        | 387              |
+
+Each history publication spans exactly 128 numeric UIDs. Final placements are
+exactly UID 617–1003 for each account, matched to actual Dovecot identity and epoch.
+No missing or duplicate placement was found. Account 4 published fresh arrivals
+in two transactions, explaining revision 5; the others had one fresh publication
+and revision 4. The oracle checks these actual separate intervals.
+
+After the third window the scheduler stopped and restarted on the same PostgreSQL
+state. The first five restarted admissions were fresh. Independent reads preserved
+F/E, epoch, revision and full placements; history was not restarted from scratch.
+No history was scheduled beyond the three-window target.
+
+All **16 saved boundary oracles passed**, including failure cleanup. There were
+15 history admissions and 15 durable history publications. Diagnostics also record
+68 total admissions, 63 successful-turn callbacks and 551 tagged response
+observations, including the authentication rejection. Those counts are not proof
+of durable publication.
+
+Fresh acknowledgement-to-observed-PostgreSQL-visibility latency samples (ms):
+
+| Account   | UID 1001 | UID 1002 | UID 1003 |
+| --------- | -------- | -------- | -------- |
+| stage3c-1 | 342.73   | 307.36   | 279.49   |
+| stage3c-2 | 5180.53  | 5185.30  | 5188.93  |
+| stage3c-3 | 5321.09  | 5334.75  | 5323.23  |
+| stage3c-4 | 175.78   | 5572.22  | 5583.66  |
+| stage3c-5 | 5316.45  | 5323.53  | 5316.85  |
+
+Maximum observed latency: **5,583.66 ms**, across 15 samples. Exact acknowledgement
+and visibility timestamps are saved in the evidence. No SLA or percentile is
+claimed. Old-dated arrivals were discovered by UID before full history completion.
+
+## Failure isolation: mandatory assertion failed
+
+Only account 1's test factory supplied an invalid password. The other four
+connection configurations were unchanged. Observed errors:
+
+| Account   | Error                                | Reported retry delay | Monotonic timestamp (ms, process clock) |
+| --------- | ------------------------------------ | -------------------- | --------------------------------------- |
+| stage3c-1 | `IMAP AUTHENTICATE failed`           | 200 ms               | 49716.05                                |
+| stage3c-3 | `Metadata window deadline exhausted` | 200 ms               | 52224.95                                |
+| stage3c-4 | `Metadata window deadline exhausted` | 200 ms               | 53718.65                                |
+
+The assertion `errors.slice(errorIndex).every(e => e.user === users[0])` failed.
+The finalizer saved full SQL and connection evidence. Offline comparison verified
+no frontier, revision or placement change between restart and final failure
+snapshots, and the exact placement/publication oracle still passed.
+
+Only the first affected-account 200ms retry was observed; the 200/400/800ms sequence
+was not established. Healthy-account injection and durable progress during failure,
+restoration and recovery were NOT RUN because execution stopped at the mandatory
+assertion. W=4 was also NOT RUN. No successful failure-isolation or global-deadlock
+claim is made.
+
+Healthy-account deadline failures coincided with the authentication failure under
+this real-server fixture. Their cause is unestablished: the evidence does not
+identify an engine defect, Dovecot behavior or environmental timing as the cause.
+No operation deadline was increased, no rerun was performed and no engine code
+was changed.
+
+## Resources, exact outcomes and readiness
+
+Maximum observed scheduler-owned live connections: **2**; per-account overlap:
+**false**. There are 67 native-retirement observations. Every settled boundary
+reports zero live owned connections and zero active slots. Maximum boundary-sampled
+process RSS was **318,963,712 bytes**, not a continuously measured peak or server
+memory statistic. Both disposable containers were removed; the post-run Docker
+label query found no remaining Stage 3C containers. Cleanup errors: none.
+
+| Requirement                                                                  | Outcome | Scope                                          |
+| ---------------------------------------------------------------------------- | ------- | ---------------------------------------------- |
+| Real servers, five accounts, approximately 5,000 seeded messages             | PASS    | Recorded actual inventories                    |
+| Initial fresh discovery for every account                                    | PASS    | W=2                                            |
+| Recent metadata visible before full history                                  | PASS    | W=2, 128 placements/account after first window |
+| Exactly 2–3 durable bounded history windows/account                          | PASS    | W=2, exactly three                             |
+| Fresh UID discovery, injected identities, E preservation, subsequent history | PASS    | W=2, 15 old-dated arrivals                     |
+| Exact interval/placement/atomic publication oracle                           | PASS    | All 16 observed W=2 boundaries                 |
+| Stop/restart preserves state and prioritizes fresh                           | PASS    | W=2                                            |
+| W/C=1 connection ownership and retirement                                    | PASS    | W=2                                            |
+| No false advancement during failed operations                                | PASS    | Restart-to-failure SQL comparison              |
+| Errors restricted to the unavailable account                                 | FAIL    | Two healthy-account deadlines expired          |
+| Full bounded-backoff sequence                                                | NOT RUN | Stopped after healthy-account errors           |
+| Healthy durable progress during failure and restored-account recovery        | NOT RUN | Stopped at isolation assertion                 |
+| W=4 scenarios                                                                | NOT RUN | Earlier mandatory condition failed             |
+| Diagnostic evidence in finally and container cleanup                         | PASS    | Final snapshot saved; containers absent        |
+| Typecheck, lint, formatting and diff whitespace                              | PASS    | Focused checks                                 |
+| Full regression, soak, 50k benchmark, Stage 4                                | NOT RUN | Excluded                                       |
+
+**PARTIAL; Stage 4 readiness is not established.** Initial real receiving, durable
+history, fresh visibility and restart now have independent evidence. Failure
+isolation and W=4 remain mandatory gaps. This task stops after this one evaluation.
+
+## Evidence and reproduction
+
+The original `stage3c-evidence.json.gz` remains immutable. The corrected evaluation
+is separately retained as `experiments/imap-dovecot/stage3c-rerun-evidence.json.gz`.
+It contains inventories, boundary snapshots with full placements, atomic audit
+metadata, latency timestamps, admissions, responses, callbacks, retirements,
+errors and cleanup. SHA-256 of its uncompressed JSON:
+`48a7f10b15d8e650a038c49fa8df7b482242528affd0d7cd143a7c4d0b407c4c`.
+
+The raw W=2 outcome remains `PARTIAL: started`; this report distinguishes the
+passed earlier scenarios and exact failure. W=4 is explicitly `NOT RUN`.
+Offline replay of all 16 saved boundary snapshots through the same oracle passed.
+The launcher correctly reported exit code 1 for this attempt.
+
+Use the existing image/certificate preparation in the historical record below:
+
+```powershell
+node --import tsx experiments/imap-dovecot/stage3c.ts --check
+pnpm typecheck
+pnpm lint
+powershell -NoProfile -ExecutionPolicy Bypass -File experiments/imap-dovecot/stage3c.ps1
+```
+
+Run only one instance at a time because fixture files and cleanup labels are
+shared. Generated uncompressed JSON and root logs remain ignored.
+
+---
+
+## Original attempt — historical record
+
+### Stage 3C — original real Dovecot integration smoke
 
 2026-10-13. **PARTIAL — Stage 3C acceptance is incomplete.** The single real-server
 attempt stopped at its explicit 20-second historical-progress deadline. No
