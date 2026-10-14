@@ -20,6 +20,10 @@ records resolution of the pre-network claim boundary and its validation evidence
 The BLOCKED outcome below remains the historical result of this checkpoint;
 R04-B and R04-C remain unimplemented.
 
+Completion follow-up, 2026-10-14: [R04 completion results](R04_COMPLETION_RESULTS.md)
+records acceptance of B/C publication authority and its fixture evidence. The
+original BLOCKED checkpoint below remains the historical result.
+
 ## Reproduced admission blocker
 
 The accepted `runReceivingOperation` constructs its single owned client before
