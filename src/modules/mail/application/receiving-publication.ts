@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import {
+  readVerifiedBlob,
+  type BlobStorage,
+  type StoredBlob,
+} from "../../../shared/application/blob-storage";
+import { DEFAULT_ATTACHMENT_LIMITS } from "../../../shared/application/attachment-limits";
+import {
+  EMAIL_HTML_POLICY,
+  sanitizeEmailHtml,
+} from "../infrastructure/sanitize-email-html";
 import type {
   ReceivingOwner,
   ReceivingState,
@@ -18,6 +28,21 @@ export type PublicationSource = Readonly<{
 export type Attempt = Readonly<Record<string, string>>;
 type Options = Parameters<ReceivingExecutor["transaction"]>[1];
 
+/** Completed decoder evidence; transfer/decoding is owned by R11/R12. */
+export type CompletedRead = Readonly<{
+  complete: true;
+  taggedOk: true;
+  streamComplete: true;
+  decoded: true;
+  eof: true;
+  method: "BODY.PEEK";
+  origin: 0;
+  encodedBytes: bigint;
+  part: string;
+  epoch: bigint;
+  uid: bigint;
+}>;
+
 const encode = (value: unknown) =>
   JSON.stringify(value, (_, value) =>
     typeof value === "bigint" ? value.toString() : value,
@@ -29,7 +54,111 @@ const encode = (value: unknown) =>
 export class ReceivingPublication {
   constructor(
     private readonly executor: Pick<ReceivingExecutor, "transaction">,
+    private readonly storage?: BlobStorage,
   ) {}
+
+  contentResult(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    intent: string,
+    attempt: string,
+    evidence: CompletedRead &
+      Readonly<{
+        plainText: string | null;
+        html: string | null;
+        searchText: string;
+      }>,
+    options: Options,
+  ) {
+    const captured = JSON.parse(encode(evidence)) as Record<string, unknown>;
+    const sanitized =
+      evidence.html === null ? null : sanitizeEmailHtml(evidence.html);
+    delete captured.html;
+    const completed = encode({
+      ...captured,
+      sanitizedHtml: sanitized?.html ?? null,
+      remoteContentBlocked: sanitized?.remoteContentBlocked ?? false,
+      policyVersion: EMAIL_HTML_POLICY,
+      sanitized: true,
+    });
+    return this.cacheResult(
+      "content",
+      owner,
+      source,
+      intent,
+      attempt,
+      completed,
+      options,
+    );
+  }
+
+  async attachmentResult(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    intent: string,
+    attempt: string,
+    evidence: CompletedRead & Readonly<{ blob: StoredBlob }>,
+    options: Options,
+  ) {
+    // Capture caller-owned data before the first await. Verification must never hold SQL locks.
+    const actor = { ...owner },
+      capturedSource = { ...source, state: { ...source.state } },
+      capturedOptions = { ...options };
+    const captured = JSON.parse(encode(evidence)) as Record<string, unknown>;
+    const blob = { ...evidence.blob };
+    delete captured.blob;
+    if (!this.storage || !(await this.storage.exists(blob.key)))
+      throw new Error("Finalized blob is missing");
+    await readVerifiedBlob(
+      this.storage,
+      blob,
+      DEFAULT_ATTACHMENT_LIMITS.maxAttachmentBytes,
+    );
+    if (!(await this.storage.exists(blob.key)))
+      throw new Error("Finalized blob disappeared");
+    const completed = encode({
+      ...captured,
+      stored: true,
+      storageKey: blob.key,
+      size: blob.size,
+      sha256: blob.sha256,
+    });
+    return this.cacheResult(
+      "attachment",
+      actor,
+      capturedSource,
+      intent,
+      attempt,
+      completed,
+      capturedOptions,
+    );
+  }
+
+  private cacheResult(
+    kind: "content" | "attachment",
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    intent: string,
+    attempt: string,
+    completed: string,
+    options: Options,
+  ) {
+    const actor = owner.actor,
+      term = owner.generation,
+      mailbox = source.mailbox,
+      binding = source.configuration,
+      expected = encode(source.state);
+    return this.executor.transaction(async (db) => {
+      if (kind === "content")
+        await db.execute(
+          sql`select maildock_receiving_content_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
+        );
+      else
+        await db.execute(
+          sql`select maildock_receiving_attachment_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
+        );
+    }, options);
+  }
 
   commandResult(
     owner: ReceivingOwner,
