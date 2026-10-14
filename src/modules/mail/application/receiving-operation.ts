@@ -10,6 +10,38 @@ import type {
   ReceivingExecutor,
 } from "../../../shared/infrastructure/database/receiving-executor";
 import type { ReceivingOwner } from "../../../shared/infrastructure/database/receiving-authority";
+import { randomUUID } from "node:crypto";
+import { ReceivingUnresolvedError } from "../../../shared/infrastructure/database/receiving-executor";
+import {
+  ReceivingPublication,
+  type Attempt,
+  type IntentKind,
+  type PublicationSource,
+} from "./receiving-publication";
+
+export type ReceivingOperationPhase =
+  | "ADMITTED"
+  | "PRE_NETWORK_CLAIM"
+  | "CLAIM_SETTLED"
+  | "NETWORK"
+  | "RETIRING"
+  | "NETWORK_RETIRED"
+  | "RESULT_PUBLICATION"
+  | "SETTLED";
+export type ReceivingClaim = Readonly<{
+  attempt: Attempt;
+  source: PublicationSource;
+  kind: IntentKind;
+  intent: string;
+}>;
+export type ReceivingPreNetworkContext = Readonly<{
+  signal: AbortSignal;
+  deadline: number;
+  claim: (source: PublicationSource) => Promise<ReceivingClaim>;
+  recover: (
+    source: PublicationSource,
+  ) => ReturnType<ReceivingPublication["recover"]>;
+}>;
 
 export type ReceivingOperationKind =
   | "repair"
@@ -94,6 +126,8 @@ export type OwnedReceivingClient = Pick<
   | "noop"
 >;
 export type ReceivingOperationContext = Readonly<{
+  phase: ReceivingOperationPhase;
+  claim: ReceivingClaim | null;
   owner: ReceivingOwner;
   signal: AbortSignal;
   deadline: number;
@@ -103,23 +137,43 @@ export type ReceivingOperationContext = Readonly<{
   retireSocket: () => Promise<void>;
   /** SQL is prohibited until the socket has retired. R04 supplies publication. */
   transaction: <T>(work: (db: ReceivingDatabase) => Promise<T>) => Promise<T>;
+  publication: Readonly<{
+    commandResult: (
+      evidence: Parameters<ReceivingPublication["commandResult"]>[4],
+    ) => Promise<void>;
+    fail: (
+      outcome: Parameters<ReceivingPublication["fail"]>[5],
+    ) => Promise<void>;
+  }>;
 }>;
 /** Trusted composition registry, not supplied by submitters. No operation bodies
  * are registered by R03; isolated fixtures may inject deterministic executors. */
+type ReceivingOperationBody = (
+  operation: ReceivingOperation,
+  context: ReceivingOperationContext,
+) => Promise<ReceivingOperationResult>;
+export type ReceivingOperationHandler =
+  | ReceivingOperationBody
+  | Readonly<{
+      /** Trusted composition only. This phase has no client or arbitrary SQL port. */
+      preNetwork: (
+        operation: ReceivingOperation,
+        context: ReceivingPreNetworkContext,
+      ) => Promise<void>;
+      execute: ReceivingOperationBody;
+    }>;
 export type ReceivingOperationHandlers = Partial<
-  Record<
-    ReceivingOperationKind,
-    (
-      operation: ReceivingOperation,
-      context: ReceivingOperationContext,
-    ) => Promise<ReceivingOperationResult>
-  >
+  Record<ReceivingOperationKind, ReceivingOperationHandler>
 >;
 export type ReceivingOperationBoundary = Readonly<{
   owner: ReceivingOwner;
   executor: ReceivingExecutor;
   assertCurrent: () => void;
-  validate: (operation: ReceivingOperation) => Promise<ProviderConnection>;
+  validate: (operation: ReceivingOperation) => Promise<
+    ProviderConnection & {
+      receivingLifecycleVersion?: bigint;
+    }
+  >;
   createClient?: (options: ImapFlowOptions) => ImapFlow;
 }>;
 
@@ -238,51 +292,227 @@ export async function runReceivingOperation(
       throw new Error("Receiving operation retired");
     boundary.assertCurrent();
   };
-  guard();
-  const connection = await boundary.validate(operation);
-  guard(); // validation scope has committed before any network construction
-  const client = (
-    boundary.createClient ?? ((options) => new ImapFlow(options))
-  )({
-    ...imapOptions(connection),
-    disableAutoIdle: true,
-    disableCompression: true,
-    logger: false,
-    maxLiteralSize: "maxBytes" in operation ? operation.maxBytes : 256 * 1024,
-    maxResponseSize: 256 * 1024,
-    receivingBytes: (() => {
-      let bytes = 0;
-      return (count: number) => {
-        guard();
-        bytes += count;
-        if (
-          bytes >
-          64 * 1024 +
-            ("maxBytes" in operation ? operation.maxBytes : 256 * 1024)
-        )
-          throw new Error("Receiving operation response budget exceeded");
-      };
-    })(),
-  });
+  let phase: ReceivingOperationPhase = "ADMITTED";
+  let client: ImapFlow | undefined;
+  let claim: ReceivingClaim | null = null;
+  const currentClaim = (): ReceivingClaim | null => claim;
+  let claimStarted = false;
+  let preFailed = false;
+  let mutationMayHaveExecuted = false;
+  let publicationSettled = false;
+  let resultUnresolved = false;
+  let capturedLifecycle: bigint | undefined;
+  const owner = Object.freeze({ ...boundary.owner });
   let retired: Promise<void> | undefined;
   let socketSettled = false;
   let connected = false;
   const retireSocket = () => {
-    retired ??= client.retireReceiving().then(() => {
+    retired ??= (async () => {
+      phase = "RETIRING";
+      await client?.retireReceiving();
       socketSettled = true;
-    });
+      phase = "NETWORK_RETIRED";
+    })();
     return retired;
   };
   const abort = () => {
     void retireSocket();
   };
-  client.on("error", () => cancellation.abort());
   const timer = setTimeout(
     () => cancellation.abort(),
     Math.max(0, operation.deadline - performance.now()),
   );
   signal.addEventListener("abort", abort, { once: true });
   const sqlWork = new Set<Promise<unknown>>();
+  const preWork = new Set<Promise<unknown>>();
+  let preparing = false;
+  const options = () => ({ deadline: operation.deadline, signal });
+  const publication = new ReceivingPublication({
+    transaction: <T>(
+      work: (db: ReceivingDatabase) => Promise<T>,
+      budget: Parameters<ReceivingExecutor["transaction"]>[1],
+    ) => {
+      guard();
+      if (
+        sqlWork.size ||
+        (phase !== "PRE_NETWORK_CLAIM" &&
+          phase !== "CLAIM_SETTLED" &&
+          phase !== "RESULT_PUBLICATION") ||
+        (phase === "RESULT_PUBLICATION" ? !socketSettled : Boolean(client))
+      )
+        throw new Error(
+          "Receiving capability phase or serial SQL scope fenced",
+        );
+      const pending = boundary.executor.transaction(work, budget);
+      sqlWork.add(pending);
+      void pending
+        .finally(() => sqlWork.delete(pending))
+        .catch(() => undefined);
+      return pending;
+    },
+  });
+  const boundIntent = () => {
+    if (!("pendingId" in operation) || !("account" in operation.identity))
+      throw new Error("Pre-network claim requires a persisted intent identity");
+    const kind: IntentKind =
+      operation.kind === "store"
+        ? "command"
+        : operation.kind === "content-slice"
+          ? "content"
+          : operation.kind === "attachment-slice"
+            ? "attachment"
+            : (() => {
+                throw new Error("Operation has no R04-A claim capability");
+              })();
+    return { kind, intent: operation.pendingId };
+  };
+  const captureSource = (source: PublicationSource) => {
+    const identity = operation.identity;
+    if (
+      !("account" in identity) ||
+      source.mailbox !== identity.mailbox ||
+      source.configuration !== identity.configurationVersion
+    )
+      throw new Error("Pre-network source differs from captured admission");
+    return Object.freeze({
+      ...source,
+      state: Object.freeze({ ...source.state }),
+    });
+  };
+  const preGuard = () => {
+    guard();
+    if (!preparing || preFailed || phase !== "PRE_NETWORK_CLAIM" || client)
+      throw new Error("Pre-network capability is retired");
+  };
+  const preBudget = () => ({
+    ...options(),
+    deadline: Math.min(operation.deadline, performance.now() + 2000),
+  });
+  const confirm = async (source: PublicationSource, attempt: string) => {
+    const { kind, intent } = boundIntent();
+    const recovered = await publication.recover(
+      owner,
+      source,
+      kind,
+      intent,
+      preBudget(),
+    );
+    guard();
+    const marker = recovered.intent.receiving_attempt as Attempt | null;
+    if (
+      !marker ||
+      marker.id !== attempt ||
+      marker.actor !== owner.actor ||
+      marker.generation !== String(owner.generation) ||
+      marker.phase !== "claimed" ||
+      marker.kind !== kind ||
+      marker.account !== (operation.identity as { account: string }).account ||
+      marker.mailbox !== source.mailbox ||
+      marker.configuration !== String(source.configuration) ||
+      marker.path !== recovered.authority.path ||
+      marker.epoch !== String(recovered.state.epoch) ||
+      marker.uid !== String(recovered.intent.source_uid) ||
+      marker.lifecycle !== String(recovered.authority.lifecycle) ||
+      recovered.authority.lifecycle !== capturedLifecycle ||
+      !recovered.authority.activeSource ||
+      recovered.authority.configuration !== source.configuration ||
+      recovered.intent.status !==
+        (kind === "command" ? "executing" : "fetching")
+    )
+      throw new Error("Pre-network matching claim recovery fenced");
+    return Object.freeze({
+      attempt: Object.freeze({ ...marker }),
+      source: captureSource({ ...source, state: recovered.state }),
+      kind,
+      intent,
+    });
+  };
+  const trackPre = <T>(pending: Promise<T>) => {
+    const settled = pending
+      .catch((error) => {
+        preFailed = true;
+        throw error;
+      })
+      .finally(() => preWork.delete(settled));
+    preWork.add(settled);
+    void settled.catch(() => undefined);
+    return settled;
+  };
+  const preNetwork: ReceivingPreNetworkContext = Object.freeze({
+    signal,
+    deadline: operation.deadline,
+    claim: (input: PublicationSource) => {
+      preGuard();
+      if (claimStarted || preWork.size)
+        throw new Error("Pre-network claim is single-use and serial");
+      claimStarted = true;
+      const source = captureSource(input);
+      const { kind, intent } = boundIntent();
+      const attempt = randomUUID();
+      return trackPre(
+        (async () => {
+          try {
+            await publication.claim(
+              owner,
+              source,
+              kind,
+              intent,
+              preBudget(),
+              attempt,
+            );
+          } catch (error) {
+            // Never resend a claim. Recovery must find this exact UUID, not merely
+            // an executing row left by a previous remote operation.
+            if (!(error instanceof ReceivingUnresolvedError)) throw error;
+            preGuard();
+          }
+          preGuard();
+          claim = await confirm(source, attempt);
+          preGuard();
+          return claim;
+        })(),
+      );
+    },
+    recover: (input: PublicationSource) => {
+      preGuard();
+      if (preWork.size) throw new Error("Pre-network recovery must be serial");
+      const source = captureSource(input);
+      const { kind, intent } = boundIntent();
+      return trackPre(
+        publication
+          .recover(owner, source, kind, intent, preBudget())
+          .then((value) => {
+            preGuard();
+            return value;
+          }),
+      );
+    },
+  });
+  const publish = async (work: (claimed: ReceivingClaim) => Promise<void>) => {
+    guard();
+    if (
+      !claim ||
+      !socketSettled ||
+      sqlWork.size ||
+      phase !== "NETWORK_RETIRED" ||
+      publicationSettled ||
+      resultUnresolved
+    )
+      throw new Error(
+        "Receiving result requires matching claim and retired socket",
+      );
+    phase = "RESULT_PUBLICATION";
+    try {
+      await work(claim);
+      guard();
+      publicationSettled = true;
+    } catch (error) {
+      if (error instanceof ReceivingUnresolvedError) resultUnresolved = true;
+      throw error;
+    } finally {
+      phase = "NETWORK_RETIRED";
+    }
+  };
   const providerWork = new Set<Promise<unknown>>();
   const providerIterators = new Set<AsyncIterator<unknown>>();
   // A method-only facade prevents reflection from exposing client internals.
@@ -315,6 +545,10 @@ export async function runReceivingOperation(
             property === "logout"
           )
             throw new Error("Owned socket is retired or requires retireSocket");
+          if (phase !== "NETWORK" || sqlWork.size)
+            throw new Error(
+              "Owned network method requires NETWORK without SQL",
+            );
           if (property === "connect") {
             if (connected) throw new Error("Owned socket cannot reconnect");
             connected = true;
@@ -329,9 +563,30 @@ export async function runReceivingOperation(
             )
               throw new Error("APPEND payload exceeds admitted MIME policy");
           }
+          if (
+            [
+              "append",
+              "messageMove",
+              "messageFlagsAdd",
+              "messageFlagsRemove",
+              "messageFlagsSet",
+            ].includes(property)
+          ) {
+            if (
+              !claim ||
+              claim.kind !== "command" ||
+              operation.kind !== "store" ||
+              property === "append" ||
+              property === "messageMove"
+            )
+              throw new Error(
+                "Remote mutation requires a prepared durable claim capability",
+              );
+            mutationMayHaveExecuted = true;
+          }
           const result: unknown = Reflect.apply(
-            Reflect.get(client, property),
-            client,
+            Reflect.get(client!, property),
+            client!,
             args,
           );
           if (result instanceof Promise) {
@@ -389,36 +644,161 @@ export async function runReceivingOperation(
   }) as OwnedReceivingClient;
   try {
     guard();
-    const result = await handler(
+    let connection = await boundary.validate(operation);
+    guard();
+    capturedLifecycle = connection.receivingLifecycleVersion;
+    phase = "PRE_NETWORK_CLAIM";
+    if (typeof handler !== "function") {
+      if (capturedLifecycle === undefined)
+        throw new Error(
+          "Prepared operation requires captured lifecycle identity",
+        );
+      preparing = true;
+      try {
+        await handler.preNetwork(operation, preNetwork);
+      } finally {
+        preparing = false;
+      }
+      guard();
+      const prepared = currentClaim();
+      if (preFailed || preWork.size || sqlWork.size || !prepared)
+        throw new Error("Prepared operation requires a settled matching claim");
+      phase = "CLAIM_SETTLED";
+      connection = await boundary.validate(operation);
+      guard();
+      if (connection.receivingLifecycleVersion !== capturedLifecycle)
+        throw new Error("Receiving post-claim lifecycle fenced");
+      claim = await confirm(prepared.source, prepared.attempt.id);
+      guard();
+    } else {
+      // Existing R03 no-claim handlers retain admission-only fixture behavior.
+      // R04-A business execution uses the typed prepared descriptor above.
+      phase = "CLAIM_SETTLED";
+    }
+    client = (boundary.createClient ?? ((options) => new ImapFlow(options)))({
+      ...imapOptions(connection),
+      disableAutoIdle: true,
+      disableCompression: true,
+      logger: false,
+      maxLiteralSize: "maxBytes" in operation ? operation.maxBytes : 256 * 1024,
+      maxResponseSize: 256 * 1024,
+      receivingBytes: (() => {
+        let bytes = 0;
+        return (count: number) => {
+          guard();
+          bytes += count;
+          if (
+            bytes >
+            64 * 1024 +
+              ("maxBytes" in operation ? operation.maxBytes : 256 * 1024)
+          )
+            throw new Error("Receiving operation response budget exceeded");
+        };
+      })(),
+    });
+
+    client.on("error", () => {
+      // Prepared intents may settle a matching failure after actual retirement.
+      // Existing admission-only handlers retain R03's error cancellation.
+      if (typeof handler === "function") cancellation.abort();
+      else void retireSocket();
+    });
+    guard();
+    phase = "NETWORK";
+    const result = await (
+      typeof handler === "function" ? handler : handler.execute
+    )(
       operation,
       Object.freeze({
-        owner: Object.freeze({ ...boundary.owner }),
+        get phase() {
+          return phase;
+        },
+        get claim() {
+          return claim;
+        },
+        owner,
         signal,
         deadline: operation.deadline,
         assertCurrent: guard,
         client: ownedClient,
         retireSocket,
+        publication: Object.freeze({
+          commandResult: (
+            evidence: Parameters<ReceivingPublication["commandResult"]>[4],
+          ) =>
+            publish((c) =>
+              publication.commandResult(
+                owner,
+                c.source,
+                c.intent,
+                c.attempt.id,
+                evidence,
+                options(),
+              ),
+            ),
+          fail: (outcome: Parameters<ReceivingPublication["fail"]>[5]) => {
+            if (
+              outcome === "failed_before_execution" &&
+              mutationMayHaveExecuted
+            )
+              throw new Error(
+                "Remote mutation requires uncertainty settlement",
+              );
+            return publish((c) =>
+              publication.fail(
+                owner,
+                c.source,
+                c.kind,
+                c.intent,
+                c.attempt.id,
+                outcome,
+                options(),
+              ),
+            );
+          },
+        }),
         transaction: <T>(work: (db: ReceivingDatabase) => Promise<T>) => {
           guard();
           if (!socketSettled || sqlWork.size)
             throw new Error(
               "Receiving SQL requires retired socket and serial scope",
             );
+          if (typeof handler !== "function")
+            throw new Error(
+              "Prepared operations require typed result publication",
+            );
+          if (
+            phase !== "NETWORK_RETIRED" ||
+            resultUnresolved ||
+            publicationSettled
+          )
+            throw new Error("Receiving result transition fenced");
+          phase = "RESULT_PUBLICATION";
           const pending = boundary.executor.transaction(work, {
             deadline: operation.deadline,
             signal,
           });
           sqlWork.add(pending);
-          void pending
-            .finally(() => sqlWork.delete(pending))
-            .catch(() => undefined);
-          return pending;
+          const settled = pending
+            .catch((error) => {
+              if (error instanceof ReceivingUnresolvedError)
+                resultUnresolved = true;
+              throw error;
+            })
+            .finally(() => {
+              sqlWork.delete(pending);
+              phase = "NETWORK_RETIRED";
+            });
+          void settled.catch(() => undefined);
+          return settled;
         },
       }),
     );
     guard();
-    if (sqlWork.size || providerWork.size)
+    if (sqlWork.size || providerWork.size || preWork.size)
       throw new Error("Detached receiving work is prohibited");
+    if (claim && !publicationSettled)
+      throw new Error("Prepared operation requires terminal publication");
     if (result !== undefined) {
       if (operation.kind !== "diagnostic")
         throw new Error("Only diagnostics return ephemeral results");
@@ -442,14 +822,46 @@ export async function runReceivingOperation(
         category: result.category,
       } as const);
     }
+  } catch (error) {
+    if (claim && !publicationSettled && !resultUnresolved && !signal.aborted) {
+      await retireSocket();
+      const outcome = mutationMayHaveExecuted
+        ? "uncertain_remote_execution"
+        : "failed_before_execution";
+      try {
+        await publish((c) =>
+          publication.fail(
+            owner,
+            c.source,
+            c.kind,
+            c.intent,
+            c.attempt.id,
+            c.kind === "command"
+              ? outcome
+              : connected
+                ? "failed_remote_read"
+                : "failed_before_execution",
+            options(),
+          ),
+        );
+      } catch (settlement) {
+        throw new AggregateError(
+          [error, settlement],
+          "Receiving failure settlement requires recovery",
+        );
+      }
+    }
+    throw error;
   } finally {
+    preparing = false;
     live = false;
     cancellation.abort(); // revoke issued SQL and delayed helper continuations
     await retireSocket();
     await Promise.allSettled(
       [...providerIterators].map((iterator) => iterator.return?.()),
     );
-    await Promise.allSettled([...sqlWork, ...providerWork]);
+    await Promise.allSettled([...preWork, ...sqlWork, ...providerWork]);
+    phase = "SETTLED";
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);
   }

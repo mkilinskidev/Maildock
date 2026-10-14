@@ -15,6 +15,11 @@ The final report is a separate documentation commit. No B/C checkpoint commits
 exist. No push, merge, PR, remote operation body or subsequent roadmap stage
 was performed.
 
+Follow-up, 2026-10-14: [R04 phase unblock results](R04_PHASE_UNBLOCK_RESULTS.md)
+records resolution of the pre-network claim boundary and its validation evidence.
+The BLOCKED outcome below remains the historical result of this checkpoint;
+R04-B and R04-C remain unimplemented.
+
 ## Reproduced admission blocker
 
 The accepted `runReceivingOperation` constructs its single owned client before

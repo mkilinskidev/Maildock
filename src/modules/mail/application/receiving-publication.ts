@@ -27,7 +27,9 @@ const encode = (value: unknown) =>
  * Unresolved outcomes require recover() before considering further execution.
  */
 export class ReceivingPublication {
-  constructor(private readonly executor: ReceivingExecutor) {}
+  constructor(
+    private readonly executor: Pick<ReceivingExecutor, "transaction">,
+  ) {}
 
   commandResult(
     owner: ReceivingOwner,
@@ -62,13 +64,14 @@ export class ReceivingPublication {
     kind: IntentKind,
     intent: string,
     options: Options,
+    attemptId = randomUUID(),
   ): Promise<Attempt> {
     const actor = owner.actor,
       term = owner.generation,
       mailbox = source.mailbox,
       binding = source.configuration,
       expected = encode(source.state),
-      attempt = randomUUID();
+      attempt = attemptId;
     return this.executor.transaction(async (db) => {
       const [row] = await db.execute(
         sql`select maildock_receiving_attempt_claim(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${kind},${intent}::uuid,${attempt}::uuid) as attempt`,
@@ -107,7 +110,16 @@ export class ReceivingPublication {
     kind: IntentKind,
     intent: string,
     options: Options,
-  ): Promise<{ state: ReceivingState; intent: Record<string, unknown> }> {
+  ): Promise<{
+    state: ReceivingState;
+    intent: Record<string, unknown>;
+    authority: {
+      configuration: bigint;
+      lifecycle: bigint;
+      activeSource: boolean;
+      path: string;
+    };
+  }> {
     const actor = owner.actor,
       term = owner.generation,
       mailbox = source.mailbox;
@@ -120,7 +132,20 @@ export class ReceivingPublication {
           state: Record<string, string>;
           intent: Record<string, unknown>;
         };
+        const [authority] = await db.execute(sql`
+          select a.configuration_version,a.receiving_lifecycle_version,b.remote_path,
+            maildock_receiving_active_source(a.id,b.id,${value.intent.message_id as string}::uuid,
+              ${value.intent.source_uid_validity as string}::bigint,${value.intent.source_uid as string}::bigint,
+              ${value.intent.source_configuration_binding as string}::bigint) as active_source
+          from mailboxes b join mail_accounts a on a.id=b.account_id where b.id=${mailbox}::uuid`);
+        if (!authority) throw new Error("Missing recovery account identity");
         return {
+          authority: {
+            configuration: BigInt(authority.configuration_version as string),
+            lifecycle: BigInt(authority.receiving_lifecycle_version as string),
+            activeSource: authority.active_source === true,
+            path: authority.remote_path as string,
+          },
           state: {
             epoch: BigInt(value.state.epoch),
             revision: BigInt(value.state.revision),

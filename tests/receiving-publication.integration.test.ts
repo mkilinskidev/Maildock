@@ -613,6 +613,9 @@ describe("R04 operation-specific receiving publication", () => {
         const [pending] =
           await reader`select status from message_commands where id=${command}`;
         expect(pending.status).toBe("pending");
+        expect(() =>
+          context.client.messageFlagsAdd("1", ["\\Seen"], { uid: true }),
+        ).toThrow("prepared durable claim");
         await context.retireSocket();
         await context.transaction(async (db) => {
           await db.execute(

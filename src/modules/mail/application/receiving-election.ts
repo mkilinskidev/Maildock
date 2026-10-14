@@ -319,7 +319,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     mailbox?: string,
   ) {
     const rows = await db.execute(sql`
-      select a.configuration_version from mail_accounts a
+      select a.configuration_version,a.receiving_lifecycle_version from mail_accounts a
       where a.id=${account}::uuid and a.enabled and a.configuration_version=${version}::bigint
         and (${mailbox ?? null}::uuid is null or exists (
           select 1 from mailboxes m where m.id=${mailbox ?? null}::uuid and m.account_id=a.id
@@ -327,6 +327,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     if (rows.length !== 1)
       throw new Error("Receiving configuration or lifecycle changed");
     this.assertCurrent();
+    return BigInt(rows[0].receiving_lifecycle_version as string);
   }
 
   private async operationConnection(operation: ReceivingOperation) {
@@ -336,14 +337,17 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         const identity = operation.identity;
         if ("ephemeral" in identity)
           return structuredClone(operation.diagnosticConnection!);
-        await this.validateConfiguration(
+        const receivingLifecycleVersion = await this.validateConfiguration(
           db,
           identity.account,
           identity.configurationVersion,
           identity.mailbox,
         );
         if (operation.diagnosticConnection)
-          return structuredClone(operation.diagnosticConnection);
+          return {
+            ...structuredClone(operation.diagnosticConnection),
+            receivingLifecycleVersion,
+          };
         if (!this.config.loadOperationConnection)
           throw new Error(
             "Receiving operation configuration loader unavailable",
@@ -354,7 +358,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           identity.configurationVersion,
         );
         this.assertCurrent();
-        return structuredClone(connection);
+        return { ...structuredClone(connection), receivingLifecycleVersion };
       },
       {
         deadline: Math.min(operation.deadline, performance.now() + 2000),
