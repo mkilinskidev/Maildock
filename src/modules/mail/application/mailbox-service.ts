@@ -6,7 +6,7 @@ import type { RemoteMailbox } from "../../accounts/domain/mail-provider";
 import { MailboxRoleService } from "./mailbox-role-service";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
-  mailboxMessages,
+  messagePlacementProjection as mailboxMessages,
   mailboxes,
 } from "../../../shared/infrastructure/database/schema";
 
@@ -166,7 +166,12 @@ export class MailboxService {
         })
         .from(mailboxMessages)
         .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
-        .where(eq(mailboxes.accountId, accountId))
+        .where(
+          and(
+            eq(mailboxes.accountId, accountId),
+            eq(mailboxMessages.actionHidden, false),
+          ),
+        )
         .groupBy(mailboxMessages.mailboxId),
     ]);
     const countsByMailbox = new Map(

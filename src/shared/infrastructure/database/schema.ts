@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  pgView,
   pgSequence,
   primaryKey,
   text,
@@ -174,6 +175,9 @@ export const messageAttachments = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    sourceConfigurationBinding: bigint("source_configuration_binding", {
+      mode: "bigint",
+    }),
   },
   (table) => [
     uniqueIndex("message_attachments_part_unique").on(
@@ -546,6 +550,9 @@ export const mailAccountOrderSequence = pgSequence("mail_account_order_seq", {
 export const mailAccounts = pgTable(
   "mail_accounts",
   {
+    configurationVersion: bigint("configuration_version", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
     receivingDueAt: timestamp("receiving_due_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -614,6 +621,10 @@ export const mailAccounts = pgTable(
       .notNull(),
   },
   (table) => [
+    check(
+      "mail_accounts_configuration_version_check",
+      sql`${table.configurationVersion}>0`,
+    ),
     check("mail_accounts_sort_order", sql`${table.sortOrder} > 0`),
     check(
       "mail_accounts_provider_type",
@@ -851,6 +862,9 @@ export const receivingCoordinator = pgTable(
 export const receivingMailboxes = pgTable(
   "receiving_mailboxes",
   {
+    configurationBinding: bigint("configuration_binding", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
     mailboxId: uuid("mailbox_id")
       .primaryKey()
       .references(() => mailboxes.id, { onDelete: "restrict" }),
@@ -861,6 +875,10 @@ export const receivingMailboxes = pgTable(
     reconcileAfter: bigint("reconcile_after", { mode: "bigint" }).notNull(),
   },
   (table) => [
+    check(
+      "receiving_mailboxes_configuration_binding_check",
+      sql`${table.configurationBinding}>0`,
+    ),
     check(
       "receiving_mailboxes_epoch_check",
       sql`${table.epoch} between 1 and 4294967295`,
@@ -1059,6 +1077,9 @@ export const conversationReferences = pgTable(
 export const mailboxMessages = pgTable(
   "mailbox_messages",
   {
+    configurationBinding: bigint("configuration_binding", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
     id: uuid("id").primaryKey(),
     mailboxId: uuid("mailbox_id")
       .notNull()
@@ -1085,6 +1106,10 @@ export const mailboxMessages = pgTable(
       .notNull(),
   },
   (table) => [
+    check(
+      "mailbox_messages_configuration_binding_check",
+      sql`${table.configurationBinding}>0`,
+    ),
     uniqueIndex("mailbox_messages_remote_identity_unique").on(
       table.mailboxId,
       table.uidValidity,
@@ -1148,6 +1173,14 @@ export const messageContents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    sourceMailboxId: uuid("source_mailbox_id").references(() => mailboxes.id, {
+      onDelete: "restrict",
+    }),
+    sourceUidValidity: bigint("source_uid_validity", { mode: "bigint" }),
+    sourceUid: bigint("source_uid", { mode: "bigint" }),
+    sourceConfigurationBinding: bigint("source_configuration_binding", {
+      mode: "bigint",
+    }),
   },
   (table) => [
     check(
@@ -1200,8 +1233,16 @@ export const messageCommands = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    sourceConfigurationBinding: bigint("source_configuration_binding", {
+      mode: "bigint",
+    }),
   },
   (table) => [
+    uniqueIndex("message_commands_active_source_unique")
+      .on(table.mailboxId, table.sourceUidValidity, table.sourceUid)
+      .where(
+        sql`${table.status} in ('pending','executing') and ${table.sourceConfigurationBinding} is not null`,
+      ),
     check(
       "message_commands_action",
       sql`${table.action} in ('mark_read', 'mark_unread', 'flag', 'unflag', 'archive', 'trash')`,
@@ -1458,3 +1499,49 @@ export const applicationEvents = pgTable(
     index("application_events_account_idx").on(t.accountId, t.createdAt, t.id),
   ],
 );
+
+/** SQL read projection; never a persistence target. */
+export const messagePlacementProjection = pgView(
+  "message_placement_projection",
+  {
+    configurationBinding: bigint("configuration_binding", { mode: "bigint" })
+      .default(sql`1`)
+      .notNull(),
+    id: uuid("id").primaryKey(),
+    mailboxId: uuid("mailbox_id").notNull(),
+    messageId: uuid("message_id").notNull(),
+    uidValidity: bigint("uid_validity", { mode: "bigint" }).notNull(),
+    uid: bigint("uid", { mode: "bigint" }).notNull(),
+    modseq: bigint("modseq", { mode: "bigint" }),
+    flags: text("flags").array().default([]).notNull(),
+    actionHidden: boolean("action_hidden").default(false).notNull(),
+    firstSynchronizedAt: timestamp("first_synchronized_at", {
+      withTimezone: true,
+    }).notNull(),
+    lastSynchronizedAt: timestamp("last_synchronized_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+).existing();
+
+export const messagePlacementProjectionFields = {
+  configurationBinding: messagePlacementProjection.configurationBinding,
+  id: messagePlacementProjection.id,
+  mailboxId: messagePlacementProjection.mailboxId,
+  messageId: messagePlacementProjection.messageId,
+  uidValidity: messagePlacementProjection.uidValidity,
+  uid: messagePlacementProjection.uid,
+  modseq: messagePlacementProjection.modseq,
+  flags: messagePlacementProjection.flags,
+  actionHidden: messagePlacementProjection.actionHidden,
+  firstSynchronizedAt: messagePlacementProjection.firstSynchronizedAt,
+  lastSynchronizedAt: messagePlacementProjection.lastSynchronizedAt,
+  createdAt: messagePlacementProjection.createdAt,
+  updatedAt: messagePlacementProjection.updatedAt,
+};

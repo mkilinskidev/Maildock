@@ -13,7 +13,6 @@ import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
   mailboxes,
   messages,
-  mailboxMessages,
   messageContents,
 } from "@/shared/infrastructure/database/schema";
 import { SearchService } from "@/modules/mail/application/search-service";
@@ -58,16 +57,10 @@ describe("Phase 2I PostgreSQL global search", () => {
     return id;
   }
   async function placement(id: string, box: string) {
-    await database.db.insert(mailboxMessages).values({
-      id: randomUUID(),
-      messageId: id,
-      mailboxId: box,
-      uid: BigInt(++uid),
-      uidValidity: 1n,
-      firstSynchronizedAt: new Date(),
-      lastSynchronizedAt: new Date(),
-      flags: ["\\Seen"],
-    });
+    // This helper also seeds rows before the final forward migration. Use only
+    // historical placement columns, independent of the current Drizzle schema.
+    await database.client`insert into mailbox_messages(id,message_id,mailbox_id,uid,uid_validity,first_synchronized_at,last_synchronized_at,flags)
+      values(${randomUUID()},${id},${box},${String(++uid)},1,now(),now(),ARRAY['\\Seen'])`;
   }
   beforeAll(async () => {
     container = await new GenericContainer("postgres:18.6-bookworm")

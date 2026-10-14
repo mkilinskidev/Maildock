@@ -14,6 +14,8 @@ import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailboxMessages,
+  messagePlacementProjection,
+  messagePlacementProjectionFields,
   mailAccounts,
   mailboxes,
   messages,
@@ -435,10 +437,13 @@ export class MessageService {
           hasAttachments: messages.hasAttachments,
           snippet: sql<string | null>`left(${messageContents.plainText}, 160)`,
         },
-        placement: mailboxMessages,
+        placement: messagePlacementProjectionFields,
       })
-      .from(mailboxMessages)
-      .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
+      .from(messagePlacementProjection)
+      .innerJoin(
+        messages,
+        eq(messages.id, messagePlacementProjection.messageId),
+      )
       .leftJoin(
         messageContents,
         and(
@@ -448,9 +453,9 @@ export class MessageService {
       )
       .where(
         and(
-          eq(mailboxMessages.mailboxId, mailboxId),
+          eq(messagePlacementProjection.mailboxId, mailboxId),
           eq(messages.accountId, accountId),
-          eq(mailboxMessages.actionHidden, false),
+          eq(messagePlacementProjection.actionHidden, false),
           cursorValue
             ? or(
                 lt(messages.internalDate, cursorValue[0]),
@@ -499,7 +504,7 @@ export class MessageService {
     }
     const rows = await this.database.execute(sql`
       SELECT m.*, a.display_name AS account_name, p.mailbox_id, p.flags, left(c.plain_text, 160) AS snippet
-      FROM messages m JOIN mailbox_messages p ON p.message_id = m.id
+      FROM messages m JOIN message_placement_projection p ON p.message_id = m.id
       JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
       JOIN mail_accounts a ON a.id = m.account_id
       LEFT JOIN message_contents c ON c.message_id = m.id AND c.status = 'ready'

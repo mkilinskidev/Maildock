@@ -1,3 +1,8 @@
+import {
+  receivingAccountEnrolled,
+  receivingIntentSource,
+  receivingRequestRejected,
+} from "./receiving-intents";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -32,6 +37,7 @@ export class MessageCommandService {
     ) => Promise<void>,
     private readonly accounts?: AccountsService,
     private readonly provider?: MailProvider,
+    private readonly receivingWake?: (accountId: string) => Promise<unknown>,
   ) {}
 
   async create(
@@ -40,127 +46,164 @@ export class MessageCommandService {
     messageId: string,
     action: MessageAction,
   ) {
-    const command = await this.database.transaction(async (tx) => {
-      const [account] = await tx
-        .select()
-        .from(mailAccounts)
-        .where(eq(mailAccounts.id, accountId))
-        .limit(1);
-      const [mailbox] = await tx
-        .select()
-        .from(mailboxes)
-        .where(
-          and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)),
-        )
-        .limit(1);
-      if (
-        !account?.enabled ||
-        !mailbox?.selectable ||
-        mailbox.lifecycleStatus !== "active" ||
-        mailbox.uidValidity === null ||
-        mailbox.recentSyncUidValidity !== mailbox.uidValidity
-      )
-        throw new MessageCommandUnavailableError(
-          "This mailbox is not ready for message actions.",
-        );
-      const [placement] = await tx
-        .select()
-        .from(mailboxMessages)
-        .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
-        .where(
-          and(
-            eq(mailboxMessages.mailboxId, mailboxId),
-            eq(mailboxMessages.messageId, messageId),
-            eq(messages.accountId, accountId),
-            eq(mailboxMessages.uidValidity, mailbox.uidValidity),
-          ),
-        )
-        .limit(1);
-      if (!placement)
-        throw new MessageCommandUnavailableError(
-          "Message is no longer in this mailbox.",
-        );
-      const active = await tx
-        .select({ id: messageCommands.id })
-        .from(messageCommands)
-        .where(
-          and(
-            eq(messageCommands.placementId, placement.mailbox_messages.id),
-            inArray(messageCommands.status, ["pending", "executing"]),
-          ),
-        )
-        .limit(1);
-      if (active.length || placement.mailbox_messages.actionHidden)
-        throw new MessageCommandUnavailableError(
-          "A message action is already in progress.",
-        );
-      let destination: typeof mailbox | undefined;
-      if (moveActions.has(action)) {
-        const [mapping] = await tx
+    let enrolled = false;
+    let command;
+    try {
+      command = await this.database.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('lock_timeout','2000',true)`);
+        const [account] = await tx
           .select()
-          .from(mailboxRoles)
+          .from(mailAccounts)
+          .where(eq(mailAccounts.id, accountId))
+          .limit(1)
+          .for("share");
+        const [mailbox] = await tx
+          .select()
+          .from(mailboxes)
           .where(
             and(
-              eq(mailboxRoles.accountId, accountId),
-              eq(mailboxRoles.role, action),
+              eq(mailboxes.id, mailboxId),
+              eq(mailboxes.accountId, accountId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        enrolled = await receivingAccountEnrolled(tx, accountId);
+        if (
+          !account?.enabled ||
+          !mailbox?.selectable ||
+          mailbox.lifecycleStatus !== "active" ||
+          mailbox.uidValidity === null ||
+          (!enrolled && mailbox.recentSyncUidValidity !== mailbox.uidValidity)
+        )
+          throw new MessageCommandUnavailableError(
+            "This mailbox is not ready for message actions.",
+          );
+        if (enrolled)
+          await receivingIntentSource(tx, accountId, mailboxId, messageId);
+        const [placement] = await tx
+          .select()
+          .from(mailboxMessages)
+          .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
+          .where(
+            and(
+              eq(mailboxMessages.mailboxId, mailboxId),
+              eq(mailboxMessages.messageId, messageId),
+              eq(messages.accountId, accountId),
+              eq(mailboxMessages.uidValidity, mailbox.uidValidity),
             ),
           )
           .limit(1);
-        const candidates = await tx
-          .select()
-          .from(mailboxes)
-          .where(eq(mailboxes.accountId, accountId));
-        const resolved = resolveMappedMailbox(
-          accountId,
-          action as "archive" | "trash",
-          mapping,
-          candidates,
-        );
-        destination =
-          account.imapCapabilities.includes("MOVE") &&
-          resolved?.id !== mailboxId
-            ? (resolved ?? undefined)
-            : undefined;
-        if (!destination)
+        if (!placement)
           throw new MessageCommandUnavailableError(
-            "The configured system mailbox or IMAP MOVE is unavailable.",
+            "Message is no longer in this mailbox.",
           );
-      }
-      const originalFlags = placement.mailbox_messages.flags;
-      const flag =
-        action === "mark_read" || action === "mark_unread"
-          ? "\\Seen"
-          : "\\Flagged";
-      const add = action === "mark_read" || action === "flag";
-      const flags = moveActions.has(action)
-        ? originalFlags
-        : add
-          ? [...new Set([...originalFlags, flag])]
-          : originalFlags.filter((value) => value !== flag);
-      const id = randomUUID();
-      const now = new Date();
-      await tx.insert(messageCommands).values({
-        id,
-        accountId,
-        mailboxId,
-        placementId: placement.mailbox_messages.id,
-        messageId,
-        action,
-        sourcePath: mailbox.remotePath,
-        sourceUidValidity: mailbox.uidValidity,
-        sourceUid: placement.mailbox_messages.uid,
-        destinationMailboxId: destination?.id,
-        destinationPath: destination?.remotePath,
-        originalFlags,
-        createdAt: now,
-        updatedAt: now,
+        const active = await tx
+          .select({
+            id: messageCommands.id,
+            action: messageCommands.action,
+            status: messageCommands.status,
+          })
+          .from(messageCommands)
+          .where(
+            and(
+              eq(messageCommands.placementId, placement.mailbox_messages.id),
+              inArray(messageCommands.status, ["pending", "executing"]),
+            ),
+          )
+          .limit(1);
+        if (enrolled && active[0]?.action === action)
+          return { id: active[0].id, status: "pending" as const };
+        if (active.length || placement.mailbox_messages.actionHidden)
+          throw new MessageCommandUnavailableError(
+            "A message action is already in progress.",
+          );
+        let destination: typeof mailbox | undefined;
+        if (moveActions.has(action)) {
+          const [mapping] = await tx
+            .select()
+            .from(mailboxRoles)
+            .where(
+              and(
+                eq(mailboxRoles.accountId, accountId),
+                eq(mailboxRoles.role, action),
+              ),
+            )
+            .limit(1);
+          const candidates = await tx
+            .select()
+            .from(mailboxes)
+            .where(eq(mailboxes.accountId, accountId));
+          const resolved = resolveMappedMailbox(
+            accountId,
+            action as "archive" | "trash",
+            mapping,
+            candidates,
+          );
+          destination =
+            account.imapCapabilities.includes("MOVE") &&
+            resolved?.id !== mailboxId
+              ? (resolved ?? undefined)
+              : undefined;
+          if (!destination)
+            throw new MessageCommandUnavailableError(
+              "The configured system mailbox or IMAP MOVE is unavailable.",
+            );
+        }
+        const originalFlags = placement.mailbox_messages.flags;
+        const flag =
+          action === "mark_read" || action === "mark_unread"
+            ? "\\Seen"
+            : "\\Flagged";
+        const add = action === "mark_read" || action === "flag";
+        const flags = moveActions.has(action)
+          ? originalFlags
+          : add
+            ? [...new Set([...originalFlags, flag])]
+            : originalFlags.filter((value) => value !== flag);
+        const id = randomUUID();
+        const now = new Date();
+        await tx.insert(messageCommands).values({
+          id,
+          accountId,
+          mailboxId,
+          placementId: placement.mailbox_messages.id,
+          messageId,
+          action,
+          sourcePath: mailbox.remotePath,
+          sourceUidValidity: mailbox.uidValidity,
+          sourceUid: placement.mailbox_messages.uid,
+          destinationMailboxId: destination?.id,
+          destinationPath: destination?.remotePath,
+          originalFlags,
+          sourceConfigurationBinding: enrolled
+            ? placement.mailbox_messages.configurationBinding
+            : null,
+          createdAt: now,
+          updatedAt: now,
+        });
+        if (!enrolled)
+          await tx
+            .update(mailboxMessages)
+            .set({
+              flags,
+              actionHidden: moveActions.has(action),
+              updatedAt: now,
+            })
+            .where(eq(mailboxMessages.id, placement.mailbox_messages.id));
+        return { id, status: "pending" as const };
       });
-      await tx
-        .update(mailboxMessages)
-        .set({ flags, actionHidden: moveActions.has(action), updatedAt: now })
-        .where(eq(mailboxMessages.id, placement.mailbox_messages.id));
-      return { id, status: "pending" as const };
-    });
+    } catch (error) {
+      if (receivingRequestRejected(error))
+        throw new MessageCommandUnavailableError(
+          "Message is no longer in this mailbox.",
+        );
+      throw error;
+    }
+    if (enrolled) {
+      await this.receivingWake?.(accountId).catch(() => undefined);
+      return command;
+    }
     // A failed enqueue leaves a durable pending command for the worker poller.
     await this.enqueue(command.id).catch(() => undefined);
     return command;
@@ -204,19 +247,24 @@ export class MessageCommandService {
   }
 
   async run(id: string) {
-    if (!this.accounts || !this.provider?.mutateMessage)
-      throw new Error("Message mutation provider is unavailable.");
     const [initial] = await this.database
       .select()
       .from(messageCommands)
       .where(eq(messageCommands.id, id))
       .limit(1);
     if (
+      initial &&
+      (await receivingAccountEnrolled(this.database, initial.accountId))
+    )
+      return;
+    if (
       !initial ||
       initial.status === "failed" ||
       initial.status === "succeeded"
     )
       return;
+    if (!this.accounts || !this.provider?.mutateMessage)
+      throw new Error("Message mutation provider is unavailable.");
     if (
       moveActions.has(initial.action as MessageAction) &&
       initial.status === "executing"
@@ -410,7 +458,10 @@ export class MessageCommandService {
           updatedAt: new Date(),
         })
         .where(eq(messageCommands.id, command.id));
-      if (command.placementId)
+      if (
+        command.placementId &&
+        !(await receivingAccountEnrolled(tx, command.accountId))
+      )
         await tx
           .update(mailboxMessages)
           .set({

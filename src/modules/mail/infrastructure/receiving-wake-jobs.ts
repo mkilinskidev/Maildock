@@ -1,4 +1,7 @@
-import type { PgBoss } from "pg-boss";
+import { PgBoss } from "pg-boss";
+import type { AppConfig } from "../../../shared/infrastructure/config/config";
+import { createLogger } from "../../../shared/infrastructure/logging/logger";
+import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { z } from "zod";
 import type {
   ReceivingDemand,
@@ -31,6 +34,32 @@ export async function enqueueReceivingWake(boss: PgBoss, accountId: string) {
     receivingWakePayload.parse({ version: 1, accountId }),
     { singletonKey: accountId, priority: 10 },
   );
+}
+
+/** Transport only: R02 callers already committed intent and Stage 4A demand.
+ * It must never increment generation or submit a legacy business job. */
+export class PgBossReceivingWakeProducer {
+  private readonly boss: PgBoss;
+  private started?: Promise<void>;
+  constructor(config: Pick<AppConfig, "databaseUrl">) {
+    this.boss = new PgBoss({
+      connectionString: config.databaseUrl,
+      application_name: "maildock-web-receiving-intent-wake",
+    });
+    this.boss.on("error", (error) =>
+      logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
+    );
+  }
+  async send(accountId: string) {
+    this.started ??= this.boss.start().then(() => undefined);
+    try {
+      await this.started;
+    } catch (error) {
+      this.started = undefined;
+      throw error;
+    }
+    return enqueueReceivingWake(this.boss, accountId);
+  }
 }
 
 /** Producer adapter for an already-started JobRuntime. The function call is

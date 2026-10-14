@@ -46,7 +46,7 @@ export class SearchService {
         CROSS JOIN q
         JOIN LATERAL (
           SELECT mb.id AS mailbox_id, mb.name AS mailbox_name, mm.flags
-          FROM mailbox_messages mm JOIN mailboxes mb ON mb.id = mm.mailbox_id
+          FROM message_placement_projection mm JOIN mailboxes mb ON mb.id = mm.mailbox_id
           WHERE mm.message_id = m.id AND mb.account_id = m.account_id AND NOT mm.action_hidden
           ORDER BY (mb.selectable AND mb.lifecycle_status = 'active') DESC,
             mb.selectable DESC, mb.remote_path COLLATE "C", mb.id, mm.id

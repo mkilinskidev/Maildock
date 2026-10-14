@@ -1,4 +1,8 @@
-import { and, eq, ne } from "drizzle-orm";
+import {
+  receivingAccountEnrolled,
+  receivingRequestRejected,
+} from "./receiving-intents";
+import { and, eq, ne, sql } from "drizzle-orm";
 import {
   persistAttachmentMetadata,
   listAttachmentMetadata,
@@ -12,7 +16,8 @@ import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailAccounts,
-  mailboxMessages,
+  messagePlacementProjection as mailboxMessages,
+  messagePlacementProjectionFields,
   mailboxes,
   messageContents,
   messages,
@@ -43,6 +48,7 @@ export class MessageContentService {
     private readonly accounts?: AccountsService,
     private readonly provider?: MailProvider,
     private readonly config?: Pick<AppConfig, "maxMessageTextPartBytes">,
+    private readonly receivingWake?: (accountId: string) => Promise<unknown>,
   ) {}
 
   private async placement(
@@ -54,7 +60,7 @@ export class MessageContentService {
       .select({
         account: mailAccounts,
         mailbox: mailboxes,
-        placement: mailboxMessages,
+        placement: messagePlacementProjectionFields,
         message: messages,
         content: messageContents,
       })
@@ -82,14 +88,18 @@ export class MessageContentService {
       mailboxId,
       messageId,
     );
-    await persistAttachmentMetadata(
-      this.database,
-      messageId,
-      mailboxId,
-      placement.uidValidity,
-      placement.uid,
-      message.mimeStructure,
-    );
+    const enrolled = await receivingAccountEnrolled(this.database, accountId);
+    if (enrolled && placement.actionHidden)
+      throw new MessagePlacementNotFoundError();
+    if (!enrolled)
+      await persistAttachmentMetadata(
+        this.database,
+        messageId,
+        mailboxId,
+        placement.uidValidity,
+        placement.uid,
+        message.mimeStructure,
+      );
     return {
       id: message.id,
       subject: message.subject,
@@ -106,6 +116,7 @@ export class MessageContentService {
       attachments: await listAttachmentMetadata(this.database, messageId),
       content: {
         status:
+          !enrolled &&
           content?.status === "ready" &&
           content.sanitizedHtml !== null &&
           content.policyVersion !== EMAIL_HTML_POLICY &&
@@ -122,6 +133,24 @@ export class MessageContentService {
   }
 
   async request(accountId: string, mailboxId: string, messageId: string) {
+    if (await receivingAccountEnrolled(this.database, accountId)) {
+      let requested;
+      try {
+        const [row] = await this.database.execute(
+          sql`select maildock_receiving_content_request(${accountId}::uuid,${mailboxId}::uuid,${messageId}::uuid) as requested`,
+        );
+        requested = row?.requested === true;
+      } catch (error) {
+        if (receivingRequestRejected(error))
+          throw new MessageContentUnavailableError(
+            "The source mailbox placement is unavailable.",
+          );
+        throw error;
+      }
+      if (requested)
+        await this.receivingWake?.(accountId).catch(() => undefined);
+      return requested;
+    }
     const row = await this.placement(accountId, mailboxId, messageId);
     if (!row.account.enabled)
       throw new MessageContentUnavailableError("This account is disabled.");
@@ -167,6 +196,7 @@ export class MessageContentService {
   }
 
   async run(accountId: string, mailboxId: string, messageId: string) {
+    if (await receivingAccountEnrolled(this.database, accountId)) return;
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Content worker dependencies are unavailable.");
     try {

@@ -1,3 +1,4 @@
+import { PgBossReceivingWakeProducer } from "../../mail/infrastructure/receiving-wake-jobs";
 import { createOAuthComposition } from "./oauth-composition";
 import { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { createLogger } from "../../../shared/infrastructure/logging/logger";
@@ -26,6 +27,9 @@ import { OutgoingMessageService } from "@/modules/mail/application/outgoing-mess
 import { PgBossOutgoingScheduler } from "@/modules/mail/infrastructure/outgoing-jobs";
 
 const config = getConfig();
+const receivingWakeProducer = new PgBossReceivingWakeProducer(config);
+const receivingWake = (accountId: string) =>
+  receivingWakeProducer.send(accountId);
 const outgoingScheduler = new PgBossOutgoingScheduler(config);
 export const blobStorage = new LocalBlobStorage(config.attachmentsPath);
 const attachmentScheduler = new PgBossAttachmentScheduler(config);
@@ -34,6 +38,11 @@ export const attachmentService = new AttachmentService(
   blobStorage,
   config,
   (id) => attachmentScheduler.enqueue(id),
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  receivingWake,
 );
 export const outgoingMessageService = new OutgoingMessageService(
   db,
@@ -76,6 +85,10 @@ export const messageService = new MessageService(
 export const messageContentService = new MessageContentService(
   db,
   new PgBossContentScheduler(config),
+  undefined,
+  undefined,
+  undefined,
+  receivingWake,
 );
 const commandScheduler = new PgBossMessageCommandScheduler(config);
 const deltaScheduler = new PgBossDeltaSyncScheduler(config, db);
@@ -85,6 +98,9 @@ export const messageCommandService = new MessageCommandService(
   async (accountId, mailboxId) => {
     await deltaScheduler.schedule(accountId, mailboxId, "manual");
   },
+  undefined,
+  undefined,
+  receivingWake,
 );
 
 export const composePreparationService = new ComposePreparationService(

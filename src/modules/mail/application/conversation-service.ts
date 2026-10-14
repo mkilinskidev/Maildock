@@ -67,13 +67,15 @@ export class ConversationService {
           row_number() OVER (PARTITION BY m.account_id, cm.conversation_id ORDER BY m.internal_date DESC, m.id DESC) AS rank,
           count(*) OVER (PARTITION BY m.account_id, cm.conversation_id)::int AS message_count,
           bool_and(p.flags @> ARRAY['\\Seen']::text[]) OVER (PARTITION BY m.account_id, cm.conversation_id) AS seen
-        FROM mailbox_messages p JOIN messages m ON m.id = p.message_id
+        FROM message_placement_projection p JOIN messages m ON m.id = p.message_id
         JOIN conversation_members cm ON cm.message_id = m.id AND cm.account_id = m.account_id
         JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
         JOIN mail_accounts a ON a.id = m.account_id
         WHERE ${allInboxes ? sql`a.enabled AND b.selectable AND b.lifecycle_status = 'active' AND upper(b.remote_path) = 'INBOX'` : sql`p.mailbox_id = ${mailboxId}::uuid AND m.account_id = ${accountId}::uuid`} AND NOT p.action_hidden
       ) SELECT relevant.*, (SELECT count(*)::int FROM conversation_members members
-        WHERE members.account_id = relevant.account_id AND members.conversation_id = relevant.conversation_id) AS conversation_message_count
+        WHERE members.account_id = relevant.account_id AND members.conversation_id = relevant.conversation_id
+          AND (NOT maildock_receiving_account_enrolled(members.account_id) OR EXISTS(
+            SELECT FROM message_placement_projection visible WHERE visible.message_id=members.message_id AND NOT visible.action_hidden))) AS conversation_message_count
         FROM relevant WHERE rank = 1
         ${after ? sql`AND (internal_date, id) < (${after[0]}::timestamptz, ${after[1]}::uuid)` : sql``}
       ORDER BY internal_date DESC, id DESC LIMIT ${limit + 1}`);
@@ -122,13 +124,14 @@ export class ConversationService {
         ${metadataOnly ? sql`NULL::text AS content_status, NULL::text AS plain_text, NULL::text AS sanitized_html` : sql`c.status AS content_status, c.plain_text, c.sanitized_html`}
       FROM conversation_members cm JOIN messages m ON m.id = cm.message_id
       LEFT JOIN LATERAL (
-        SELECT p.mailbox_id, p.flags FROM mailbox_messages p JOIN mailboxes b ON b.id = p.mailbox_id
+        SELECT p.mailbox_id, p.flags FROM message_placement_projection p JOIN mailboxes b ON b.id = p.mailbox_id
         WHERE p.message_id = m.id AND NOT p.action_hidden AND b.account_id = ${accountId}::uuid
         AND b.lifecycle_status = 'active' AND b.selectable
         ORDER BY ${preferredMailboxId ? sql`(p.mailbox_id = ${preferredMailboxId}::uuid) DESC,` : sql``} p.mailbox_id LIMIT 1
       ) p ON true
       ${metadataOnly ? sql`` : sql`LEFT JOIN message_contents c ON c.message_id = m.id`}
       WHERE cm.account_id = ${accountId}::uuid AND m.account_id = ${accountId}::uuid
+        AND (NOT maildock_receiving_account_enrolled(m.account_id) OR p.mailbox_id IS NOT NULL)
         AND cm.conversation_id = coalesce(
           (SELECT coalesce(merged_into, id) FROM conversations WHERE id = ${conversationId}::uuid AND account_id = ${accountId}::uuid), ${conversationId}::uuid)
       ORDER BY coalesce(m.sent_at, m.internal_date), m.id`);

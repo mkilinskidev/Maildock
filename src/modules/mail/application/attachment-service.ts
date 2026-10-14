@@ -1,11 +1,15 @@
 import {
+  receivingAccountEnrolled,
+  receivingRequestRejected,
+} from "./receiving-intents";
+import {
   SAFE_INLINE_IMAGE_TYPES,
   isSafeRaster,
   inlineRasterType,
 } from "../infrastructure/render-email-document";
 import { normalizeContentId } from "../infrastructure/sanitize-email-html";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   draftAttachments,
@@ -65,6 +69,7 @@ export class AttachmentService {
       accountId: string,
       mailboxId: string,
     ) => Promise<unknown>,
+    private readonly receivingWake?: (accountId: string) => Promise<unknown>,
   ) {}
 
   private async lookup(db: Database, id: string) {
@@ -120,6 +125,22 @@ export class AttachmentService {
     const row = await this.lookup(this.db, id);
     if (!row.account.enabled)
       throw new AttachmentUnavailableError("This account is disabled.");
+    if (await receivingAccountEnrolled(this.db, row.account.id)) {
+      try {
+        const [result] = await this.db.execute(
+          sql`select maildock_receiving_attachment_request(${row.account.id}::uuid,${id}::uuid) as requested`,
+        );
+        if (result?.requested)
+          await this.receivingWake?.(row.account.id).catch(() => undefined);
+      } catch (error) {
+        if (receivingRequestRejected(error))
+          throw new AttachmentUnavailableError(
+            "The source mailbox placement is unavailable.",
+          );
+        throw error;
+      }
+      return;
+    }
     if (row.attachment.status === "ready" && row.blob) {
       try {
         await readVerifiedBlob(
@@ -310,7 +331,12 @@ export class AttachmentService {
       .from(messageAttachments)
       .where(inArray(messageAttachments.status, ["pending", "fetching"]))
       .limit(100);
-    for (const row of rows) await this.enqueue(row.id).catch(() => undefined);
+    for (const row of rows) {
+      const source = await this.lookup(this.db, row.id);
+      if (await receivingAccountEnrolled(this.db, source.account.id))
+        await this.receivingWake?.(source.account.id).catch(() => undefined);
+      else await this.enqueue(row.id).catch(() => undefined);
+    }
   }
   async run(id: string) {
     if (!this.lock || !this.accounts || !this.provider?.fetchAttachment)
@@ -322,6 +348,7 @@ export class AttachmentService {
       !["pending", "fetching"].includes(candidate.attachment.status)
     )
       return;
+    if (await receivingAccountEnrolled(this.db, candidate.account.id)) return;
     let account:
       | Awaited<ReturnType<AccountsService["getProviderImapAccountForWork"]>>
       | undefined;

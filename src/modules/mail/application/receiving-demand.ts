@@ -74,6 +74,8 @@ const receivingEligibility = sql`
   ) or exists(select from message_commands c where c.account_id=a.id
     and c.status in ('pending','executing'))
   or exists(select from message_contents c join messages msg on msg.id=c.message_id
+    where msg.account_id=a.id and c.status in ('pending','fetching'))
+  or exists(select from message_attachments c join messages msg on msg.id=c.message_id
     where msg.account_id=a.id and c.status in ('pending','fetching'))`;
 
 /** Isolated repair driver; Stage 4C owns its eventual startup/timer lifecycle. */
