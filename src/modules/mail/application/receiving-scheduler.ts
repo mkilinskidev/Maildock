@@ -1,4 +1,13 @@
 import {
+  runReceivingOperation,
+  validateReceivingOperation,
+  type ReceivingOperation,
+  type ReceivingOperationBoundary,
+  type ReceivingOperationHandlers,
+  type ReceivingOperationKind,
+  type ReceivingOperationResult,
+} from "./receiving-operation";
+import {
   receivingTiming,
   runOneReceivingTurn,
   type ReceivingCoordinatorConfig,
@@ -14,6 +23,13 @@ export const RECEIVING_SCHEDULER_DEFAULTS = Object.freeze({
 });
 
 export type ReceivingWorkKind = "fresh" | "history";
+type Pending = {
+  at: number;
+  operation: ReceivingOperation;
+  resolve: (result: ReceivingOperationResult) => void;
+  reject: (error: unknown) => void;
+  cleanup: () => void;
+};
 type AccountConfig = Omit<ReceivingCoordinatorConfig, "executor">;
 type Account = {
   config: ReceivingCoordinatorConfig;
@@ -28,16 +44,16 @@ type Account = {
 };
 export type ReceivingAdmission = Readonly<{
   account: string;
-  kind: ReceivingWorkKind;
+  kind: ReceivingWorkKind | ReceivingOperationKind;
   protectedHistory: boolean;
   waitMs: number;
   active: number;
   at: number;
 }>;
 
-/** Isolated, single-use shared selector. Future user work belongs at the
- * current-priority selection boundary in select(), under these same allocations;
- * this API deliberately accepts only receiving work, not command callbacks.
+/** Isolated, single-use shared selector. Typed user/maintenance units share the
+ * current-priority selection boundary, account locks and global allocations;
+ * submitters cannot provide execution callbacks.
  * Caller owns one shared Stage 1 executor and its independent DB capacity. */
 export class ReceivingScheduler {
   private readonly accounts: Account[];
@@ -51,6 +67,10 @@ export class ReceivingScheduler {
   private historyCursor = 0;
   private lastProtected = false;
   private protectedActive = false;
+  private readonly pending: Pending[] = [];
+  private readonly activeIdentities = new Set<string>();
+  private lastUser = false;
+  private readonly requests = new Set<string>();
 
   constructor(
     input: Readonly<{
@@ -66,10 +86,22 @@ export class ReceivingScheduler {
       onAdmission?: (admission: ReceivingAdmission) => void;
       /** Elected lifecycle validates DB ownership before allocating a turn. */
       beforeAdmission?: () => Promise<boolean>;
+      operations?: Readonly<{
+        boundary: ReceivingOperationBoundary;
+        handlers: ReceivingOperationHandlers;
+      }>;
+      /** Elected lifetimes reserve one aggregate SQL admission for control. */
+      controlHeadroom?: boolean;
     }>,
   ) {
     this.config = {
       ...input,
+      operations: input.operations
+        ? {
+            ...input.operations,
+            handlers: Object.freeze({ ...input.operations.handlers }),
+          }
+        : undefined,
       tuning: { ...RECEIVING_SCHEDULER_DEFAULTS, ...input.tuning },
     };
     for (const value of Object.values(this.config.tuning))
@@ -77,6 +109,7 @@ export class ReceivingScheduler {
         throw new Error("Invalid receiving scheduler configuration");
     if (
       this.config.tuning.workers > 16 ||
+      this.config.tuning.maxAccounts > 128 ||
       input.accounts.length > this.config.tuning.maxAccounts ||
       this.config.tuning.historyTurnMs > 10_000
     )
@@ -86,11 +119,13 @@ export class ReceivingScheduler {
       throw new Error("Duplicate receiving account");
     // Each active turn can request at most one DB transaction at a time.
     // Stage 1 permits D executing plus D queued transactions. Conservatively
-    // cap whole turns at 2D so even simultaneous publications fit that bound.
-    // D remains independently configured; it is neither W nor the app pool.
+    // Elected/typed admission caps data at 2D-1 and serializes one control
+    // admission separately. The original metadata-only harness has no control
+    // request and retains its accepted 2D profile. Neither reserves a runner.
     this.limit = Math.min(
       this.config.tuning.workers,
-      2 * input.executor.capacity,
+      2 * input.executor.capacity -
+        ((input.controlHeadroom ?? !!input.operations) ? 1 : 0),
     );
     this.accounts = input.accounts.map((config) => {
       const timing = receivingTiming(config.timing);
@@ -122,6 +157,13 @@ export class ReceivingScheduler {
   async stop(): Promise<void> {
     this.cancellation.abort();
     this.wake?.();
+    if (!this.lifetime) {
+      for (const pending of this.pending.splice(0)) {
+        this.requests.delete(pending.operation.requestId);
+        pending.cleanup();
+        pending.reject(new Error("Receiving owner retired"));
+      }
+    }
     await this.lifetime;
   }
 
@@ -135,9 +177,78 @@ export class ReceivingScheduler {
     this.wake?.();
   }
 
+  /** Typed bounded memory admission, never a second executing route. */
+  submit(operation: ReceivingOperation): Promise<ReceivingOperationResult> {
+    try {
+      validateReceivingOperation(operation);
+      if (
+        this.cancellation.signal.aborted ||
+        !this.config.operations?.handlers[operation.kind]
+      )
+        throw new Error("Receiving operation unavailable");
+      if (
+        this.pending.length + this.active.size >=
+        this.config.tuning.maxAccounts
+      )
+        throw new Error("Receiving pending capacity exceeded");
+      if (this.requests.has(operation.requestId))
+        throw new Error("Duplicate receiving request");
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    // Capture caller-owned input while keeping AbortSignal out of cloning.
+    const copy = structuredClone({ ...operation, signal: undefined });
+    Object.freeze(copy.identity);
+    if (copy.diagnosticConnection) {
+      Object.freeze(copy.diagnosticConnection.credential);
+      Object.freeze(copy.diagnosticConnection);
+    }
+    const captured = Object.freeze({
+      ...copy,
+      signal: operation.signal,
+    }) as ReceivingOperation;
+    return new Promise<ReceivingOperationResult>((resolve, reject) => {
+      this.requests.add(operation.requestId);
+      const cancel = () => {
+        const index = this.pending.indexOf(pending);
+        if (index < 0) return; // active operation retains capacity until settlement
+        this.pending.splice(index, 1);
+        this.requests.delete(operation.requestId);
+        pending.cleanup();
+        reject(new Error("Receiving pending operation cancelled or expired"));
+        this.wake?.();
+      };
+      const timer = setTimeout(
+        cancel,
+        Math.max(0, operation.deadline - performance.now()),
+      );
+      const pending: Pending = {
+        at: performance.now(),
+        operation: captured,
+        resolve,
+        reject,
+        cleanup: () => {
+          clearTimeout(timer);
+          operation.signal?.removeEventListener("abort", cancel);
+        },
+      };
+      this.pending.push(pending);
+      operation.signal?.addEventListener("abort", cancel, { once: true });
+      if (operation.signal?.aborted) cancel();
+      this.wake?.();
+    });
+  }
+
+  private identity(operation: ReceivingOperation) {
+    return "account" in operation.identity
+      ? operation.identity.account
+      : `ephemeral:${operation.identity.ephemeral}`;
+  }
+
   get snapshot() {
     return Object.freeze({
       active: this.active.size,
+      pending: this.pending.length,
       accounts: this.accounts.length,
       limit: this.limit,
       stopped: this.cancellation.signal.aborted,
@@ -172,7 +283,10 @@ export class ReceivingScheduler {
 
   private select(now: number) {
     const available = this.accounts.filter(
-      (a) => !a.active && a.retryAt <= now,
+      (a) =>
+        !a.active &&
+        !this.activeIdentities.has(a.config.account) &&
+        a.retryAt <= now,
     );
     const fresh = available.filter((a) => a.freshDue <= now);
     // Grant each runnable startup account its first current opportunity before
@@ -207,10 +321,17 @@ export class ReceivingScheduler {
           Math.min(a.timing.operationMs, this.config.tuning.historyTurnMs) <=
           this.config.tuning.freshWaitGuardMs,
     );
-    // Narrow current-priority boundary: future user work must be selected here,
-    // never admitted by a parallel callback or another account loop.
+    const hasUser = this.pending.some(
+      (p) =>
+        !this.activeIdentities.has(this.identity(p.operation)) &&
+        !this.accounts.some(
+          (a) => a.config.account === this.identity(p.operation) && a.active,
+        ),
+    );
+    // Protected history precedes current/user rotation and retains the accepted
+    // age, fresh-wait guard, tie rotation and no-consecutive-exception rules.
     if (
-      fresh.length &&
+      (fresh.length || hasUser) &&
       !this.lastProtected &&
       !this.protectedActive &&
       protectedCandidates.length
@@ -229,6 +350,14 @@ export class ReceivingScheduler {
         protectedHistory: true,
       };
     }
+    const pending = this.pending.find(
+      (p) =>
+        !this.activeIdentities.has(this.identity(p.operation)) &&
+        !this.accounts.some(
+          (a) => a.config.account === this.identity(p.operation) && a.active,
+        ),
+    );
+    if (pending && (!fresh.length || !this.lastUser)) return { pending };
     if (fresh.length)
       return {
         account: this.rotate(fresh, "fresh")!,
@@ -246,7 +375,12 @@ export class ReceivingScheduler {
   private admit(
     selection: NonNullable<ReturnType<ReceivingScheduler["select"]>>,
   ) {
+    if (selection.pending) {
+      this.admitOperation(selection.pending);
+      return;
+    }
     const { account, kind, protectedHistory } = selection;
+    this.lastUser = false;
     const wakeGeneration = account.wakeGeneration;
     const at = performance.now();
     account.active = true;
@@ -318,11 +452,55 @@ export class ReceivingScheduler {
     this.diagnostic(() => this.config.onAdmission?.(admission));
   }
 
+  private admitOperation(pending: Pending) {
+    this.pending.splice(this.pending.indexOf(pending), 1);
+    pending.cleanup();
+    const operation = pending.operation;
+    const identity = this.identity(operation);
+    this.activeIdentities.add(identity);
+    this.lastUser = true;
+    if (!this.accounts.some((a) => a.freshDue <= performance.now()))
+      this.lastProtected = false;
+    const at = performance.now();
+    const task = Promise.resolve().then(async () => {
+      try {
+        const { boundary, handlers } = this.config.operations!;
+        const result = await runReceivingOperation(
+          operation,
+          boundary,
+          handlers[operation.kind]!,
+          this.cancellation.signal,
+        );
+        pending.resolve(result);
+      } catch (error) {
+        pending.reject(error);
+      } finally {
+        this.requests.delete(operation.requestId);
+        this.activeIdentities.delete(identity);
+        this.active.delete(task);
+        this.wake?.();
+      }
+    });
+    this.active.add(task);
+    this.diagnostic(() =>
+      this.config.onAdmission?.({
+        account: identity,
+        kind: operation.kind,
+        protectedHistory: false,
+        waitMs: at - pending.at,
+        active: this.active.size,
+        at,
+      }),
+    );
+  }
+
   private async wait() {
     const now = performance.now();
     const next = Math.min(
       ...this.accounts
-        .filter((a) => !a.active)
+        .filter(
+          (a) => !a.active && !this.activeIdentities.has(a.config.account),
+        )
         .map((a) => Math.max(a.retryAt, a.freshDue)),
     );
     await new Promise<void>((resolve) => {
@@ -358,9 +536,18 @@ export class ReceivingScheduler {
           if (!allowed) this.cancellation.abort();
           if (this.cancellation.signal.aborted) break;
         }
+        // Cancellation/deadline may remove a queued unit during renewal.
+        // Never splice another request or revive the removed selection.
+        if (selection.pending && !this.pending.includes(selection.pending))
+          continue;
         this.admit(selection);
       }
       if (!this.cancellation.signal.aborted) await this.wait();
+    }
+    for (const pending of this.pending.splice(0)) {
+      this.requests.delete(pending.operation.requestId);
+      pending.cleanup();
+      pending.reject(new Error("Receiving owner retired"));
     }
     await Promise.all(this.active);
   }

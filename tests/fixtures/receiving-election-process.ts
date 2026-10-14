@@ -31,6 +31,15 @@ const coordinator = new ElectedReceivingCoordinator({
     onTurn: (kind, turn) => send({ event: "turn", kind, turn }),
     onError: (error) => send({ event: "turnError", error: String(error) }),
   }),
+  operationHandlers: {
+    diagnostic: async (_operation, context) => {
+      await context.client.connect();
+    },
+  },
+  createOperationClient: (options) => {
+    send({ event: "operationClient" });
+    return new ImapFlow({ ...options, tls: { rejectUnauthorized: false } });
+  },
   onAdmission: (admission) => send({ event: "admission", admission }),
 });
 
@@ -66,7 +75,16 @@ process.on(
           send({ event: "resumed" });
           return;
         }
-        if (message.command === "elect") result = await coordinator.elect();
+        if (message.command === "diagnostic") {
+          await coordinator.submit({
+            requestId: `process-${message.id}`,
+            kind: "diagnostic",
+            identity: { ephemeral: `process-${message.id}` },
+            diagnosticConnection: fixture.connection,
+            deadline: performance.now() + 3000,
+          });
+        } else if (message.command === "elect")
+          result = await coordinator.elect();
         else if (message.command === "renew")
           result = await coordinator.renew();
         else if (message.command === "notify")

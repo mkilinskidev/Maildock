@@ -248,6 +248,42 @@ describe("Stage 4B elected receiving ownership, isolated processes/PostgreSQL", 
     return { child, command, events, resume, kill };
   }
 
+  it("R03 typed diagnostics use the winning process only and stale takeover clients cannot resume", async () => {
+    const p1 = await peer(),
+      p2 = await peer();
+    const c1 = await processCoordinator(p1.connection),
+      c2 = await processCoordinator(p2.connection);
+    const results = await Promise.all([
+      c1.command("elect"),
+      c2.command("elect"),
+    ]);
+    expect(results.map((r) => r.result).sort()).toEqual([false, true]);
+    const elected = results[0].result ? c1 : c2,
+      follower = results[0].result ? c2 : c1;
+    const followerPeer = results[0].result ? p2 : p1;
+    await expect(follower.command("diagnostic")).rejects.toThrow("unavailable");
+    expect(
+      follower.events.filter((e) => e.event === "operationClient"),
+    ).toHaveLength(0);
+    expect(followerPeer.peers).toHaveLength(0);
+    await elected.command("diagnostic");
+    expect(
+      elected.events.filter((e) => e.event === "operationClient"),
+    ).toHaveLength(1);
+    await elected.command("freeze");
+    await leaseExpired();
+    expect((await follower.command("elect")).result).toBe(true);
+    await follower.command("diagnostic");
+    await elected.resume();
+    await expect(elected.command("diagnostic")).rejects.toThrow();
+    expect(
+      elected.events.filter((e) => e.event === "operationClient"),
+    ).toHaveLength(1);
+    expect(
+      follower.events.filter((e) => e.event === "operationClient"),
+    ).toHaveLength(1);
+  });
+
   it("two independent processes contend atomically; follower wakes stay passive; only elected owner admits sockets", async () => {
     const a = await account();
     const p1 = await peer({ uids: [], uidNext: 1, select: "hung" });

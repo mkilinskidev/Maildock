@@ -39,6 +39,14 @@ export class ReceivingExecutor {
       throw new Error("Invalid receiving capacity");
   }
 
+  get snapshot() {
+    return Object.freeze({
+      executing: this.active,
+      waiting: this.waiting.length,
+      capacity: this.capacity,
+    });
+  }
+
   async stop() {
     this.stopped = true;
     for (const controller of this.controllers) controller.abort();

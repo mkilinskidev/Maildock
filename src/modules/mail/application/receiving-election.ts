@@ -1,3 +1,10 @@
+import type {
+  ReceivingOperation,
+  ReceivingOperationHandlers,
+  ReceivingOperationBoundary,
+  ReceivingDiagnosticRequest,
+  ReceivingOperationResult,
+} from "./receiving-operation";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { ReceivingOwner } from "../../../shared/infrastructure/database/receiving-authority";
@@ -41,6 +48,11 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   private retirement?: Promise<void>;
   private stopping?: Promise<void>;
   private readonly ttlMs: number;
+  private readonly controlQueue: {
+    run: () => Promise<void>;
+    renewal: boolean;
+  }[] = [];
+  private controlActive = false;
 
   constructor(
     private readonly config: Readonly<{
@@ -56,6 +68,14 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       tuning?: SchedulerInput["tuning"];
       historyAllowed?: SchedulerInput["historyAllowed"];
       onAdmission?: SchedulerInput["onAdmission"];
+      operationHandlers?: ReceivingOperationHandlers;
+      createOperationClient?: ReceivingOperationBoundary["createClient"];
+      /** DB-only captured configuration loader, also supports pre-mailbox bootstrap. */
+      loadOperationConnection?: (
+        db: ReceivingDatabase,
+        account: string,
+        configurationVersion: bigint,
+      ) => Promise<Account["connection"]>;
     }>,
   ) {
     this.ttlMs = config.leaseMs ?? 30_000;
@@ -76,6 +96,75 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       phase: this.phase,
       owner: this.owner ? { ...this.owner } : undefined,
       scheduler: this.scheduler?.snapshot,
+    });
+  }
+
+  submit(operation: ReceivingOperation): Promise<ReceivingOperationResult> {
+    if (this.phase !== "owner")
+      return Promise.reject(new Error("Receiving owner unavailable"));
+    try {
+      this.assertCurrent();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (!this.scheduler)
+      return Promise.reject(new Error("Receiving owner unavailable"));
+    return this.scheduler.submit(operation);
+  }
+
+  diagnose(
+    request: ReceivingDiagnosticRequest,
+  ): Promise<ReceivingOperationResult> {
+    if (
+      this.phase !== "owner" ||
+      request.expectedOwner.actor !== this.owner?.actor ||
+      request.expectedOwner.generation !== this.owner?.generation
+    )
+      return Promise.reject(
+        new Error("Receiving diagnostic owner unavailable"),
+      );
+    return this.submit({
+      kind: "diagnostic",
+      requestId: request.requestId,
+      identity: request.identity,
+      deadline: request.deadline,
+      signal: request.signal,
+      diagnosticConnection: request.connection,
+    });
+  }
+
+  /** One serialized control admission: renewal, validation and membership share
+   * the single reserved position. Waiting here creates no executor admission. */
+  private control<T>(
+    work: (db: ReceivingDatabase) => Promise<T>,
+    options: { deadline: number; signal?: AbortSignal } = this.budget(),
+    renewal = false,
+  ): Promise<T> {
+    if (this.controlQueue.length >= (this.config.maxAccounts ?? 128))
+      return Promise.reject(new Error("Receiving control capacity exceeded"));
+    return new Promise<T>((resolve, reject) => {
+      this.controlQueue.push({
+        renewal,
+        run: async () => {
+          try {
+            resolve(await this.config.executor.transaction(work, options));
+          } catch (error) {
+            reject(error);
+          }
+        },
+      });
+      this.drainControl();
+    });
+  }
+
+  private drainControl() {
+    if (this.controlActive || !this.controlQueue.length) return;
+    const priority = this.controlQueue.findIndex((item) => item.renewal);
+    const [item] = this.controlQueue.splice(priority < 0 ? 0 : priority, 1);
+    this.controlActive = true;
+    void item.run().finally(() => {
+      this.controlActive = false;
+      this.drainControl();
     });
   }
 
@@ -130,7 +219,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   private async acquire(): Promise<boolean> {
     const started = performance.now();
     try {
-      const generation = await this.config.executor.transaction(async (db) => {
+      const generation = await this.control(async (db) => {
         const [row] = await db.execute(
           sql`select maildock_receiving_acquire(${this.actor}::uuid,${this.ttlMs}) as generation`,
         );
@@ -148,11 +237,11 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.armExpiry(started);
       this.assertCurrent();
       const owner = this.owner;
-      const accounts = await this.config.executor.transaction(async (db) => {
+      const accounts = await this.control(async (db) => {
         await this.validate(db, owner);
         const max = this.config.maxAccounts ?? 128;
         const rows = await db.execute(sql`
-          select a.id as account, m.id as mailbox,
+          select a.id as account, a.configuration_version, m.id as mailbox,
             (a.receiving_due_at<=clock_timestamp() or m.receiving_due_at<=clock_timestamp()
               or s.mailbox_id is null) as due,
             coalesce(s.history_before>1,false) as history_pending
@@ -177,7 +266,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             account.mailbox !== candidate.mailbox
           )
             throw new Error("Receiving candidate identity mismatch");
-          result.push(account);
+          const version = BigInt(row.configuration_version as string);
+          result.push({ ...account, configurationVersion: version });
         }
         return result;
       }, this.budget());
@@ -189,10 +279,29 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           owner,
           authority: {
             assertCurrent: this.assertCurrent,
-            renew: (db, current) => this.validate(db, current),
+            renew: async (db, current) => {
+              await this.validate(db, current);
+              await this.validateConfiguration(
+                db,
+                account.account,
+                account.configurationVersion!,
+                account.mailbox,
+              );
+            },
           },
         })),
         beforeAdmission: () => this.renew(),
+        controlHeadroom: true,
+        operations: {
+          handlers: this.config.operationHandlers ?? {},
+          boundary: {
+            owner,
+            executor: this.config.executor,
+            assertCurrent: this.assertCurrent,
+            validate: (operation) => this.operationConnection(operation),
+            createClient: this.config.createOperationClient,
+          },
+        },
       });
       this.scheduler.start();
       this.scheduleHeartbeat();
@@ -201,6 +310,57 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.lose();
       throw error; // Uncertain acquisition expires; never blindly reacquire.
     }
+  }
+
+  private async validateConfiguration(
+    db: ReceivingDatabase,
+    account: string,
+    version: bigint,
+    mailbox?: string,
+  ) {
+    const rows = await db.execute(sql`
+      select a.configuration_version from mail_accounts a
+      where a.id=${account}::uuid and a.enabled and a.configuration_version=${version}::bigint
+        and (${mailbox ?? null}::uuid is null or exists (
+          select 1 from mailboxes m where m.id=${mailbox ?? null}::uuid and m.account_id=a.id
+            and m.selectable and m.lifecycle_status='active')) for share`);
+    if (rows.length !== 1)
+      throw new Error("Receiving configuration or lifecycle changed");
+    this.assertCurrent();
+  }
+
+  private async operationConnection(operation: ReceivingOperation) {
+    return this.control(
+      async (db) => {
+        await this.validate(db, this.owner!);
+        const identity = operation.identity;
+        if ("ephemeral" in identity)
+          return structuredClone(operation.diagnosticConnection!);
+        await this.validateConfiguration(
+          db,
+          identity.account,
+          identity.configurationVersion,
+          identity.mailbox,
+        );
+        if (operation.diagnosticConnection)
+          return structuredClone(operation.diagnosticConnection);
+        if (!this.config.loadOperationConnection)
+          throw new Error(
+            "Receiving operation configuration loader unavailable",
+          );
+        const connection = await this.config.loadOperationConnection(
+          db,
+          identity.account,
+          identity.configurationVersion,
+        );
+        this.assertCurrent();
+        return structuredClone(connection);
+      },
+      {
+        deadline: Math.min(operation.deadline, performance.now() + 2000),
+        signal: this.cancellation.signal,
+      },
+    );
   }
 
   private async validate(db: ReceivingDatabase, owner: ReceivingOwner) {
@@ -228,12 +388,16 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     try {
       this.assertCurrent();
       const owner = this.owner!;
-      const live = await this.config.executor.transaction(async (db) => {
-        const [row] = await db.execute(
-          sql`select maildock_receiving_renew(${owner.actor}::uuid,${owner.generation}::bigint,${this.ttlMs}) as live`,
-        );
-        return row.live === true;
-      }, this.budget());
+      const live = await this.control(
+        async (db) => {
+          const [row] = await db.execute(
+            sql`select maildock_receiving_renew(${owner.actor}::uuid,${owner.generation}::bigint,${this.ttlMs}) as live`,
+          );
+          return row.live === true;
+        },
+        this.budget(),
+        true,
+      );
       this.assertCurrent(); // Delayed reply cannot revive a locally retired term.
       if (!live || started + this.ttlMs <= performance.now()) {
         this.lose();
@@ -278,7 +442,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     // conflicts with this UPDATE lock; failure leaves lease expiry as fallback.
     if (this.owner) {
       const owner = this.owner;
-      await this.config.executor.transaction(
+      await this.control(
         async (db) => {
           await db.execute(
             sql`select maildock_receiving_release(${owner.actor}::uuid,${owner.generation}::bigint)`,

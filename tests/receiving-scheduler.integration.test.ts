@@ -887,7 +887,12 @@ describe("isolated shared receiving scheduler", () => {
         a.freshDue = 900;
         a.historySince = index === 0 ? 800 : 700;
       }
-      const choose = () => instance["select"](1000);
+      const choose = () => {
+        const selection = instance["select"](1000);
+        if (selection && !selection.account)
+          throw new Error("Unexpected user selection in metadata fixture");
+        return selection?.account ? selection : undefined;
+      };
       expect(choose()?.account.config.account).toBe(accounts[1].id);
       expect(choose()?.account.config.account).toBe(accounts[2].id);
       candidates[1].active = true;

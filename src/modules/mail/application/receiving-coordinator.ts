@@ -1,3 +1,4 @@
+import { ImapFlow } from "imapflow";
 import type { ProviderConnection } from "../../accounts/domain/mail-provider";
 import type { fetchInboxMetadataWindow } from "../../accounts/infrastructure/imap-metadata-window";
 import type {
@@ -22,6 +23,7 @@ export type ReceivingCoordinatorConfig = Readonly<{
   executor: ReceivingExecutor;
   owner: ReceivingOwner;
   account: string;
+  configurationVersion?: bigint;
   mailbox: string;
   authority: Readonly<{
     assertCurrent: () => void;
@@ -70,9 +72,16 @@ export async function runOneReceivingTurn(
     { deadline: Math.min(deadline, performance.now() + 2000), signal },
   );
   assertCurrent();
+  let constructed = false;
   return receiveInboxTurn(
     { ...config, options: { kind, deadline, signal, assertCurrent } },
-    config.createClient,
+    (options) => {
+      assertCurrent();
+      if (constructed)
+        throw new Error("Receiving turn cannot open another socket");
+      constructed = true;
+      return (config.createClient ?? ((opts) => new ImapFlow(opts)))(options);
+    },
   );
 }
 
