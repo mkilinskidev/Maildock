@@ -175,6 +175,8 @@ export const messageAttachments = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    receivingAttempt:
+      jsonb("receiving_attempt").$type<Record<string, string>>(),
     sourceConfigurationBinding: bigint("source_configuration_binding", {
       mode: "bigint",
     }),
@@ -550,6 +552,11 @@ export const mailAccountOrderSequence = pgSequence("mail_account_order_seq", {
 export const mailAccounts = pgTable(
   "mail_accounts",
   {
+    receivingLifecycleVersion: bigint("receiving_lifecycle_version", {
+      mode: "bigint",
+    })
+      .notNull()
+      .default(sql`1`),
     configurationVersion: bigint("configuration_version", { mode: "bigint" })
       .default(sql`1`)
       .notNull(),
@@ -621,6 +628,10 @@ export const mailAccounts = pgTable(
       .notNull(),
   },
   (table) => [
+    check(
+      "mail_accounts_receiving_lifecycle_version_check",
+      sql`${table.receivingLifecycleVersion}>0`,
+    ),
     check(
       "mail_accounts_configuration_version_check",
       sql`${table.configurationVersion}>0`,
@@ -1178,6 +1189,8 @@ export const messageContents = pgTable(
     }),
     sourceUidValidity: bigint("source_uid_validity", { mode: "bigint" }),
     sourceUid: bigint("source_uid", { mode: "bigint" }),
+    receivingAttempt:
+      jsonb("receiving_attempt").$type<Record<string, string>>(),
     sourceConfigurationBinding: bigint("source_configuration_binding", {
       mode: "bigint",
     }),
@@ -1233,6 +1246,8 @@ export const messageCommands = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    receivingAttempt:
+      jsonb("receiving_attempt").$type<Record<string, string>>(),
     sourceConfigurationBinding: bigint("source_configuration_binding", {
       mode: "bigint",
     }),

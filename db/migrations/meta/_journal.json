@@ -274,6 +274,13 @@
       "when": 1791980000000,
       "tag": "0038_receiving_business_intents",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791990000000,
+      "tag": "0039_receiving_intent_attempts",
+      "breakpoints": true
     }
   ]
 }

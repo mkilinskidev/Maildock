@@ -834,6 +834,7 @@ describe("R02 receiving business intents and Stage 4C negative controls", () => 
     await reader.begin(async (tx) => {
       await tx`alter table message_commands disable trigger receiving_command_guard`;
       await tx`update message_commands set status='executing' where id=${c.id}`;
+      await tx`set constraints all immediate`;
       await tx`alter table message_commands enable trigger receiving_command_guard`;
     });
     expect(
