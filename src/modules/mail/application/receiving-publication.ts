@@ -6,10 +6,6 @@ import {
   type StoredBlob,
 } from "../../../shared/application/blob-storage";
 import { DEFAULT_ATTACHMENT_LIMITS } from "../../../shared/application/attachment-limits";
-import {
-  EMAIL_HTML_POLICY,
-  sanitizeEmailHtml,
-} from "../infrastructure/sanitize-email-html";
 import type {
   ReceivingOwner,
   ReceivingState,
@@ -57,7 +53,7 @@ export class ReceivingPublication {
     private readonly storage?: BlobStorage,
   ) {}
 
-  contentResult(
+  async contentResult(
     owner: ReceivingOwner,
     source: PublicationSource,
     intent: string,
@@ -70,12 +66,30 @@ export class ReceivingPublication {
       }>,
     options: Options,
   ) {
-    const captured = JSON.parse(encode(evidence)) as Record<string, unknown>;
+    const payload = encode(evidence);
+    if (Buffer.byteLength(payload, "utf8") > 2 * 1024 * 1024)
+      throw Error("Completed content evidence exceeds the publication bound");
+    const captured = JSON.parse(payload) as Record<string, unknown>;
+    const capturedOwner = { ...owner },
+      capturedSource = { ...source, state: { ...source.state } },
+      capturedOptions = { ...options };
+    // Content-only parsing is outside SQL and need not load in STORE/election processes.
+    const [{ EMAIL_HTML_POLICY, sanitizeEmailHtml }, { searchBodyText }] =
+      await Promise.all([
+        import("../infrastructure/sanitize-email-html"),
+        import("../infrastructure/search-body-text"),
+      ]);
     const sanitized =
-      evidence.html === null ? null : sanitizeEmailHtml(evidence.html);
+      captured.html === null
+        ? null
+        : sanitizeEmailHtml(captured.html as string);
     delete captured.html;
     const completed = encode({
       ...captured,
+      searchText: searchBodyText(
+        captured.plainText as string | null,
+        sanitized?.html ?? null,
+      ),
       sanitizedHtml: sanitized?.html ?? null,
       remoteContentBlocked: sanitized?.remoteContentBlocked ?? false,
       policyVersion: EMAIL_HTML_POLICY,
@@ -83,12 +97,12 @@ export class ReceivingPublication {
     });
     return this.cacheResult(
       "content",
-      owner,
-      source,
+      capturedOwner,
+      capturedSource,
       intent,
       attempt,
       completed,
-      options,
+      capturedOptions,
     );
   }
 
@@ -148,16 +162,22 @@ export class ReceivingPublication {
       mailbox = source.mailbox,
       binding = source.configuration,
       expected = encode(source.state);
-    return this.executor.transaction(async (db) => {
-      if (kind === "content")
-        await db.execute(
-          sql`select maildock_receiving_content_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
-        );
-      else
-        await db.execute(
-          sql`select maildock_receiving_attachment_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
-        );
-    }, options);
+    return this.executor.transaction(
+      async (db) => {
+        if (kind === "content")
+          await db.execute(
+            sql`select maildock_receiving_content_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
+          );
+        else
+          await db.execute(
+            sql`select maildock_receiving_attachment_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
+          );
+      },
+      {
+        ...options,
+        deadline: Math.min(options.deadline, performance.now() + 2000),
+      },
+    );
   }
 
   commandResult(

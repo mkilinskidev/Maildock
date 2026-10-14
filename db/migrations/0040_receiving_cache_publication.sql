@@ -54,6 +54,7 @@ BEGIN
     jsonb_typeof(evidence->'searchText') IS DISTINCT FROM 'string' OR
     jsonb_typeof(evidence->'remoteContentBlocked') IS DISTINCT FROM 'boolean' OR
     NOT evidence ?& ARRAY['plainText','sanitizedHtml'] OR
+    (evidence->'plainText'='null'::jsonb AND evidence->'sanitizedHtml'='null'::jsonb) OR
     jsonb_typeof(evidence->'plainText') NOT IN ('string','null') OR
     jsonb_typeof(evidence->'sanitizedHtml') NOT IN ('string','null') THEN
     RAISE EXCEPTION 'Invalid complete content payload'; END IF;

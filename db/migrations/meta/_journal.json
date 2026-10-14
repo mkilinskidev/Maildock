@@ -288,6 +288,13 @@
       "when": 1792000000000,
       "tag": "0040_receiving_cache_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792010000000,
+      "tag": "0041_receiving_bounded_publication",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
   mailAccounts,
   mailboxes,
+  mailboxMessages,
 } from "@/shared/infrastructure/database/schema";
 import { ReceivingExecutor } from "@/shared/infrastructure/database/receiving-executor";
 import type { ReceivingOwner } from "@/shared/infrastructure/database/receiving-authority";
@@ -25,6 +26,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { LocalBlobStorage } from "@/shared/infrastructure/storage/local-blob-storage";
 import type { CompletedRead } from "@/modules/mail/application/receiving-publication";
+import { AttachmentService } from "@/modules/mail/application/attachment-service";
+import { DEFAULT_ATTACHMENT_LIMITS } from "@/shared/application/attachment-limits";
 
 const budget = () => ({ deadline: performance.now() + 5000 });
 describe("R04-B fenced cache publication", () => {
@@ -198,7 +201,15 @@ describe("R04-B fenced cache publication", () => {
     await reader?.end({ timeout: 0 });
     await database?.client.end({ timeout: 0 });
     await container?.stop();
-    if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
+    if (storageRoot) {
+      const target = path.resolve(storageRoot);
+      if (
+        !target.startsWith(path.resolve(tmpdir()) + path.sep) ||
+        !path.basename(target).startsWith("maildock-r04-b-")
+      )
+        throw Error("Unsafe blob fixture cleanup path");
+      await rm(target, { recursive: true, force: true });
+    }
   });
   const next = () => ({
     ...source,
@@ -251,7 +262,147 @@ describe("R04-B fenced cache publication", () => {
     const promise = new Promise<void>((resolve) => (release = resolve));
     return { release, promise };
   }
+  it("late old failure cannot replace a newer ready result", async () => {
+    const old = await publication.claim(
+      owner,
+      source,
+      "content",
+      message,
+      budget(),
+    );
+    source = next();
+    await publication.fail(
+      owner,
+      source,
+      "content",
+      message,
+      old.id,
+      "failed_remote_read",
+      budget(),
+    );
+    source = next();
+    await reader`select maildock_receiving_content_request(${account}::uuid,${source.mailbox}::uuid,${message}::uuid)`;
+    const fresh = await publication.claim(
+      owner,
+      source,
+      "content",
+      message,
+      budget(),
+    );
+    source = next();
+    await publication.contentResult(
+      owner,
+      source,
+      message,
+      fresh.id,
+      content(),
+      budget(),
+    );
+    source = next();
+    const ready = await facts();
+    await expect(
+      publication.fail(
+        owner,
+        source,
+        "content",
+        message,
+        old.id,
+        "failed_remote_read",
+        budget(),
+      ),
+    ).rejects.toThrow();
+    expect(await facts()).toEqual(ready);
+    expect(
+      (
+        await reader`select status from message_contents where message_id=${message}`
+      )[0].status,
+    ).toBe("ready");
+  });
+  it("local draft uploads remain independent of remote attachment authority", async () => {
+    const local = new AttachmentService(
+      database.db,
+      storage,
+      DEFAULT_ATTACHMENT_LIMITS,
+      async () => {},
+    );
+    const uploaded = await local.upload(
+      (async function* () {
+        yield Buffer.from("local");
+      })(),
+      "local.txt",
+      "text/plain",
+    );
+    expect(uploaded.status).toBe("ready");
+    const [row] =
+      await reader`select blob_id from staged_attachments where id=${uploaded.id}`;
+    expect(row.blob_id).toBeTruthy();
+    await expect(
+      reader`update message_attachments set status='ready',blob_id=${row.blob_id} where id=${attachment}`,
+    ).rejects.toThrow();
+  });
+  it("cancellation during blob verification prevents registration and ready publication", async () => {
+    const blob = await storage.put(
+      (async function* () {
+        yield Buffer.from("fixture");
+      })(),
+      100,
+    );
+    const attempt = await publication.claim(
+      owner,
+      source,
+      "attachment",
+      attachment,
+      budget(),
+    );
+    source = next();
+    const entered = gate(),
+      finish = gate(),
+      abort = new AbortController();
+    const gated = new ReceivingPublication(executor, {
+      put: storage.put.bind(storage),
+      open: storage.open.bind(storage),
+      delete: storage.delete.bind(storage),
+      exists: async (key) => {
+        entered.release();
+        await finish.promise;
+        return storage.exists(key);
+      },
+    });
+    const pending = gated.attachmentResult(
+      owner,
+      source,
+      attachment,
+      attempt.id,
+      { ...readEvidence("1"), blob },
+      { ...budget(), signal: abort.signal },
+    );
+    pending.catch(() => undefined);
+    await entered.promise;
+    abort.abort();
+    finish.release();
+    await expect(pending).rejects.toThrow();
+    expect(
+      (
+        await reader`select status from message_attachments where id=${attachment}`
+      )[0].status,
+    ).toBe("fetching");
+    expect(
+      await reader`select * from blobs where storage_key=${blob.key}`,
+    ).toHaveLength(0);
+  });
   it("cancelled late cache callback cannot touch the replacement publication", async () => {
+    await executor.transaction(async (db) => {
+      await db.execute(
+        sql`select maildock_receiving_claim(${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,7,1,1,1,0)`,
+      );
+      await db.execute(
+        sql`insert into mailbox_messages(id,mailbox_id,message_id,uid_validity,uid,first_synchronized_at,last_synchronized_at) select gen_random_uuid(),${source.mailbox}::uuid,${message}::uuid,7,u,clock_timestamp(),clock_timestamp() from generate_series(2,32) u`,
+      );
+      await db.execute(
+        sql`update receiving_mailboxes set revision=revision+1 where mailbox_id=${source.mailbox}::uuid`,
+      );
+    }, budget());
+    source = next();
     const attempt = await publication.claim(
       owner,
       source,
@@ -269,10 +420,14 @@ describe("R04-B fenced cache publication", () => {
       .transaction(
         async (db) => {
           await db.execute(contentSql(attempt.id));
+          const lateDelete = db
+            .delete(mailboxMessages)
+            .where(sql`mailbox_id=${source.mailbox}::uuid`)
+            .prepare("cache_obsolete_delete");
           ready.release();
           await resume.promise;
           try {
-            await db.execute(contentSql(attempt.id));
+            await lateDelete.execute();
           } catch {
             rejected = true;
           }
@@ -291,7 +446,7 @@ describe("R04-B fenced cache publication", () => {
       message,
       budget(),
     );
-    expect(recovered.state.revision).toBe(2n);
+    expect(recovered.state.revision).toBe(3n);
     source = { ...source, state: recovered.state };
     await publication.contentResult(
       owner,
@@ -306,6 +461,7 @@ describe("R04-B fenced cache publication", () => {
     await done.promise;
     expect(rejected).toBe(true);
     expect(await facts()).toEqual(replacement);
+    expect(replacement.placements).toHaveLength(32);
   });
   it("content expires before L and rolls back payload, search and revision", async () => {
     const attempt = await publication.claim(
@@ -375,6 +531,96 @@ describe("R04-B fenced cache publication", () => {
       )[0].status,
     ).toBe("ready");
   });
+  for (const timing of ["before", "after"] as const)
+    it(`attachment ${timing} L validates registry, ready linkage and revision atomically`, async () => {
+      const blob = await storage.put(
+        (async function* () {
+          yield Buffer.from("fixture");
+        })(),
+        100,
+      );
+      const attempt = await publication.claim(
+        owner,
+        source,
+        "attachment",
+        attachment,
+        budget(),
+      );
+      source = next();
+      const evidence = JSON.stringify(
+        {
+          ...readEvidence("1"),
+          stored: true,
+          storageKey: blob.key,
+          size: blob.size,
+          sha256: blob.sha256,
+        },
+        (_, v) => (typeof v === "bigint" ? v.toString() : v),
+      );
+      const statement = sql`select maildock_receiving_attachment_result(${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,${JSON.stringify(source.state, (_, v) => (typeof v === "bigint" ? v.toString() : v))}::jsonb,1,${attachment}::uuid,${attempt.id}::uuid,${evidence}::jsonb)`;
+      if (timing === "before") {
+        const before = await facts();
+        await expect(
+          executor.transaction(async (db) => {
+            await db.execute(statement);
+            await db.execute(
+              sql`update receiving_coordinator set expires_at='-infinity'`,
+            );
+          }, budget()),
+        ).rejects.toThrow();
+        expect(await facts()).toEqual(before);
+        expect(
+          await reader`select * from blobs where storage_key=${blob.key}`,
+        ).toHaveLength(0);
+        expect(
+          (
+            await reader`select status from message_attachments where id=${attachment}`
+          )[0].status,
+        ).toBe("fetching");
+      } else {
+        const holder = await reader.reserve();
+        await holder`select pg_advisory_lock(917440)`;
+        let pid = 0;
+        const old = executor.transaction(async (db) => {
+          await db.execute(statement);
+          pid = Number(
+            (await db.execute(sql`select fixture_cache_arm() pid`))[0].pid,
+          );
+        }, budget());
+        old.catch(() => undefined);
+        try {
+          const deadline = performance.now() + 2000;
+          while (!(
+            pid &&
+            (
+              await reader`select 1 from pg_stat_activity where pid=${pid} and wait_event='advisory'`
+            )[0]
+          )) {
+            if (performance.now() > deadline)
+              throw Error("Attachment COMMIT did not reach post-L barrier");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          await expect(
+            reader.begin(async (tx) => {
+              await tx`set local lock_timeout='100ms'`;
+              await tx`update receiving_coordinator set expires_at='-infinity'`;
+            }),
+          ).rejects.toThrow();
+        } finally {
+          await holder`select pg_advisory_unlock(917440)`;
+          holder.release();
+        }
+        await old;
+        expect(
+          (
+            await reader`select status from message_attachments where id=${attachment}`
+          )[0].status,
+        ).toBe("ready");
+        expect(
+          await reader`select * from blobs where storage_key=${blob.key}`,
+        ).toHaveLength(1);
+      }
+    });
   it("publishes sanitized content and only derived search, once, with unchanged F/E/R", async () => {
     // A second enrolled placement must not turn derived-only publication into metadata authority.
     const shared = randomUUID();

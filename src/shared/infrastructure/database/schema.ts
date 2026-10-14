@@ -25,6 +25,8 @@ export const outgoingMessages = pgTable(
   "outgoing_messages",
   {
     id: uuid("id").primaryKey(),
+    receivingAttempt:
+      jsonb("receiving_attempt").$type<Record<string, unknown>>(),
     accountId: uuid("account_id")
       .notNull()
       .references(() => mailAccounts.id, { onDelete: "restrict" }),
