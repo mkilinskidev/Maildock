@@ -3,6 +3,11 @@ import { logFailure } from "../../../shared/infrastructure/logging/diagnostics";
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
+import {
+  requestReceivingWake,
+  enqueueReceivingWake,
+} from "./receiving-wake-jobs";
+import { ReceivingDemand } from "../application/receiving-demand";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 
@@ -44,6 +49,8 @@ export async function enqueueDelta(
   mailboxId: string,
   reason: DeltaReason,
 ): Promise<boolean> {
+  const demand = await requestReceivingWake(boss, accountId, mailboxId);
+  if (!demand.accepted || demand.inbox) return demand.accepted;
   return enqueueCoalescedSync(
     boss,
     MAILBOX_DELTA_SYNC_QUEUE,
@@ -55,8 +62,9 @@ export async function enqueueDelta(
 export class PgBossDeltaSyncScheduler {
   private readonly boss: PgBoss;
   private started?: Promise<void>;
+  private readonly demand: ReceivingDemand;
 
-  constructor(config: Pick<AppConfig, "databaseUrl">) {
+  constructor(config: Pick<AppConfig, "databaseUrl">, database: Database) {
     this.boss = new PgBoss({
       connectionString: config.databaseUrl,
       application_name: "maildock-web-delta-enqueue",
@@ -64,13 +72,20 @@ export class PgBossDeltaSyncScheduler {
     this.boss.on("error", (error) =>
       logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
     );
+    this.demand = new ReceivingDemand(database, async (accountId) => {
+      await this.start();
+      return enqueueReceivingWake(this.boss, accountId);
+    });
   }
 
   private start(): Promise<void> {
     this.started ??= (async () => {
       await this.boss.start();
       await ensureDeltaQueue(this.boss);
-    })();
+    })().catch((error) => {
+      this.started = undefined;
+      throw error;
+    });
     return this.started;
   }
 
@@ -79,8 +94,19 @@ export class PgBossDeltaSyncScheduler {
     mailboxId: string,
     reason: DeltaReason,
   ): Promise<boolean> {
+    const demand = await this.demand.record(accountId, mailboxId);
+    if (!demand.accepted) return false;
+    if (demand.inbox) {
+      await this.demand.deliver(accountId);
+      return true;
+    }
     await this.start();
-    return enqueueDelta(this.boss, accountId, mailboxId, reason);
+    return enqueueCoalescedSync(
+      this.boss,
+      MAILBOX_DELTA_SYNC_QUEUE,
+      { version: 1, accountId, mailboxId, reason },
+      { singletonKey: mailboxId, priority: 10 },
+    );
   }
 }
 

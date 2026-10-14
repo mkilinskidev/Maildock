@@ -18,6 +18,7 @@ import { MailboxService } from "../modules/mail/application/mailbox-service.js";
 import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-discovery-service.js";
 import { MessageService } from "../modules/mail/application/message-service.js";
 import { MAILBOX_RECENT_SYNC_QUEUE } from "../modules/mail/infrastructure/recent-sync-jobs.js";
+import { requestReceivingWake } from "../modules/mail/infrastructure/receiving-wake-jobs.js";
 import { MessageContentService } from "../modules/mail/application/message-content-service.js";
 import { DeltaSyncService } from "../modules/mail/application/delta-sync-service.js";
 import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
@@ -67,12 +68,21 @@ export function createWorkerComposition() {
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
   const recentSyncScheduler = {
-    schedule: async (accountId: string, mailboxId: string) =>
-      (await jobs.boss.send(
-        MAILBOX_RECENT_SYNC_QUEUE,
-        { version: 1, accountId, mailboxId },
-        { singletonKey: mailboxId, priority: 10 },
-      )) !== null,
+    schedule: async (accountId: string, mailboxId: string) => {
+      const demand = await requestReceivingWake(
+        jobs.boss,
+        accountId,
+        mailboxId,
+      );
+      if (!demand.accepted || demand.inbox) return demand.accepted;
+      return (
+        (await jobs.boss.send(
+          MAILBOX_RECENT_SYNC_QUEUE,
+          { version: 1, accountId, mailboxId },
+          { singletonKey: mailboxId, priority: 10 },
+        )) !== null
+      );
+    },
   };
   const messages = new MessageService(
     database.db,

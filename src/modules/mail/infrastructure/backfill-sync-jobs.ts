@@ -1,6 +1,7 @@
 import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnostics";
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
+import { requestReceivingWake } from "./receiving-wake-jobs";
 import { z } from "zod";
 import { and, eq, ne } from "drizzle-orm";
 
@@ -34,12 +35,19 @@ export async function enqueueBackfill(
   accountId: string,
   mailboxId: string,
   frontier?: string | null,
+  startAfter?: number,
 ): Promise<boolean> {
+  const demand = await requestReceivingWake(boss, accountId, mailboxId);
+  if (!demand.accepted || demand.inbox) return demand.accepted;
   return enqueueCoalescedSync(
     boss,
     MAILBOX_BACKFILL_SYNC_QUEUE,
     { version: 1, accountId, mailboxId },
-    { singletonKey: `${mailboxId}:${frontier ?? "initial"}`, priority: -10 },
+    {
+      singletonKey: `${mailboxId}:${frontier ?? "initial"}`,
+      priority: -10,
+      ...(startAfter === undefined ? {} : { startAfter }),
+    },
   );
 }
 
@@ -85,11 +93,13 @@ export async function registerBackfillWorker(
       // The active singleton still owns its key. A fresh key permits exactly one
       // continuation; the poller repairs a crash between commit and enqueue.
       if (more)
-        await enqueueCoalescedSync(boss, MAILBOX_BACKFILL_SYNC_QUEUE, payload, {
-          singletonKey: `${payload.mailboxId}:${more}`,
-          priority: -10,
-          startAfter: 5,
-        });
+        await enqueueBackfill(
+          boss,
+          payload.accountId,
+          payload.mailboxId,
+          more,
+          5,
+        );
     }),
   );
 }

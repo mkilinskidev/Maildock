@@ -12,6 +12,7 @@ export type FailureOperation =
   | "render"
   | "mailbox-discovery"
   | "recent-sync"
+  | "receiving-wake"
   | "delta-sync"
   | "backfill-sync"
   | "message-content"

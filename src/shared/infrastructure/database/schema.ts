@@ -546,6 +546,14 @@ export const mailAccountOrderSequence = pgSequence("mail_account_order_seq", {
 export const mailAccounts = pgTable(
   "mail_accounts",
   {
+    receivingDueAt: timestamp("receiving_due_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    receivingRequestGeneration: bigint("receiving_request_generation", {
+      mode: "bigint",
+    })
+      .default(sql`0`)
+      .notNull(),
     id: uuid("id").primaryKey(),
     sortOrder: integer("sort_order")
       .default(sql`nextval('mail_account_order_seq')`)
@@ -648,6 +656,10 @@ export const mailAccounts = pgTable(
       sql`${table.mailboxDiscoveryStatus} in ('not_started', 'pending', 'running', 'success', 'failed')`,
     ),
     check(
+      "mail_accounts_receiving_request_generation_check",
+      sql`${table.receivingRequestGeneration} >= 0`,
+    ),
+    check(
       "mail_accounts_smtp_credentials",
       sql`(${table.smtpUsesImapCredentials} and ${table.smtpUsername} is null and ${table.smtpPassword} is null) or (not ${table.smtpUsesImapCredentials} and ${table.smtpUsername} is not null and ${table.smtpPassword} is not null)`,
     ),
@@ -691,6 +703,14 @@ export const oauthAuthorizationStates = pgTable("oauth_authorization_states", {
 export const mailboxes = pgTable(
   "mailboxes",
   {
+    receivingDueAt: timestamp("receiving_due_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    receivingRequestGeneration: bigint("receiving_request_generation", {
+      mode: "bigint",
+    })
+      .default(sql`0`)
+      .notNull(),
     id: uuid("id").primaryKey(),
     accountId: uuid("account_id")
       .notNull()
@@ -777,6 +797,10 @@ export const mailboxes = pgTable(
     check(
       "mailboxes_lifecycle_status",
       sql`${table.lifecycleStatus} in ('active', 'missing')`,
+    ),
+    check(
+      "mailboxes_receiving_request_generation_check",
+      sql`${table.receivingRequestGeneration} >= 0`,
     ),
     check(
       "mailboxes_recent_sync_status",

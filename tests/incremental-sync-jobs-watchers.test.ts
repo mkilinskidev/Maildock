@@ -41,6 +41,8 @@ function boss() {
   const sent: { queue: string; data: unknown; options: unknown }[] = [];
   const value = {
     getDb: () => ({
+      // This fixture models the preserved secondary-folder route.
+      executeSql: async () => ({ rows: [{ accepted: true, inbox: false }] }),
       beginTransaction: async () => ({
         db: { executeSql: async () => ({ rows: [] }) },
         commit: async () => {},

@@ -7,6 +7,9 @@ import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { MessageService } from "../application/message-service";
 import type { RecentSyncScheduler } from "../application/recent-sync-scheduler";
+import type { Database } from "../../../shared/infrastructure/database/database";
+import { ReceivingDemand } from "../application/receiving-demand";
+import { enqueueReceivingWake } from "./receiving-wake-jobs";
 
 export const MAILBOX_RECENT_SYNC_QUEUE = "mailbox-recent-sync-v1";
 
@@ -32,8 +35,9 @@ async function ensureQueue(boss: PgBoss): Promise<void> {
 export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
   private readonly boss: PgBoss;
   private started?: Promise<void>;
+  private readonly demand: ReceivingDemand;
 
-  constructor(config: Pick<AppConfig, "databaseUrl">) {
+  constructor(config: Pick<AppConfig, "databaseUrl">, database: Database) {
     this.boss = new PgBoss({
       connectionString: config.databaseUrl,
       application_name: "maildock-web-message-enqueue",
@@ -41,17 +45,30 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
     this.boss.on("error", (error) =>
       logFailure(createLogger({ logLevel: "info" }), error, "jobs", "runtime"),
     );
+    this.demand = new ReceivingDemand(database, async (accountId) => {
+      await this.start();
+      return enqueueReceivingWake(this.boss, accountId);
+    });
   }
 
   private start(): Promise<void> {
     this.started ??= (async () => {
       await this.boss.start();
       await ensureQueue(this.boss);
-    })();
+    })().catch((error) => {
+      this.started = undefined;
+      throw error;
+    });
     return this.started;
   }
 
   async schedule(accountId: string, mailboxId: string): Promise<boolean> {
+    const demand = await this.demand.record(accountId, mailboxId);
+    if (!demand.accepted) return false;
+    if (demand.inbox) {
+      await this.demand.deliver(accountId);
+      return true;
+    }
     await this.start();
     const id = await this.boss.send(
       MAILBOX_RECENT_SYNC_QUEUE,

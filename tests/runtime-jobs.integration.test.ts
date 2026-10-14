@@ -8,20 +8,27 @@ import { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fetchNextJob } from "../node_modules/pg-boss/dist/plans.js";
 import {
-  enqueueDelta,
+  enqueueDelta as sendDelta,
   ensureDeltaQueue,
   MAILBOX_DELTA_SYNC_QUEUE as delta,
 } from "@/modules/mail/infrastructure/delta-sync-jobs";
 import {
-  enqueueBackfill,
+  enqueueBackfill as sendBackfill,
   ensureBackfillQueue,
   MAILBOX_BACKFILL_SYNC_QUEUE as backfill,
 } from "@/modules/mail/infrastructure/backfill-sync-jobs";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { createDatabase } from "@/shared/infrastructure/database/database";
+import {
+  mailAccounts,
+  mailboxes,
+} from "@/shared/infrastructure/database/schema";
 
 describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
   let container: StartedTestContainer;
   let boss: PgBoss;
   let producer: PgBoss;
+  let database: ReturnType<typeof createDatabase>;
   beforeAll(async () => {
     container = await new GenericContainer("postgres:18.6-bookworm")
       .withEnvironment({
@@ -35,6 +42,31 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
       )
       .start();
     const connectionString = `postgresql://test:test@${container.getHost()}:${container.getMappedPort(5432)}/reliability`;
+    database = createDatabase({
+      databaseUrl: connectionString,
+      databasePoolSize: 2,
+    });
+    await migrate(database.db, { migrationsFolder: "db/migrations" });
+    await database.db.insert(mailAccounts).values({
+      id: account,
+      displayName: "Legacy secondary fixture",
+      email: "fixture@example.test",
+      imapHost: "invalid.test",
+      imapPort: 993,
+      imapSecurity: "tls",
+      imapUsername: "fixture",
+      imapPassword: {
+        version: 1,
+        algorithm: "AES-256-GCM",
+        keyId: "fixture",
+        iv: "fixture",
+        ciphertext: "fixture",
+        authTag: "fixture",
+      },
+      smtpHost: "invalid.test",
+      smtpPort: 465,
+      smtpSecurity: "tls",
+    });
     boss = new PgBoss({ connectionString });
     producer = new PgBoss({ connectionString });
     await boss.start();
@@ -45,9 +77,32 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
   afterAll(async () => {
     await producer?.stop();
     await boss?.stop();
+    await database?.client.end({ timeout: 0 });
     await container?.stop();
   });
   const account = randomUUID();
+  async function secondaryMailbox(id: string) {
+    await database.db
+      .insert(mailboxes)
+      .values({
+        id,
+        accountId: account,
+        remotePath: `Folder/${id}`,
+        name: "Secondary",
+        selectable: true,
+        firstDiscoveredAt: new Date(),
+        lastDiscoveredAt: new Date(),
+      })
+      .onConflictDoNothing();
+  }
+  async function enqueueDelta(...args: Parameters<typeof sendDelta>) {
+    await secondaryMailbox(args[2]);
+    return sendDelta(...args);
+  }
+  async function enqueueBackfill(...args: Parameters<typeof sendBackfill>) {
+    await secondaryMailbox(args[2]);
+    return sendBackfill(...args);
+  }
   async function jobs(queue: string, key: string) {
     return boss.findJobs(queue, { key });
   }

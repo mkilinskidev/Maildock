@@ -120,6 +120,7 @@ export class MessageService {
   async requestSync(accountId: string, mailboxId: string): Promise<boolean> {
     const mailbox = await this.ownedMailbox(accountId, mailboxId);
     if (
+      mailbox.remotePath === "INBOX" ||
       mailbox.recentSyncStatus !== "success" ||
       mailbox.recentSyncUidValidity === null
     )
@@ -158,6 +159,11 @@ export class MessageService {
       );
     if (!this.scheduler)
       throw new Error("Recent sync scheduler is unavailable.");
+    // INBOX demand no longer depends on v1 initialization/status. Its producer
+    // records due before wake and must not write legacy lifecycle metadata on
+    // a Stage 1 enrolled mailbox.
+    if (mailbox.remotePath === "INBOX")
+      return this.scheduler.schedule(accountId, mailboxId);
     const now = new Date();
     try {
       const scheduled = await this.scheduler.schedule(accountId, mailboxId);

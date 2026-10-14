@@ -70,15 +70,15 @@ export const messageService = new MessageService(
   undefined,
   undefined,
   undefined,
-  new PgBossRecentSyncScheduler(config),
-  new PgBossDeltaSyncScheduler(config),
+  new PgBossRecentSyncScheduler(config, db),
+  new PgBossDeltaSyncScheduler(config, db),
 );
 export const messageContentService = new MessageContentService(
   db,
   new PgBossContentScheduler(config),
 );
 const commandScheduler = new PgBossMessageCommandScheduler(config);
-const deltaScheduler = new PgBossDeltaSyncScheduler(config);
+const deltaScheduler = new PgBossDeltaSyncScheduler(config, db);
 export const messageCommandService = new MessageCommandService(
   db,
   (id) => commandScheduler.enqueue(id),

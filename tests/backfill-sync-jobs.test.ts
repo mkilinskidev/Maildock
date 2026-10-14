@@ -20,6 +20,8 @@ describe("Phase 1G job priority", () => {
     }[] = [];
     const boss = {
       getDb: () => ({
+        // This fixture models the preserved secondary-folder route.
+        executeSql: async () => ({ rows: [{ accepted: true, inbox: false }] }),
         beginTransaction: async () => ({
           db: { executeSql: async () => ({ rows: [] }) },
           commit: async () => {},
