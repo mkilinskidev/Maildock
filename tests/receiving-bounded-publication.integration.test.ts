@@ -273,6 +273,29 @@ describe("R04-C bounded authority", () => {
     sql`select maildock_receiving_move_result(${owner.actor}::uuid,${owner.generation}::bigint,${account}::uuid,1,1,${scopes()}::jsonb,${command}::uuid,${attempt}::uuid,${encode(move())}::jsonb)`;
   const terminalSql = () =>
     sql`select maildock_receiving_terminal_remove(${account}::uuid,1,1)`;
+  it("recovery rejects missing or unrelated original operation scopes", async () => {
+    await expect(
+      publication.recover(
+        { ...authority, scopes: authority.scopes.slice(0, 1) },
+        "move",
+        command,
+        budget(),
+      ),
+    ).rejects.toThrow();
+    const id = await outgoing();
+    await expect(
+      publication.recover(
+        { ...authority, scopes: authority.scopes.slice(0, 1) },
+        "append",
+        id,
+        budget(),
+      ),
+    ).rejects.toThrow();
+    expect(
+      (await publication.recover(authority, "move", command, budget())).intent
+        .status,
+    ).toBe("pending");
+  });
   for (const capability of ["move", "terminal"] as const)
     it(`${capability}: lost COMMIT reply is recovered under conflicting locks`, async () => {
       let attempt: Record<string, unknown> | undefined;

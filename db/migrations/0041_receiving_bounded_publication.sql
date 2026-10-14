@@ -770,6 +770,12 @@ BEGIN
   scope:=maildock_receiving_data_scope(actor,term,account,binding,lifecycle,current_scopes);
   IF operation='move' THEN SELECT to_jsonb(c) INTO STRICT r FROM message_commands c WHERE id=intent AND account_id=account FOR UPDATE;
   ELSE SELECT to_jsonb(c) INTO STRICT r FROM outgoing_messages c WHERE id=intent AND account_id=account FOR UPDATE; END IF;
+  IF operation='move' AND (jsonb_array_length(current_scopes)<>2 OR r->>'action' NOT IN ('archive','trash') OR
+    NOT EXISTS(SELECT FROM jsonb_array_elements(current_scopes) x WHERE x->>'mailbox'=r->>'mailbox_id') OR
+    NOT EXISTS(SELECT FROM jsonb_array_elements(current_scopes) x WHERE x->>'mailbox'=r->>'destination_mailbox_id')) THEN
+    RAISE EXCEPTION 'MOVE recovery requires both original mailbox scopes'; END IF;
+  IF operation='append' AND (jsonb_array_length(current_scopes)<>1 OR current_scopes->0->>'mailbox' IS DISTINCT FROM r->>'sent_copy_mailbox_id') THEN
+    RAISE EXCEPTION 'APPEND recovery requires its original destination scope'; END IF;
   RETURN jsonb_build_object('scope',scope,'intent',r);
 END $$;
 CREATE FUNCTION maildock_receiving_data_failure(actor uuid, term bigint, account uuid, binding bigint, lifecycle bigint,
