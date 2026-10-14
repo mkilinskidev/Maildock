@@ -1,3 +1,158 @@
+# Stage 3C — remaining acceptance completed
+
+2026-10-14. **PASS — Stage 3C acceptance complete.** Continued clean on
+`test/imap-sync-stage-3c-dovecot` at
+`8579ee17eef902eef1982a3e9a4a7a1709b63eb1`. Read the latest report first. Ran
+exactly one W=2 `-FailureOnly` invocation, then exactly one W=4 invocation through
+`-WorkersFourOnly` (passes `--workers=4`). No fixture, harness or production code
+changed. Completed W=2 history/injection/restart scenarios were not repeated.
+Earlier evidence below remains a historical record.
+
+## Configuration and bounded execution
+
+Both live fixture instances reported Dovecot **2.4.3 (c1b22ef978)** and effective
+`doveconf -n` output with `service anvil / unix_listener anvil-auth-penalty / mode = 0`.
+The penalty socket `/run/dovecot/anvil-auth-penalty` was absent. Normal static
+password authentication and `auth_failure_delay = 2 secs` remained enabled.
+Invalid credentials produced actual `IMAP AUTHENTICATE failed` errors; valid
+credentials continued to authenticate. The fixture correction from the previous
+commit was sufficient; no additional configuration correction was required.
+
+The two invocations shared a **300,000 ms** outer budget. W=2 retained its
+120,000 ms process cap; W=4 received only the remaining outer budget. Both retained
+the existing execution cutoff and cleanup reserve. W=2 process including cleanup:
+**28,407.82 ms**; W=4: **57,328.67 ms**; combined launcher wall time including
+cleanup and process startup: **92,637 ms**. No timeout or assertion was relaxed.
+The unchanged test timing was operationMs=4000, pollMs=5000, retryMs=200,
+maxRetryMs=800 and historyWaitMs=30000; W=2/W=4, D=2, C=1.
+
+## W=2 failure isolation and recovery
+
+The minimal real-server fixture enrolled five empty INBOXes, then independently
+inventoried one imported UID 1 per account. History remained disabled. All epochs
+were **1791953372**; identity remains qualified by account/mailbox/epoch/UID.
+The fixed 20-second failure observation produced **seven authentication errors**,
+all on account 1, with retry delays **200, 400, 800, 800, 800, 800, 800 ms**.
+Trace assertions confirmed no retry admission before its backoff expired.
+There were **zero healthy-account errors or deadline failures**. All **23**
+`doveadm penalty` samples returned exit 0 and a header-only empty table, including
+the final cleanup sample. Healthy AUTHENTICATE round trips were **5.97–10.63 ms**.
+This live counterfactual confirms absence of the previously observed shared-IP delay
+within this bounded run.
+
+Independent repeatable-read PostgreSQL boundaries preserve failure and recovery
+separately (`failure-diagnostic-final`, `recovery-final`):
+
+| Account   | During invalid credentials: F / E / revision / placements | After credential restoration: F / E / revision / placements |
+| --------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| stage3c-1 | 0 / 1 / 0 / 0                                             | 1 / 1 / 1 / 1                                               |
+| stage3c-2 | 1 / 1 / 1 / 1                                             | 1 / 1 / 1 / 1                                               |
+| stage3c-3 | 1 / 1 / 1 / 1                                             | 1 / 1 / 1 / 1                                               |
+| stage3c-4 | 1 / 1 / 1 / 1                                             | 1 / 1 / 1 / 1                                               |
+| stage3c-5 | 1 / 1 / 1 / 1                                             | 1 / 1 / 1 / 1                                               |
+
+Each healthy account durably published its inventoried UID 1 while account 1
+remained invalid. Restoring account 1's valid credentials permitted the same
+pending UID to publish. Restoration-to-observed recovery boundary, including stop
+and audit, was **206.51 ms**. All **24** captured SQL boundaries passed the oracle
+and offline replay. Failure did not advance account 1's F, E or revision.
+
+## W=4 durable history, fresh visibility and restart
+
+Five real Dovecot accounts each imported 1,000 messages, with controlled expunges
+at actual UIDs 100 and 500. Independent UID/envelope enumeration retained **4,990**
+account-qualified identities. All five first admissions were fresh and distinct.
+Each account then committed exactly three 128-UID historical windows, preserving
+incomplete history throughout. E progressed **1001 → 873 → 745 → 617** per account.
+Recent metadata was durable after window one (128 placements/account); after window
+two each had 256 placements. No complete archive synchronization was required.
+
+Three old-dated messages per account were APPENDed while E=745 and history was
+incomplete. All **15** exact UID/Message-ID identities became independently visible
+in PostgreSQL. F advanced 1000→1003; E stayed **745** for every account. Window three
+then moved E to 617, with 387 placements/account. Stop/restart used the same database,
+first admitted fresh work for all five accounts, and preserved the complete saved
+frontier/epoch/revision/placement state exactly.
+
+The existing W=4 failure/recovery phase also passed: five invalid-password errors
+were confined to account 1, starting with 200/400/800 ms backoff. One further message
+per healthy account advanced F to 1004 while account 1 remained at 1003. After valid
+credential restoration, its further message advanced F to 1004. Final SQL state:
+
+| Account   | Epoch      | E progression    | Final F | Revision | History windows | Exact placements | Maximum initial-arrival visibility, ms |
+| --------- | ---------- | ---------------- | ------- | -------- | --------------- | ---------------- | -------------------------------------- |
+| stage3c-1 | 1791953403 | 1001→873→745→617 | 1004    | 5        | 3               | 388              | 375.07                                 |
+| stage3c-2 | 1791953406 | 1001→873→745→617 | 1004    | 6        | 3               | 388              | 5705.12                                |
+| stage3c-3 | 1791953411 | 1001→873→745→617 | 1004    | 5        | 3               | 388              | 5139.03                                |
+| stage3c-4 | 1791953416 | 1001→873→745→617 | 1004    | 5        | 3               | 388              | 5098.42                                |
+| stage3c-5 | 1791953420 | 1001→873→745→617 | 1004    | 5        | 3               | 388              | 5378.23                                |
+
+Account 2's extra revision corresponds to splitting the fresh arrivals across two
+durable publications; the independent audit reconstructs each consecutive revision
+and exact interval. All **15** W=4 SQL boundaries passed live verification and offline
+replay, including full placement account/epoch/UID/Message-ID comparisons and atomic
+publication audit. There were no duplicate placements, false frontier advances or
+account overlap. Fresh visibility measures APPEND acknowledgement to independent
+SQL visibility, with the observer active during the initial delivery batch. Maximum
+across all **20** injections (initial arrivals plus failure/recovery arrivals) was
+**5705.12 ms**. These are bounded smoke observations under 5-second polling, not a
+production latency guarantee. Healthy authentication round trips in W=4 were at
+most **51.46 ms**; the final penalty table was empty.
+
+## Resources, exact outcomes and remaining risk
+
+Peak scheduler-owned IMAP connections were **2 / 4** for W=2/W=4, observed owned
+PostgreSQL sockets peaked at **2** in each run, and per-account overlap was false.
+Final owned IMAP connections, PostgreSQL sockets and active scheduler slots were
+all **zero**. W=2's two measured stops took **1.23 / 9.15 ms**; W=4's ten measured
+scheduler stops took **0.16–0.79 ms**. Both executor stops completed. Both cleanup
+statuses were PASS with empty error lists; a post-run Docker label query found no
+remaining disposable Stage 3C containers.
+
+| Check                                                                                | Outcome                 |
+| ------------------------------------------------------------------------------------ | ----------------------- |
+| Effective live fixture penalty disabling; normal authentication and rejection        | PASS                    |
+| W=2 bounded backoff, four healthy durable publications and restored-account recovery | PASS                    |
+| W=2 independent F/E, epochs, revisions, placements and resources                     | PASS                    |
+| W=4 five accounts / approximately 5,000 seeded messages / initial fresh discovery    | PASS                    |
+| W=4 exactly three durable historical windows per account, incomplete history         | PASS                    |
+| W=4 old-dated fresh visibility, E preservation and resumed history                   | PASS                    |
+| W=4 restart against same SQL state and fresh-first admissions                        | PASS                    |
+| W=4 exact placements / revisions / epochs, no duplicates or false advancement        | PASS                    |
+| W=4 failure isolation and restored-account durable progress                          | PASS                    |
+| W/D/C limits, no account overlap, clean retirement and container cleanup             | PASS                    |
+| 300-second combined budget; one invocation per required scenario                     | PASS                    |
+| Focused harness preflight, offline boundary replay and changed-report formatting     | PASS                    |
+| Stage 1–3B regressions, soak, 50k benchmark and Stage 4 implementation               | NOT RUN — outside scope |
+
+**Stage 3C acceptance: PASS. Stage 4 readiness: the Stage 3C acceptance gate is met.**
+This authorizes no production wiring or Stage 4 work, and none was started. The
+historical intermittent W=4 teardown timeout was **not reproduced** in this single
+run; its intermittent nature remains a risk and is not proven resolved by ten fast
+stops. This is bounded acceptance, not soak or full-archive coverage. Existing W=2
+history/injection/restart evidence below combines with today's isolated W=2 failure
+check and complete controlled W=4 run to close the required acceptance gaps.
+
+## Retained independent evidence
+
+Two new immutable gzip artifacts preserve the original raw JSON, full SQL boundary
+snapshots/audit/placements, actual server inventories, passive per-turn traces,
+socket retirement and Dovecot logs. Earlier artifacts are unchanged. SHA-256 values
+are of the uncompressed JSON:
+
+| Artifact in experiments/imap-dovecot      | SHA-256                                                            | Replayed boundaries |
+| ----------------------------------------- | ------------------------------------------------------------------ | ------------------- |
+| stage3c-accepted-failure-evidence.json.gz | `8bba0d0e43d1eb85acf59ad7589d4701eed04ef8973da575b5ed1f42ee8edda9` | 24                  |
+| stage3c-accepted-w4-evidence.json.gz      | `cadc60c1403f8f75de89d6d04a54473cbe3e81299c52741afe0aad11e782415a` | 15                  |
+
+The raw files' NOT RUN entries describe the other invocation: W=4 is separate from
+the failure-only file, and completed W=2 history is intentionally excluded from the
+W=4-only file. The combined classifications above are authoritative for this task.
+Runtime JSON and launcher logs remain ignored. Only this report and new evidence
+artifacts changed; no fixture or harness correction was needed. Work stops at Stage 3C.
+
+---
+
 # Stage 3C — final acceptance attempt
 
 2026-10-13. **BLOCKED: fixture startup failed; acceptance remains PARTIAL.**
