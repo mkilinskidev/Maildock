@@ -25,9 +25,9 @@ export type ReceivingCoordinatorConfig = Readonly<{
   mailbox: string;
   authority: Readonly<{
     assertCurrent: () => void;
-    /** Isolated integration supplies renewal using Stage 1's lease row/owner.
-     * Must lock, recheck DB-clock expiry and refuse to revive a fenced owner.
-     * Runs inside a bounded Stage 1 transaction, before opening IMAP. */
+    /** Locked DB-clock authority check before opening IMAP. Stage 3 fixtures
+     * also renew here; Stage 4B renews at shared scheduler admission and uses
+     * this callback only to validate the same term under a SHARE lock. */
     renew: (db: ReceivingDatabase, owner: ReceivingOwner) => Promise<void>;
   }>;
   timing?: Partial<Record<keyof typeof RECEIVING_COORDINATOR_DEFAULTS, number>>;

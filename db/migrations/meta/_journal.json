@@ -260,6 +260,13 @@
       "when": 1791956703640,
       "tag": "0036_receiving_demand",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791970000000,
+      "tag": "0037_receiving_election",
+      "breakpoints": true
     }
   ]
 }

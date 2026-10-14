@@ -24,6 +24,7 @@ type Account = {
   retryMs: number;
   historySince?: number;
   initialFreshGranted: boolean;
+  wakeGeneration: number;
 };
 export type ReceivingAdmission = Readonly<{
   account: string;
@@ -63,6 +64,8 @@ export class ReceivingScheduler {
       historyAllowed?: () => boolean;
       /** Synchronous diagnostics, never used as authority or work producers. */
       onAdmission?: (admission: ReceivingAdmission) => void;
+      /** Elected lifecycle validates DB ownership before allocating a turn. */
+      beforeAdmission?: () => Promise<boolean>;
     }>,
   ) {
     this.config = {
@@ -105,6 +108,7 @@ export class ReceivingScheduler {
         retryAt: 0,
         retryMs: timing.retryMs,
         initialFreshGranted: false,
+        wakeGeneration: 0,
       };
     });
   }
@@ -119,6 +123,16 @@ export class ReceivingScheduler {
     this.cancellation.abort();
     this.wake?.();
     await this.lifetime;
+  }
+
+  /** Bounded local hint; neither completion nor durable demand acknowledgment. */
+  notify(accountId: string): void {
+    if (this.cancellation.signal.aborted) return;
+    const account = this.accounts.find((a) => a.config.account === accountId);
+    if (!account) return;
+    account.wakeGeneration++;
+    account.freshDue = performance.now();
+    this.wake?.();
   }
 
   get snapshot() {
@@ -233,6 +247,7 @@ export class ReceivingScheduler {
     selection: NonNullable<ReturnType<ReceivingScheduler["select"]>>,
   ) {
     const { account, kind, protectedHistory } = selection;
+    const wakeGeneration = account.wakeGeneration;
     const at = performance.now();
     account.active = true;
     if (kind === "fresh") account.initialFreshGranted = true;
@@ -266,7 +281,10 @@ export class ReceivingScheduler {
         );
         const now = performance.now();
         if (kind === "fresh")
-          account.freshDue = turn.moreFresh ? now : now + account.timing.pollMs;
+          account.freshDue =
+            turn.moreFresh || account.wakeGeneration !== wakeGeneration
+              ? now
+              : now + account.timing.pollMs;
         account.retryMs = account.timing.retryMs;
         account.retryAt = 0;
         account.historySince =
@@ -330,6 +348,16 @@ export class ReceivingScheduler {
       ) {
         const selection = this.select(performance.now());
         if (!selection) break;
+        if (this.config.beforeAdmission) {
+          let allowed = false;
+          try {
+            allowed = await this.config.beforeAdmission();
+          } catch {
+            // Failed/unknown authority is fail-closed, not account backoff.
+          }
+          if (!allowed) this.cancellation.abort();
+          if (this.cancellation.signal.aborted) break;
+        }
         this.admit(selection);
       }
       if (!this.cancellation.signal.aborted) await this.wait();

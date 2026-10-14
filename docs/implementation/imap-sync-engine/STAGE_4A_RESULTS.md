@@ -1,7 +1,8 @@
 # Stage 4A — Durable demand and account wake delivery
 
 2026-10-14. **PASS for isolated Stage 4A.** This does not establish receiving
-release readiness or resolve Stage 3C's failure-isolation/W=4 gaps.
+release readiness. Stage 3C completed with PASS at accepted commit
+`93c1fa948f677ea56c49550a3ec6bab1c776744b`.
 
 Branch: `feature/imap-sync-stage-4a-durable-wakes`, created directly from the
 requested accepted commit `93c1fa948f677ea56c49550a3ec6bab1c776744b` with a clean
@@ -183,6 +184,7 @@ recovery budget; this test does not prove a default-configuration recovery SLA.
 
 Account/folder cardinality and correlated pending-intent lookup costs need later
 deployment profiling; row/page/memory bounds are implemented, not a proven latency
-envelope under arbitrary database load. Stage 3C's accepted report remains
-PARTIAL for its real-server failure-isolation/W=4 scenarios. No Dovecot smoke,
+envelope under arbitrary database load. Stage 3C's accepted report is PASS at
+`93c1fa948f677ea56c49550a3ec6bab1c776744b`; the earlier failure-isolation/W=4
+gaps were closed by its final acceptance run. No Dovecot smoke,
 full suite, open-ended stress, provider release claim or Stage 4B work was done.
