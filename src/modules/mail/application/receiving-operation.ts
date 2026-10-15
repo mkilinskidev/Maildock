@@ -11,6 +11,16 @@ import type {
 } from "../../../shared/infrastructure/database/receiving-executor";
 import type { ReceivingOwner } from "../../../shared/infrastructure/database/receiving-authority";
 import { randomUUID } from "node:crypto";
+import {
+  listOwnedTopology,
+  selectOwnedDestination,
+  type SelectedDestination,
+  TOPOLOGY_LIMITS,
+} from "../../accounts/infrastructure/imap-topology";
+import {
+  prepareReceivingTopology,
+  type DestinationRole,
+} from "./receiving-topology";
 import { ReceivingUnresolvedError } from "../../../shared/infrastructure/database/receiving-executor";
 import {
   ReceivingPublication,
@@ -71,8 +81,9 @@ export type ReceivingIdentity =
   | Readonly<{ ephemeral: string }>;
 type Unit =
   | Readonly<{
-      kind: "repair" | "bootstrap" | "list" | "select" | "diagnostic";
+      kind: "repair" | "bootstrap" | "list" | "diagnostic";
     }>
+  | Readonly<{ kind: "select"; role?: DestinationRole }>
   | Readonly<{ kind: "store" | "move" | "exact-lookup"; pendingId: string }>
   | Readonly<{
       kind: "content-slice" | "attachment-slice";
@@ -124,7 +135,8 @@ export type OwnedReceivingClient = Pick<
   | "messageFlagsSet"
   | "messageMove"
   | "noop"
->;
+> &
+  Readonly<{ selectIdentity: (path: string) => Promise<SelectedDestination> }>;
 export type ReceivingOperationContext = Readonly<{
   phase: ReceivingOperationPhase;
   claim: ReceivingClaim | null;
@@ -154,6 +166,7 @@ type ReceivingOperationBody = (
 ) => Promise<ReceivingOperationResult>;
 export type ReceivingOperationHandler =
   | ReceivingOperationBody
+  | Readonly<{ topology: "list" | "select" }>
   | Readonly<{
       /** Trusted composition only. This phase has no client or arbitrary SQL port. */
       preNetwork: (
@@ -178,6 +191,12 @@ export type ReceivingOperationBoundary = Readonly<{
 }>;
 
 export function validateReceivingOperation(operation: ReceivingOperation) {
+  if (
+    operation.kind === "select" &&
+    operation.role !== undefined &&
+    !["sent", "trash", "archive", "drafts", "junk"].includes(operation.role)
+  )
+    throw new Error("Invalid selected destination role");
   if (
     ![
       "repair",
@@ -280,6 +299,14 @@ export async function runReceivingOperation(
   handler: NonNullable<ReceivingOperationHandlers[ReceivingOperationKind]>,
   lifetime: AbortSignal,
 ) {
+  const topologyKind =
+    typeof handler !== "function" && "topology" in handler
+      ? handler.topology
+      : undefined;
+  if (topologyKind && topologyKind !== operation.kind)
+    throw new Error("Topology handler kind mismatch");
+  let topology:
+    Awaited<ReturnType<typeof prepareReceivingTopology>> | undefined;
   const cancellation = new AbortController();
   const signal = AbortSignal.any([
     cancellation.signal,
@@ -287,7 +314,9 @@ export async function runReceivingOperation(
     ...(operation.signal ? [operation.signal] : []),
   ]);
   let live = true;
+  let topologyFailure: unknown;
   const guard = () => {
+    if (topologyFailure) throw topologyFailure;
     if (!live || signal.aborted || performance.now() >= operation.deadline)
       throw new Error("Receiving operation retired");
     boundary.assertCurrent();
@@ -522,6 +551,7 @@ export async function runReceivingOperation(
       [
         "connect",
         "list",
+        "selectIdentity",
         "getMailboxLock",
         "mailboxOpen",
         "search",
@@ -584,11 +614,23 @@ export async function runReceivingOperation(
               );
             mutationMayHaveExecuted = true;
           }
-          const result: unknown = Reflect.apply(
-            Reflect.get(client!, property),
-            client!,
-            args,
-          );
+          const result: unknown =
+            property === "list" && topologyKind === "list"
+              ? (topology!.collector.begin(client!),
+                listOwnedTopology(client!, topology!.collector))
+              : property === "selectIdentity"
+                ? topologyKind === "select"
+                  ? selectOwnedDestination(
+                      client!,
+                      String(args[0]),
+                      topology!.collector,
+                    )
+                  : (() => {
+                      throw new Error(
+                        "Destination identity requires typed SELECT admission",
+                      );
+                    })()
+                : Reflect.apply(Reflect.get(client!, property), client!, args);
           if (result instanceof Promise) {
             providerWork.add(result);
             void result
@@ -648,7 +690,20 @@ export async function runReceivingOperation(
     guard();
     capturedLifecycle = connection.receivingLifecycleVersion;
     phase = "PRE_NETWORK_CLAIM";
+    if (topologyKind) {
+      topology = await prepareReceivingTopology({
+        operation,
+        owner,
+        executor: boundary.executor,
+        lifecycle: capturedLifecycle,
+        signal,
+        assertCurrent: guard,
+      });
+      handler = topology.execute;
+    }
     if (typeof handler !== "function") {
+      if (!("preNetwork" in handler))
+        throw new Error("Unresolved topology handler");
       if (capturedLifecycle === undefined)
         throw new Error(
           "Prepared operation requires captured lifecycle identity",
@@ -679,9 +734,45 @@ export async function runReceivingOperation(
       ...imapOptions(connection),
       disableAutoIdle: true,
       disableCompression: true,
-      logger: false,
+      logger: topologyKind
+        ? {
+            debug() {},
+            info() {},
+            trace() {},
+            warn(entry: unknown) {
+              topologyFailure ??= new Error(
+                "IMAP diagnostic rejected topology",
+                { cause: entry },
+              );
+              cancellation.abort();
+            },
+            error(entry: unknown) {
+              topologyFailure ??= new Error(
+                "IMAP diagnostic rejected topology",
+                { cause: entry },
+              );
+              cancellation.abort();
+            },
+            fatal(entry: unknown) {
+              topologyFailure ??= new Error(
+                "IMAP diagnostic rejected topology",
+                { cause: entry },
+              );
+              cancellation.abort();
+            },
+          }
+        : false,
       maxLiteralSize: "maxBytes" in operation ? operation.maxBytes : 256 * 1024,
-      maxResponseSize: 256 * 1024,
+      maxResponseSize: topologyKind
+        ? TOPOLOGY_LIMITS.responseBytes
+        : 256 * 1024,
+      maxLineLength: topologyKind ? TOPOLOGY_LIMITS.responseBytes : undefined,
+      receivingResponse: topology
+        ? (response, request) => {
+            guard();
+            return topology!.collector.observe(response, request);
+          }
+        : undefined,
       receivingBytes: (() => {
         let bytes = 0;
         return (count: number) => {
@@ -689,15 +780,18 @@ export async function runReceivingOperation(
           bytes += count;
           if (
             bytes >
-            64 * 1024 +
-              ("maxBytes" in operation ? operation.maxBytes : 256 * 1024)
+            (topologyKind
+              ? TOPOLOGY_LIMITS.bytes
+              : 64 * 1024 +
+                ("maxBytes" in operation ? operation.maxBytes : 256 * 1024))
           )
             throw new Error("Receiving operation response budget exceeded");
         };
       })(),
     });
 
-    client.on("error", () => {
+    client.on("error", (error) => {
+      if (topologyKind) topologyFailure ??= error;
       // Prepared intents may settle a matching failure after actual retirement.
       // Existing admission-only handlers retain R03's error cancellation.
       if (typeof handler === "function") cancellation.abort();
@@ -775,7 +869,9 @@ export async function runReceivingOperation(
             throw new Error("Receiving result transition fenced");
           phase = "RESULT_PUBLICATION";
           const pending = boundary.executor.transaction(work, {
-            deadline: operation.deadline,
+            deadline: topologyKind
+              ? Math.min(operation.deadline, performance.now() + 2000)
+              : operation.deadline,
             signal,
           });
           sqlWork.add(pending);

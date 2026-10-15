@@ -60,7 +60,9 @@ function uniqueUids(uids: readonly bigint[]) {
 
 /** Unwired Stage 1 entry point: evidence is completed BEFORE DB admission. */
 export class ReceivingPersistence {
-  constructor(private readonly executor: ReceivingExecutor) {}
+  constructor(
+    private readonly executor: Pick<ReceivingExecutor, "transaction">,
+  ) {}
 
   bootstrap(
     owner: ReceivingOwner,
