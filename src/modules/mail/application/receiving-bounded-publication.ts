@@ -81,7 +81,7 @@ export class ReceivingBoundedPublication {
     operation: "move" | "append",
     intent: string,
     options: Options,
-    attempt = randomUUID(),
+    attempt: string = randomUUID(),
   ) {
     const c = this.capture(a);
     return this.transaction(async (db) => {
@@ -127,6 +127,7 @@ export class ReceivingBoundedPublication {
     attempt: string,
     evidence: Readonly<{
       kind: "append" | "lookup";
+      accepted?: true;
       complete: true;
       taggedOk: true;
       destinationEpoch: bigint | null;

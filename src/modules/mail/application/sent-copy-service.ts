@@ -17,6 +17,7 @@ import type {
 } from "../../accounts/domain/mail-provider";
 import type { OutgoingLock } from "../infrastructure/outgoing-lock";
 import { resolveMappedMailbox } from "./mailbox-role-service";
+import { receivingAccountEnrolled } from "./receiving-intents";
 
 export const SENT_COPY_FAILED =
   "Message sent, but the copy could not be saved to Sent.";
@@ -70,6 +71,9 @@ export class SentCopyService {
       !["pending", "saving", "saved"].includes(candidate.sentCopyStatus)
     )
       return;
+    // R13 is opt-in until R16. Enrolled accounts can only use elected APPEND
+    // and targeted lookup; the legacy worker must not resolve credentials/connect.
+    if (await receivingAccountEnrolled(this.db, candidate.accountId)) return;
     // Account/OAuth resolution must not consume another connection while the
     // outgoing session lock holds a reserved pool connection.
     let account: ProviderImapAccount | undefined;
@@ -89,6 +93,7 @@ export class SentCopyService {
         .where(eq(outgoingMessages.id, id));
       if (!row || row.status !== "sent" || row.sentCopyPolicy !== "maildock")
         return;
+      if (await receivingAccountEnrolled(db, row.accountId)) return;
       if (row.sentCopyStatus === "saved") {
         await this.requestSync(db, row);
         return;

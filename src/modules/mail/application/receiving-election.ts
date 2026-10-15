@@ -4,6 +4,7 @@ import {
 } from "../domain/receiving-attachment-limits";
 import { receivingDiagnosticHandler } from "./receiving-diagnostic";
 import { DISPLAY_CONTENT_BYTES } from "../domain/display-content-limits";
+import { DEFAULT_ATTACHMENT_LIMITS } from "../domain/attachments";
 import type {
   ReceivingOperation,
   ReceivingOperationHandlers,
@@ -68,6 +69,9 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   private contentSelection?: Promise<void>;
   private readonly selectedContent = new Set<string>();
   private contentCursor?: { at: string; id: string };
+  private sentSelection?: Promise<void>;
+  private readonly selectedSent = new Set<string>();
+  private sentCursor?: { at: string; id: string };
 
   constructor(
     private readonly config: Readonly<{
@@ -344,6 +348,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       void this.dispatchFlagCommands().catch(() => undefined);
       void this.dispatchContentRequests().catch(() => undefined);
       void this.dispatchAttachmentRequests().catch(() => undefined);
+      void this.dispatchSentCopies().catch(() => undefined);
       return true;
     } catch (error) {
       this.lose();
@@ -516,6 +521,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             void this.dispatchFlagCommands().catch(() => undefined);
             void this.dispatchContentRequests().catch(() => undefined);
             void this.dispatchAttachmentRequests().catch(() => undefined);
+            void this.dispatchSentCopies().catch(() => undefined);
           }
         });
       },
@@ -530,6 +536,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       await this.dispatchFlagCommands();
       await this.dispatchContentRequests();
       await this.dispatchAttachmentRequests();
+      await this.dispatchSentCopies();
     }
   }
 
@@ -599,6 +606,124 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.flagSelection = undefined;
     });
     return this.flagSelection;
+  }
+
+  /** Existing outgoing intent, selected in bounded pages. No queue or timer.
+   * Unenrolled Sent destinations first use R07 SELECT; never inventory history. */
+  dispatchSentCopies(): Promise<void> {
+    if (this.sentSelection) return this.sentSelection;
+    const handler = this.config.operationHandlers?.append;
+    if (
+      this.phase !== "owner" ||
+      !this.config.loadOperationConnection ||
+      !handler ||
+      typeof handler === "function" ||
+      !("sentCopy" in handler)
+    )
+      return Promise.resolve();
+    this.sentSelection = (async () => {
+      const rows = await this.control(async (db) => {
+        await this.validate(db, this.owner!);
+        const after = this.sentCursor
+          ? sql`and (o.updated_at,o.id)>(${this.sentCursor.at}::timestamptz,${this.sentCursor.id}::uuid)`
+          : sql``;
+        return db.execute(sql`with candidates as materialized (
+          select o.id,o.account_id,o.updated_at,o.receiving_attempt,o.sent_copy_status,o.sent_copy_mailbox_id,o.mime_blob_id,
+            case when o.mime_blob_id is null then octet_length(o.mime_base64)/4*3 - case when right(o.mime_base64,2)='==' then 2 when right(o.mime_base64,1)='=' then 1 else 0 end end as legacy_upper
+          from outgoing_messages o where o.status='sent' and o.sent_copy_policy='maildock'
+            and (o.sent_copy_status in ('pending','saving','uncertain') or (o.sent_copy_status='saved' and o.sent_copy_sync_pending))
+            and coalesce((o.receiving_attempt->>'observations')::integer,0)<3
+          ${after} order by o.updated_at,o.id limit 32
+        ) select o.*,o.updated_at::text as cursor_at,a.configuration_version,a.receiving_lifecycle_version,
+          (a.enabled and a.removal_requested_at is null) as account_active,
+          b.id as destination,b.remote_path,s.epoch,s.configuration_binding,coalesce(bl.size,o.legacy_upper) as mime_bytes,
+          (a.enabled and a.removal_requested_at is null and b.selectable and b.lifecycle_status='active') as eligible
+          from candidates o join mail_accounts a on a.id=o.account_id
+          left join mailbox_roles role on role.account_id=o.account_id and role.role='sent'
+          left join mailboxes b on b.id=case when o.receiving_attempt is null then role.mailbox_id else o.sent_copy_mailbox_id end
+          left join receiving_mailboxes s on s.mailbox_id=b.id left join blobs bl on bl.id=o.mime_blob_id
+          order by o.updated_at,o.id`);
+      });
+      this.assertCurrent();
+      const last = rows.at(-1);
+      this.sentCursor = last
+        ? { at: String(last.cursor_at), id: String(last.id) }
+        : undefined;
+      const accounts = new Set<string>();
+      for (const row of rows) {
+        const id = String(row.id),
+          account = String(row.account_id);
+        if (
+          row.account_active &&
+          !row.receiving_attempt &&
+          (!row.eligible ||
+            Number(row.mime_bytes) >
+              DEFAULT_ATTACHMENT_LIMITS.maxOutgoingMimeBytes ||
+            Number(row.mime_bytes) < 1)
+        ) {
+          await this.control(async (db) => {
+            await this.validate(db, this.owner!);
+            const owner = this.owner!;
+            await db.execute(
+              sql`select maildock_receiving_append_pending_failure(${owner.actor}::uuid,${owner.generation}::bigint,${account}::uuid,${row.configuration_version}::bigint,${row.receiving_lifecycle_version}::bigint,${id}::uuid,${!row.eligible ? "destination_unavailable" : "mime_unavailable"})`,
+            );
+          });
+          continue;
+        }
+        if (!row.eligible || accounts.has(account) || this.selectedSent.has(id))
+          continue;
+        accounts.add(account);
+        this.selectedSent.add(id);
+        const identity = {
+          account,
+          mailbox: String(row.destination),
+          configurationVersion: BigInt(row.configuration_version as string),
+          receivingLifecycleVersion: BigInt(
+            row.receiving_lifecycle_version as string,
+          ),
+        };
+        const marker = row.receiving_attempt as Record<string, unknown> | null;
+        // Original attempted identity cannot be selected/rebound to a replacement.
+        if (
+          marker &&
+          (marker.configuration !== String(identity.configurationVersion) ||
+            marker.lifecycle !== String(identity.receivingLifecycleVersion))
+        ) {
+          this.selectedSent.delete(id);
+          continue;
+        }
+        const selected =
+          row.epoch && row.configuration_binding === row.configuration_version;
+        const operation = !selected
+          ? { kind: "select" as const, role: "sent" as const }
+          : marker
+            ? {
+                kind: "exact-lookup" as const,
+                pendingId: id,
+                lookup: "sent-copy" as const,
+              }
+            : {
+                kind: "append" as const,
+                pendingId: id,
+                mimeBytes: Number(row.mime_bytes),
+              };
+        if (marker && !selected) {
+          this.selectedSent.delete(id);
+          continue;
+        }
+        void this.submit({
+          ...operation,
+          requestId: randomUUID(),
+          deadline: performance.now() + 10_000,
+          identity,
+        })
+          .catch(() => undefined)
+          .finally(() => this.selectedSent.delete(id));
+      }
+    })().finally(() => {
+      this.sentSelection = undefined;
+    });
+    return this.sentSelection;
   }
 
   /** Bounded R02 intent discovery on existing elected control opportunities. */
@@ -757,6 +882,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     await this.flagSelection?.catch(() => undefined);
     await this.contentSelection?.catch(() => undefined);
     await this.attachmentSelection?.catch(() => undefined);
+    await this.sentSelection?.catch(() => undefined);
     await this.retirement;
     // Release only AFTER socket/SQL retirement. Unknown server COMMIT still
     // conflicts with this UPDATE lock; failure leaves lease expiry as fallback.

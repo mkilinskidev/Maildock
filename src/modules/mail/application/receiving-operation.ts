@@ -1,4 +1,5 @@
 import { prepareReceivingAttachment } from "./receiving-attachment";
+import { prepareReceivingSentCopy } from "./receiving-sent-copy";
 import type { BlobStorage } from "../../../shared/application/blob-storage";
 import {
   RECEIVING_ATTACHMENT_BYTES,
@@ -101,7 +102,11 @@ type Unit =
       kind: "repair" | "bootstrap" | "list" | "diagnostic";
     }>
   | Readonly<{ kind: "select"; role?: DestinationRole }>
-  | Readonly<{ kind: "store" | "move" | "exact-lookup"; pendingId: string }>
+  | Readonly<{
+      kind: "store" | "move" | "exact-lookup";
+      pendingId: string;
+      lookup?: "sent-copy";
+    }>
   | Readonly<{
       kind: "content-slice" | "attachment-slice";
       pendingId: string;
@@ -195,6 +200,7 @@ export type ReceivingOperationHandler =
   | Readonly<{ flags: true }>
   | Readonly<{ content: true }>
   | Readonly<{ attachment: BlobStorage }>
+  | Readonly<{ sentCopy: BlobStorage; flags?: true }>
   | Readonly<{
       /** Trusted composition only. This phase has no client or arbitrary SQL port. */
       preNetwork: (
@@ -334,7 +340,17 @@ export async function runReceivingOperation(
   handler: NonNullable<ReceivingOperationHandlers[ReceivingOperationKind]>,
   lifetime: AbortSignal,
 ) {
-  const flagOperation = typeof handler !== "function" && "flags" in handler;
+  const sentStorage =
+    typeof handler !== "function" &&
+    "sentCopy" in handler &&
+    (operation.kind === "append" ||
+      (operation.kind === "exact-lookup" &&
+        (operation.lookup === "sent-copy" || !("flags" in handler))))
+      ? handler.sentCopy
+      : undefined;
+  const flagOperation =
+    !sentStorage && typeof handler !== "function" && "flags" in handler;
+  let sent: Awaited<ReturnType<typeof prepareReceivingSentCopy>> | undefined;
   const contentOperation =
     typeof handler !== "function" && "content" in handler;
   const attachmentOperation =
@@ -771,10 +787,12 @@ export async function runReceivingOperation(
               Buffer.byteLength(content) > operation.mimeBytes
             )
               throw new Error("APPEND payload exceeds admitted MIME policy");
+            if (!sent) throw new Error("APPEND requires R13 authority");
+            sent.authorize(args[0], args[1]);
           }
           if (
+            property !== "append" &&
             [
-              "append",
               "messageMove",
               "messageFlagsAdd",
               "messageFlagsRemove",
@@ -864,8 +882,8 @@ export async function runReceivingOperation(
     },
   }) as OwnedReceivingClient;
   const rejectDiagnostic = (entry: unknown) => {
-    if (flags || content || attachment) {
-      (flags ?? content ?? attachment)!.collector.reject();
+    if (flags || content || attachment || sent) {
+      (flags ?? content ?? attachment ?? sent)!.collector.reject();
       void retireSocket();
     } else {
       topologyFailure ??= new Error("IMAP diagnostic rejected topology", {
@@ -880,6 +898,39 @@ export async function runReceivingOperation(
     guard();
     capturedLifecycle = connection.receivingLifecycleVersion;
     phase = "PRE_NETWORK_CLAIM";
+    if (sentStorage) {
+      sent = await prepareReceivingSentCopy({
+        operation: { ...operation, signal },
+        owner,
+        lifecycle: capturedLifecycle,
+        storage: sentStorage,
+        assertCurrent: guard,
+        executor: {
+          transaction: (work, budget) => {
+            guard();
+            if (
+              sqlWork.size ||
+              (phase !== "PRE_NETWORK_CLAIM" &&
+                phase !== "CLAIM_SETTLED" &&
+                phase !== "NETWORK_RETIRED") ||
+              (client && !socketSettled)
+            )
+              throw new Error("Sent SQL phase fenced");
+            const pending = boundary.executor.transaction(work, budget);
+            sqlWork.add(pending);
+            void pending
+              .finally(() => sqlWork.delete(pending))
+              .catch(() => undefined);
+            return pending;
+          },
+        },
+      });
+      handler = sent.execute;
+      connection = await boundary.validate({ ...operation, signal });
+      guard();
+      if (connection.receivingLifecycleVersion !== capturedLifecycle)
+        throw new Error("Sent lifecycle changed after claim");
+    }
     if (flagOperation) {
       flags = await prepareReceivingFlags(
         { ...operation, signal },
@@ -953,7 +1004,11 @@ export async function runReceivingOperation(
         ? { disableBinary: true }
         : {}),
       logger:
-        topologyKind || flagOperation || contentOperation || attachmentOperation
+        topologyKind ||
+        flagOperation ||
+        contentOperation ||
+        attachmentOperation ||
+        sent
           ? {
               debug() {},
               info() {},
@@ -963,18 +1018,21 @@ export async function runReceivingOperation(
               fatal: rejectDiagnostic,
             }
           : false,
-      maxLiteralSize:
-        contentOperation || attachmentOperation
+      maxLiteralSize: sent
+        ? sent.mimeBytes
+        : contentOperation || attachmentOperation
           ? 32 * 1024
           : "maxBytes" in operation
             ? operation.maxBytes
             : 256 * 1024,
       maxResponseSize: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
-        : 256 * 1024,
+        : sent
+          ? sent.mimeBytes + 256 * 1024
+          : 256 * 1024,
       maxLineLength: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
-        : contentOperation || attachmentOperation
+        : contentOperation || attachmentOperation || sent
           ? 64 * 1024
           : undefined,
       receivingResponse: topology
@@ -997,7 +1055,12 @@ export async function runReceivingOperation(
                   guard();
                   return attachment!.collector.observe(response, request);
                 }
-              : undefined,
+              : sent
+                ? (response, request) => {
+                    guard();
+                    return sent!.collector.observe(response, request);
+                  }
+                : undefined,
       receivingBytes: (() => {
         let bytes = 0;
         return (count: number) => {
@@ -1007,10 +1070,12 @@ export async function runReceivingOperation(
             bytes >
             (topologyKind
               ? TOPOLOGY_LIMITS.bytes
-              : attachmentOperation
-                ? RECEIVING_ATTACHMENT_ENCODED_BYTES + 8 * 1024 * 1024
-                : (contentOperation ? CONTENT_PROTOCOL_BYTES : 64 * 1024) +
-                  ("maxBytes" in operation ? operation.maxBytes : 256 * 1024))
+              : sent
+                ? sent.mimeBytes + 1024 * 1024
+                : attachmentOperation
+                  ? RECEIVING_ATTACHMENT_ENCODED_BYTES + 8 * 1024 * 1024
+                  : (contentOperation ? CONTENT_PROTOCOL_BYTES : 64 * 1024) +
+                    ("maxBytes" in operation ? operation.maxBytes : 256 * 1024))
           )
             throw new Error("Receiving operation response budget exceeded");
         };
@@ -1022,7 +1087,7 @@ export async function runReceivingOperation(
       if (topologyKind) topologyFailure ??= error;
       // Prepared intents may settle a matching failure after actual retirement.
       // Existing admission-only handlers retain R03's error cancellation.
-      if (typeof handler === "function") cancellation.abort();
+      if (typeof handler === "function" && !sent) cancellation.abort();
       else void retireSocket();
     });
     guard();
@@ -1253,6 +1318,10 @@ export async function runReceivingOperation(
       } as const);
     }
   } catch (error) {
+    if (sent && !signal.aborted) {
+      await retireSocket();
+      await sent.fail();
+    }
     if (
       claim &&
       !publicationSettled &&

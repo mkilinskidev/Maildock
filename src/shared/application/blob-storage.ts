@@ -54,20 +54,30 @@ export async function readVerifiedBlob(
   storage: BlobStorage,
   blob: StoredBlob,
   maxBytes: number,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   if (blob.size > maxBytes || blob.size < 0) throw new BlobLimitError();
   const stream = await storage.open(blob.key);
-  const chunks: Buffer[] = [];
-  const hash = createHash("sha256");
-  let size = 0;
-  for await (const chunk of stream) {
-    const bytes = Buffer.from(chunk);
-    size += bytes.length;
-    if (size > maxBytes || size > blob.size) throw new BlobLimitError();
-    hash.update(bytes);
-    chunks.push(bytes);
+  const abort = () => stream.destroy(new Error("Blob read cancelled"));
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    signal?.throwIfAborted();
+    const chunks: Buffer[] = [];
+    const hash = createHash("sha256");
+    let size = 0;
+    for await (const chunk of stream) {
+      signal?.throwIfAborted();
+      const bytes = Buffer.from(chunk);
+      size += bytes.length;
+      if (size > maxBytes || size > blob.size) throw new BlobLimitError();
+      hash.update(bytes);
+      chunks.push(bytes);
+    }
+    if (size !== blob.size || hash.digest("hex") !== blob.sha256)
+      throw Error("Blob integrity check failed.");
+    return Buffer.concat(chunks, size);
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    stream.destroy();
   }
-  if (size !== blob.size || hash.digest("hex") !== blob.sha256)
-    throw Error("Blob integrity check failed.");
-  return Buffer.concat(chunks, size);
 }
