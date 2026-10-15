@@ -25,6 +25,9 @@ export type MetadataWindowOptions = Readonly<{
   assertCurrent: () => void;
   /** Additive Stage 3A selection; history remains the Stage 2 default. */
   kind?: "history" | "fresh";
+  /** Owned turn may publish a completed SELECT transition before another FETCH. */
+  allowIdentityTransition?: boolean;
+  selectOnly?: boolean;
 }>;
 
 export class MetadataWindowError extends Error {}
@@ -220,7 +223,10 @@ export async function fetchInboxMetadataWindow(
         throw new MetadataWindowError(`IMAP ${request.command} failed`);
       completed.set(request.command, (completed.get(request.command) ?? 0) + 1);
     }
-    if (request?.command === "SELECT" || request?.command === "EXAMINE") {
+    if (
+      request?.sent &&
+      (request.command === "SELECT" || request.command === "EXAMINE")
+    ) {
       const section = atom(response.attributes?.[0])?.section;
       if (section?.[0]?.value === "UIDVALIDITY") {
         if (selectedEpoch !== undefined)
@@ -416,7 +422,20 @@ export async function fetchInboxMetadataWindow(
       client.mailbox.uidNext !== selectedNext
     )
       throw new MetadataWindowError("Missing authoritative SELECT identity");
+    if (client.mailbox.exists > selectedNext - 1)
+      throw new MetadataWindowError("SELECT count exceeds UIDNEXT space");
     const epoch = BigInt(selectedEpoch);
+    if (
+      options.selectOnly ||
+      (options.allowIdentityTransition && expected && expected.epoch !== epoch)
+    )
+      return {
+        epoch,
+        uidNext: BigInt(selectedNext),
+        evidence: null,
+        metadata: [],
+        bytes,
+      };
     if (expected && expected.epoch !== epoch)
       throw new MetadataWindowError(
         "Selected UIDVALIDITY mismatches receiving epoch",

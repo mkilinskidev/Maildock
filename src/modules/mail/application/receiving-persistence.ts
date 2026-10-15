@@ -5,6 +5,8 @@ import type {
 } from "../../accounts/domain/mail-provider";
 import {
   claimReceiving,
+  assertReceivingAccount,
+  type ReceivingAccountIdentity,
   type ReceivingOwner,
   type ReceivingState,
 } from "../../../shared/infrastructure/database/receiving-authority";
@@ -39,7 +41,13 @@ export type ReceivingMutation =
       flags: readonly RemoteFlagDelta[];
       wrap: boolean;
     }>
-  | Readonly<{ kind: "epoch"; complete: true; epoch: bigint; uidNext: bigint }>;
+  | Readonly<{
+      kind: "epoch";
+      complete: true;
+      epoch: bigint;
+      uidNext: bigint;
+      rebind?: boolean;
+    }>;
 
 function uniqueUids(uids: readonly bigint[]) {
   if (
@@ -54,14 +62,35 @@ function uniqueUids(uids: readonly bigint[]) {
 export class ReceivingPersistence {
   constructor(private readonly executor: ReceivingExecutor) {}
 
+  bootstrap(
+    owner: ReceivingOwner,
+    mailbox: string,
+    identity: ReceivingAccountIdentity,
+    evidence: { complete: true; epoch: bigint; uidNext: bigint },
+    options: Parameters<ReceivingExecutor["transaction"]>[1],
+  ) {
+    owner = { ...owner };
+    identity = { ...identity };
+    evidence = { ...evidence };
+    if (evidence.complete !== true)
+      throw new Error("Incomplete bootstrap SELECT");
+    return this.executor.transaction(async (db) => {
+      await db.execute(
+        sql`select maildock_receiving_bootstrap(${owner.actor}::uuid,${owner.generation}::bigint,${identity.account}::uuid,${identity.configuration}::bigint,${identity.lifecycle}::bigint,${mailbox}::uuid,${evidence.epoch}::bigint,${evidence.uidNext}::bigint)`,
+      );
+    }, options);
+  }
+
   initialize(
     owner: ReceivingOwner,
     mailbox: string,
     evidence: { complete: true; epoch: bigint; uidNext: bigint },
     options: Parameters<ReceivingExecutor["transaction"]>[1],
+    identity?: ReceivingAccountIdentity,
   ) {
     owner = { ...owner };
     evidence = { ...evidence };
+    identity = identity ? { ...identity } : undefined;
     if (
       evidence.complete !== true ||
       evidence.epoch < 1n ||
@@ -71,6 +100,7 @@ export class ReceivingPersistence {
     )
       throw new Error("Invalid receiving SELECT evidence");
     return this.executor.transaction(async (db) => {
+      if (identity) await assertReceivingAccount(db, identity);
       await db.execute(
         sql`select maildock_receiving_initialize(${owner.actor}::uuid,${owner.generation}::bigint,${mailbox}::uuid,${evidence.epoch}::bigint,${evidence.uidNext}::bigint)`,
       );
@@ -83,6 +113,7 @@ export class ReceivingPersistence {
     expected: ReceivingState,
     mutation: ReceivingMutation,
     options: Parameters<ReceivingExecutor["transaction"]>[1],
+    identity?: ReceivingAccountIdentity,
   ) {
     if (!["fresh", "history", "repair", "epoch"].includes(mutation.kind))
       throw new Error("Unsupported receiving mutation kind");
@@ -109,13 +140,14 @@ export class ReceivingPersistence {
     mutation = structuredClone(mutation);
     expected = { ...expected };
     owner = { ...owner };
+    identity = identity ? { ...identity } : undefined;
     let next = { ...expected, revision: expected.revision + 1n };
     if (mutation.kind === "epoch") {
       if (
         mutation.complete !== true ||
         mutation.epoch < 1n ||
         mutation.epoch > UID_MAX ||
-        mutation.epoch === expected.epoch ||
+        (mutation.epoch === expected.epoch && !(mutation.rebind && identity)) ||
         mutation.uidNext < 1n ||
         mutation.uidNext > UID_MAX + 1n
       )
@@ -184,6 +216,7 @@ export class ReceivingPersistence {
     }
     return this.executor.transaction(async (db) => {
       await claimReceiving(db, owner, mailbox, expected);
+      if (identity) await assertReceivingAccount(db, identity);
       const [folder] = await db
         .select({ account: mailboxes.accountId })
         .from(mailboxes)
@@ -197,7 +230,7 @@ export class ReceivingPersistence {
         // Verify the exact durable keyset page under the mailbox lock. Caller
         // cannot wrap R or omit an unvisited placement merely by setting a flag.
         const page = await db.execute(
-          sql`select uid from mailbox_messages where mailbox_id=${mailbox}::uuid and uid_validity=${expected.epoch}::bigint and uid>${expected.reconcileAfter}::bigint order by uid limit 128`,
+          sql`select uid from mailbox_messages where mailbox_id=${mailbox}::uuid and configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid) and uid_validity=${expected.epoch}::bigint and uid>${expected.reconcileAfter}::bigint order by uid limit 128`,
         );
         if (
           page.length !== mutation.known.length ||
@@ -210,11 +243,11 @@ export class ReceivingPersistence {
         for (const uid of mutation.known)
           if (!mutation.present.includes(uid))
             await db.execute(
-              sql`delete from mailbox_messages where mailbox_id=${mailbox}::uuid and uid_validity=${expected.epoch}::bigint and uid=${uid}::bigint`,
+              sql`delete from mailbox_messages where mailbox_id=${mailbox}::uuid and configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid) and uid_validity=${expected.epoch}::bigint and uid=${uid}::bigint`,
             );
         for (const flag of mutation.flags)
           await db.execute(
-            sql`update mailbox_messages set flags=ARRAY(select jsonb_array_elements_text(${JSON.stringify([...flag.flags])}::jsonb)),modseq=${flag.modseq ?? null}::bigint where mailbox_id=${mailbox}::uuid and uid_validity=${expected.epoch}::bigint and uid=${flag.uid}::bigint and (${flag.modseq ?? null}::bigint is null or modseq is null or modseq<=${flag.modseq ?? null}::bigint)`,
+            sql`update mailbox_messages set flags=ARRAY(select jsonb_array_elements_text(${JSON.stringify([...flag.flags])}::jsonb)),modseq=${flag.modseq ?? null}::bigint where mailbox_id=${mailbox}::uuid and configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid) and uid_validity=${expected.epoch}::bigint and uid=${flag.uid}::bigint and (${flag.modseq ?? null}::bigint is null or modseq is null or modseq<=${flag.modseq ?? null}::bigint)`,
           );
       } else {
         // One bounded exact-set lookup replaces 128 serial round trips. claim
@@ -227,6 +260,7 @@ export class ReceivingPersistence {
                 and(
                   eq(mailboxMessages.mailboxId, mailbox),
                   eq(mailboxMessages.uidValidity, expected.epoch),
+                  sql`${mailboxMessages.configurationBinding}=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid)`,
                   inArray(
                     mailboxMessages.uid,
                     mutation.metadata.map((m) => BigInt(m.uid)),
@@ -247,7 +281,7 @@ export class ReceivingPersistence {
         );
       }
       await db.execute(
-        sql`update receiving_mailboxes set epoch=${next.epoch}::bigint,revision=${next.revision}::bigint,fresh_through=${next.freshThrough}::bigint,history_before=${next.historyBefore}::bigint,reconcile_after=${next.reconcileAfter}::bigint where mailbox_id=${mailbox}::uuid`,
+        sql`update receiving_mailboxes set epoch=${next.epoch}::bigint,revision=${next.revision}::bigint,fresh_through=${next.freshThrough}::bigint,history_before=${next.historyBefore}::bigint,reconcile_after=${next.reconcileAfter}::bigint,configuration_binding=coalesce(${mutation.kind === "epoch" ? (identity?.configuration ?? null) : null}::bigint,configuration_binding) where mailbox_id=${mailbox}::uuid`,
       );
       return next;
     }, options);

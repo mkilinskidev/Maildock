@@ -118,7 +118,7 @@ describe("Stage 4B elected receiving ownership, isolated processes/PostgreSQL", 
     cleanups.push(() => exec.stop());
     return exec;
   };
-  async function account() {
+  async function account(withMailbox = true) {
     const id = randomUUID(),
       mailbox = randomUUID();
     await database.db.insert(mailAccounts).values({
@@ -141,15 +141,16 @@ describe("Stage 4B elected receiving ownership, isolated processes/PostgreSQL", 
       smtpPort: 465,
       smtpSecurity: "tls",
     });
-    await database.db.insert(mailboxes).values({
-      id: mailbox,
-      accountId: id,
-      remotePath: "INBOX",
-      name: "INBOX",
-      selectable: true,
-      firstDiscoveredAt: new Date(),
-      lastDiscoveredAt: new Date(),
-    });
+    if (withMailbox)
+      await database.db.insert(mailboxes).values({
+        id: mailbox,
+        accountId: id,
+        remotePath: "INBOX",
+        name: "INBOX",
+        selectable: true,
+        firstDiscoveredAt: new Date(),
+        lastDiscoveredAt: new Date(),
+      });
     return { id, mailbox };
   }
   async function peer(options: WindowPeerOptions = {}) {
@@ -247,6 +248,59 @@ describe("Stage 4B elected receiving ownership, isolated processes/PostgreSQL", 
     });
     return { child, command, events, resume, kill };
   }
+
+  it("R06 two processes contest zero-mailbox bootstrap; only elected process publishes one canonical INBOX", async () => {
+    const a = await account(false);
+    const p1 = await peer({ uids: [], uidNext: 1 }),
+      p2 = await peer({ uids: [], uidNext: 1 });
+    const c1 = await processCoordinator(p1.connection),
+      c2 = await processCoordinator(p2.connection);
+    const results = await Promise.all([
+      c1.command("elect"),
+      c2.command("elect"),
+    ]);
+    expect(results.map((r) => r.result).sort()).toEqual([false, true]);
+    await until(
+      async () =>
+        (
+          await reader`select count(*)::int n from receiving_mailboxes s join mailboxes m on m.id=s.mailbox_id where m.account_id=${a.id}`
+        )[0].n === 1,
+    );
+    const followerPeer = results[0].result ? p2 : p1;
+    expect(followerPeer.peers).toHaveLength(0);
+    const folders =
+      await reader`select m.*,s.epoch,s.revision from mailboxes m join receiving_mailboxes s on s.mailbox_id=m.id where m.account_id=${a.id}`;
+    expect(folders).toHaveLength(1);
+    expect(folders[0].epoch).toBe("7");
+    expect(folders[0].revision).toBe("0");
+  });
+
+  it("R06 process crash during SELECT leaves no identity; successor bootstraps after locked takeover", async () => {
+    const a = await account(false);
+    const broken = await peer({ uids: [], uidNext: 1, select: "hung" }),
+      good = await peer({ uids: [], uidNext: 1 });
+    const old = await processCoordinator(broken.connection),
+      next = await processCoordinator(good.connection);
+    expect((await old.command("elect")).result).toBe(true);
+    await until(() =>
+      broken.commands.some((c) => /^(SELECT|EXAMINE) /.test(c.command)),
+    );
+    await old.kill();
+    expect(
+      await reader`select id from mailboxes where account_id=${a.id}`,
+    ).toHaveLength(0);
+    await leaseExpired();
+    expect((await next.command("elect")).result).toBe(true);
+    await until(
+      async () =>
+        (
+          await reader`select count(*)::int n from receiving_mailboxes s join mailboxes m on m.id=s.mailbox_id where m.account_id=${a.id}`
+        )[0].n === 1,
+    );
+    expect(
+      await reader`select id from mailboxes where account_id=${a.id}`,
+    ).toHaveLength(1);
+  });
 
   it("R03 typed diagnostics use the winning process only and stale takeover clients cannot resume", async () => {
     const p1 = await peer(),

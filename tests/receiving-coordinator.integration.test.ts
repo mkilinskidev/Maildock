@@ -533,7 +533,7 @@ describe("single-account autonomous receiving coordinator", () => {
     expect(BigInt((await state()).history_before)).toBe(257n);
   });
 
-  it("UIDVALIDITY replacement fails closed with no old-epoch publication", async () => {
+  it("UIDVALIDITY replacement commits empty coverage before new-epoch metadata", async () => {
     const exec = executor();
     await initialize(exec);
     const peer = await wire({
@@ -542,11 +542,21 @@ describe("single-account autonomous receiving coordinator", () => {
       epoch: 8,
       boundedMailbox: true,
     });
-    const run = coordinator(peer, exec);
-    await until(() => run.errors.length === 1, 5000);
-    await run.instance.stop();
-    expect(BigInt((await state()).epoch)).toBe(7n);
-    expect(BigInt((await state()).fresh_through)).toBe(256n);
+    const result = await receiveInboxTurn(
+      {
+        connection: peer.connection,
+        executor: exec,
+        owner: owner(),
+        account,
+        mailbox,
+        options: { kind: "fresh", ...budget(), assertCurrent() {} },
+      },
+      peer.createClient,
+    );
+    expect(result.identityTransition).toBe(true);
+    expect(result.moreFresh).toBe(true);
+    expect(BigInt((await state()).epoch)).toBe(8n);
+    expect(BigInt((await state()).fresh_through)).toBe(257n);
     expect(peer.commands.some((c) => c.command.startsWith("UID SEARCH"))).toBe(
       false,
     );

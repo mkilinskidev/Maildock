@@ -302,6 +302,13 @@
       "when": 1792020000000,
       "tag": "0042_receiving_active_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792030000000,
+      "tag": "0043_receiving_inbox_identity",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,7 @@ import {
   type MetadataWindowOptions,
 } from "../../accounts/infrastructure/imap-metadata-window";
 import {
-  recoverReceivingEnrollment,
+  recoverInboxIdentity,
   recoverReceiving,
   type ReceivingOwner,
 } from "../../../shared/infrastructure/database/receiving-authority";
@@ -21,13 +21,16 @@ export async function receiveInboxTurn(
     owner: ReceivingOwner;
     account: string;
     mailbox: string;
+    bootstrap?: boolean;
+    configurationVersion?: bigint;
+    receivingLifecycleVersion?: bigint;
     options: MetadataWindowOptions & { kind: "fresh" | "history" };
   }>,
   createClient?: Parameters<typeof fetchInboxMetadataWindow>[3],
 ) {
   const connection = structuredClone(input.connection);
   const owner = { ...input.owner };
-  const { executor, account, mailbox } = input;
+  const { executor, account } = input;
   const options = { ...input.options };
   const guard = () => {
     if (options.signal?.aborted || performance.now() >= options.deadline)
@@ -41,30 +44,69 @@ export async function receiveInboxTurn(
       signal: options.signal,
     };
   };
-  let expected = await recoverReceivingEnrollment(
+  const recovered = await recoverInboxIdentity(
     executor,
     owner,
     account,
-    mailbox,
+    input.mailbox,
+    input.bootstrap ?? false,
+    input.configurationVersion,
+    input.receivingLifecycleVersion,
     dbOptions(),
   );
+  const { mailbox, identity } = recovered;
+  let expected = recovered.state;
+  const rebind =
+    expected !== null && recovered.binding !== identity.configuration;
   guard();
   const window = await fetchInboxMetadataWindow(
     connection,
     expected,
-    options,
+    {
+      ...options,
+      allowIdentityTransition: true,
+      selectOnly: rebind || recovered.missing,
+    },
     createClient,
   );
   guard();
   const persistence = new ReceivingPersistence(executor);
+  if (recovered.missing) {
+    await persistence.bootstrap(
+      owner,
+      mailbox,
+      identity,
+      { complete: true, epoch: window.epoch, uidNext: window.uidNext },
+      dbOptions(),
+    );
+    expected = await recoverReceiving(executor, owner, mailbox, dbOptions());
+  }
   if (!expected) {
     await persistence.initialize(
       owner,
       mailbox,
       { complete: true, epoch: window.epoch, uidNext: window.uidNext },
       dbOptions(),
+      identity,
     );
     expected = await recoverReceiving(executor, owner, mailbox, dbOptions());
+  }
+  if (rebind || expected.epoch !== window.epoch) {
+    const state = await persistence.persist(
+      owner,
+      mailbox,
+      expected,
+      {
+        kind: "epoch",
+        complete: true,
+        epoch: window.epoch,
+        uidNext: window.uidNext,
+        rebind,
+      },
+      dbOptions(),
+      identity,
+    );
+    return { state, count: 0, moreFresh: true, identityTransition: true };
   }
   guard();
   const state = window.evidence
@@ -78,6 +120,7 @@ export async function receiveInboxTurn(
           metadata: window.metadata,
         },
         dbOptions(),
+        identity,
       )
     : expected;
   return {

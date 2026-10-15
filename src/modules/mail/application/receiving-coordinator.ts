@@ -24,6 +24,8 @@ export type ReceivingCoordinatorConfig = Readonly<{
   owner: ReceivingOwner;
   account: string;
   configurationVersion?: bigint;
+  receivingLifecycleVersion?: bigint;
+  bootstrap?: boolean;
   mailbox: string;
   authority: Readonly<{
     assertCurrent: () => void;
@@ -153,7 +155,7 @@ export class ReceivingCoordinator {
           this.cancellation.signal,
         );
         this.state = turn.state;
-        if (kind === "fresh")
+        if (kind === "fresh" || turn.identityTransition)
           this.freshDue = turn.moreFresh
             ? 0
             : performance.now() + this.timing.pollMs;

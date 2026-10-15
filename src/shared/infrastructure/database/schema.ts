@@ -1127,6 +1127,7 @@ export const mailboxMessages = pgTable(
       table.mailboxId,
       table.uidValidity,
       table.uid,
+      table.configurationBinding,
     ),
     index("mailbox_messages_mailbox_idx").on(table.mailboxId),
     index("mailbox_messages_message_idx").on(table.messageId),

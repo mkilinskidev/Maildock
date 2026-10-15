@@ -414,7 +414,7 @@ export class ReceivingScheduler {
           this.cancellation.signal,
         );
         const now = performance.now();
-        if (kind === "fresh")
+        if (kind === "fresh" || turn.identityTransition)
           account.freshDue =
             turn.moreFresh || account.wakeGeneration !== wakeGeneration
               ? now
@@ -427,6 +427,12 @@ export class ReceivingScheduler {
               ? now
               : (account.historySince ?? now)
             : undefined;
+        if (turn.identityTransition) {
+          // Replacement is a recovery boundary. Even an aged history exception
+          // must wait for this identity's first current opportunity.
+          account.initialFreshGranted = false;
+          account.historySince = undefined;
+        }
         account.active = false;
         this.active.delete(task);
         this.diagnostic(() => account.config.onTurn?.(kind, turn));

@@ -19,6 +19,7 @@ import { ReceivingScheduler } from "./receiving-scheduler";
 type Candidate = Readonly<{
   account: string;
   mailbox: string;
+  bootstrap: boolean;
   /** Snapshot hints only. Every turn reloads F/E under Stage 1 locks. Startup
    * grants fresh even for quiet/history-only accounts to repair missed hints. */
   due: boolean;
@@ -241,13 +242,13 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         await this.validate(db, owner);
         const max = this.config.maxAccounts ?? 128;
         const rows = await db.execute(sql`
-          select a.id as account, a.configuration_version, m.id as mailbox,
+          select a.id as account, a.configuration_version, a.receiving_lifecycle_version, m.id as mailbox,
             (a.receiving_due_at<=clock_timestamp() or m.receiving_due_at<=clock_timestamp()
               or s.mailbox_id is null) as due,
             coalesce(s.history_before>1,false) as history_pending
-          from mail_accounts a join mailboxes m on m.account_id=a.id
+          from mail_accounts a left join mailboxes m on m.account_id=a.id and m.remote_path='INBOX'
           left join receiving_mailboxes s on s.mailbox_id=m.id
-          where a.enabled and m.remote_path='INBOX' and m.selectable and m.lifecycle_status='active'
+          where a.enabled and (m.id is null or (m.selectable and m.lifecycle_status='active'))
           order by a.id limit ${max + 1}`);
         if (rows.length > max)
           throw new Error("Receiving candidate capacity exceeded");
@@ -256,7 +257,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           this.assertCurrent();
           const candidate = {
             account: row.account as string,
-            mailbox: row.mailbox as string,
+            mailbox: (row.mailbox as string | null) ?? randomUUID(),
+            bootstrap: row.mailbox === null,
             due: row.due === true,
             historyPending: row.history_pending === true,
           };
@@ -267,7 +269,14 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           )
             throw new Error("Receiving candidate identity mismatch");
           const version = BigInt(row.configuration_version as string);
-          result.push({ ...account, configurationVersion: version });
+          result.push({
+            ...account,
+            bootstrap: candidate.bootstrap,
+            configurationVersion: version,
+            receivingLifecycleVersion: BigInt(
+              row.receiving_lifecycle_version as string,
+            ),
+          });
         }
         return result;
       }, this.budget());
@@ -285,7 +294,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
                 db,
                 account.account,
                 account.configurationVersion!,
-                account.mailbox,
+                account.bootstrap ? undefined : account.mailbox,
               );
             },
           },
