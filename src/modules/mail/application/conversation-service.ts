@@ -71,7 +71,7 @@ export class ConversationService {
         JOIN conversation_members cm ON cm.message_id = m.id AND cm.account_id = m.account_id
         JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
         JOIN mail_accounts a ON a.id = m.account_id
-        WHERE ${allInboxes ? sql`a.enabled AND b.selectable AND b.lifecycle_status = 'active' AND upper(b.remote_path) = 'INBOX'` : sql`p.mailbox_id = ${mailboxId}::uuid AND m.account_id = ${accountId}::uuid`} AND NOT p.action_hidden
+        WHERE ${allInboxes ? sql`(a.enabled OR maildock_receiving_account_enrolled(a.id)) AND b.selectable AND b.lifecycle_status = 'active' AND upper(b.remote_path) = 'INBOX'` : sql`p.mailbox_id = ${mailboxId}::uuid AND m.account_id = ${accountId}::uuid`} AND NOT p.action_hidden
       ) SELECT relevant.*, (SELECT count(*)::int FROM conversation_members members
         WHERE members.account_id = relevant.account_id AND members.conversation_id = relevant.conversation_id
           AND (NOT maildock_receiving_account_enrolled(members.account_id) OR EXISTS(
@@ -129,7 +129,7 @@ export class ConversationService {
         AND b.lifecycle_status = 'active' AND b.selectable
         ORDER BY ${preferredMailboxId ? sql`(p.mailbox_id = ${preferredMailboxId}::uuid) DESC,` : sql``} p.mailbox_id LIMIT 1
       ) p ON true
-      ${metadataOnly ? sql`` : sql`LEFT JOIN message_contents c ON c.message_id = m.id`}
+      ${metadataOnly ? sql`` : sql`LEFT JOIN message_contents c ON c.message_id = m.id AND maildock_receiving_visible_resource(c.message_id,c.source_mailbox_id,c.source_uid_validity,c.source_uid,c.source_configuration_binding)`}
       WHERE cm.account_id = ${accountId}::uuid AND m.account_id = ${accountId}::uuid
         AND (NOT maildock_receiving_account_enrolled(m.account_id) OR p.mailbox_id IS NOT NULL)
         AND cm.conversation_id = coalesce(

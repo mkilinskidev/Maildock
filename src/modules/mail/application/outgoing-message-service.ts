@@ -1,3 +1,4 @@
+import { visibleAttachment, matchingComposeSource } from "./active-identity";
 import type { ApplicationEventName } from "../../diagnostics/domain/application-event";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { DraftConflictError } from "../domain/draft";
@@ -25,7 +26,7 @@ import {
   mailAccounts,
   outgoingMessages,
   messages,
-  mailboxMessages,
+  messagePlacementProjection as mailboxMessages,
   mailboxes,
   blobs,
   stagedAttachments,
@@ -171,7 +172,9 @@ export class OutgoingMessageService {
         inReplyTo: null as string | null,
         references: [] as string[],
       };
-      if (source) {
+      if (draft && source?.thread) {
+        thread = source.thread;
+      } else if (source) {
         const [original] = await tx
           .select({ message: messages })
           .from(messages)
@@ -186,9 +189,11 @@ export class OutgoingMessageService {
               eq(messages.accountId, source.accountId),
               eq(mailboxes.accountId, source.accountId),
               eq(mailboxes.id, source.mailboxId),
+              eq(mailboxMessages.actionHidden, false),
+              matchingComposeSource(source),
             ),
           )
-          .for("share");
+          .for("share", { of: messages });
         if (!original)
           throw new OutgoingValidationError(
             "The source message is unavailable in this account and mailbox.",
@@ -273,6 +278,7 @@ export class OutgoingMessageService {
                 eq(messageAttachments.messageId, source.messageId),
                 eq(messageAttachments.status, "ready"),
                 eq(messageAttachments.visible, true),
+                visibleAttachment(),
               ),
             )
             .for("share");

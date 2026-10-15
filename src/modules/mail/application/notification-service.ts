@@ -1,10 +1,10 @@
-import { and, eq, gt, lt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, sql, getTableColumns } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   instanceState,
   mailAccounts,
   mailboxes,
-  mailboxMessages,
+  messagePlacementProjection as mailboxMessages,
   notificationEvents,
 } from "../../../shared/infrastructure/database/schema";
 import {
@@ -74,39 +74,40 @@ export class NotificationService {
         return { preferences, events: [] };
       }
       const rows = await tx
-        .select()
+        .select({
+          ...getTableColumns(notificationEvents),
+          enabled: mailAccounts.enabled,
+          accountName: mailAccounts.displayName,
+          remotePath: mailboxes.remotePath,
+          specialUse: mailboxes.specialUse,
+        })
         .from(notificationEvents)
+        .innerJoin(
+          mailboxes,
+          and(
+            eq(mailboxes.id, notificationEvents.mailboxId),
+            eq(mailboxes.accountId, notificationEvents.accountId),
+            eq(mailboxes.lifecycleStatus, "active"),
+            eq(mailboxes.uidValidity, notificationEvents.uidValidity),
+          ),
+        )
+        .innerJoin(mailAccounts, eq(mailAccounts.id, mailboxes.accountId))
+        .innerJoin(
+          mailboxMessages,
+          and(
+            eq(mailboxMessages.mailboxId, mailboxes.id),
+            eq(mailboxMessages.messageId, notificationEvents.messageId),
+            eq(mailboxMessages.uidValidity, notificationEvents.uidValidity),
+            eq(mailboxMessages.uid, notificationEvents.uid),
+            eq(mailboxMessages.actionHidden, false),
+          ),
+        )
         .where(gt(notificationEvents.sequence, state.notificationCheckpoint))
         .orderBy(notificationEvents.sequence)
         .limit(50);
       const events = [];
       for (const row of rows) {
-        const [context] = await tx
-          .select({
-            enabled: mailAccounts.enabled,
-            accountName: mailAccounts.displayName,
-            remotePath: mailboxes.remotePath,
-            specialUse: mailboxes.specialUse,
-          })
-          .from(mailboxes)
-          .innerJoin(mailAccounts, eq(mailAccounts.id, mailboxes.accountId))
-          .innerJoin(
-            mailboxMessages,
-            and(
-              eq(mailboxMessages.mailboxId, mailboxes.id),
-              eq(mailboxMessages.messageId, row.messageId),
-              eq(mailboxMessages.uidValidity, row.uidValidity),
-              eq(mailboxMessages.uid, row.uid),
-            ),
-          )
-          .where(
-            and(
-              eq(mailboxes.id, row.mailboxId),
-              eq(mailboxes.accountId, row.accountId),
-              eq(mailboxes.lifecycleStatus, "active"),
-              eq(mailboxes.uidValidity, row.uidValidity),
-            ),
-          );
+        const context = row;
         if (
           !context?.enabled ||
           !matchesNotificationPreferences(

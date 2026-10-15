@@ -1,5 +1,6 @@
+import { visibleAttachment } from "./active-identity";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   blobs,
@@ -42,7 +43,9 @@ export async function listAttachmentMetadata(db: Database, messageId: string) {
     .select({ attachment: messageAttachments, size: blobs.size })
     .from(messageAttachments)
     .leftJoin(blobs, eq(blobs.id, messageAttachments.blobId))
-    .where(eq(messageAttachments.messageId, messageId))
+    .where(
+      and(eq(messageAttachments.messageId, messageId), visibleAttachment()),
+    )
     .orderBy(messageAttachments.partId);
   return rows.map(({ attachment: a, size }) => ({
     id: a.id,

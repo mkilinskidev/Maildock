@@ -28,6 +28,7 @@ export type MailboxView = Readonly<{
   messageCount: string | null;
   unseenCount: string | null;
   synchronizedMessageCount: string;
+  countsIncludePendingActions?: boolean;
   lifecycleStatus: "active" | "missing";
   firstDiscoveredAt: string;
   lastDiscoveredAt: string;
@@ -64,7 +65,11 @@ export type MailboxView = Readonly<{
   }>;
 }>;
 
-function view(row: MailboxRow, synchronizedMessageCount: string): MailboxView {
+function view(
+  row: MailboxRow,
+  synchronizedMessageCount: string,
+  countsIncludePendingActions = false,
+): MailboxView {
   return {
     id: row.id,
     remotePath: row.remotePath,
@@ -81,6 +86,9 @@ function view(row: MailboxRow, synchronizedMessageCount: string): MailboxView {
     messageCount: row.reportedMessageCount?.toString() ?? null,
     unseenCount: row.reportedUnseenCount?.toString() ?? null,
     synchronizedMessageCount,
+    ...(countsIncludePendingActions
+      ? { countsIncludePendingActions: true }
+      : {}),
     lifecycleStatus: row.lifecycleStatus as "active" | "missing",
     firstDiscoveredAt: row.firstDiscoveredAt.toISOString(),
     lastDiscoveredAt: row.lastDiscoveredAt.toISOString(),
@@ -161,23 +169,37 @@ export class MailboxService {
         .orderBy(asc(mailboxes.remotePath)),
       this.database
         .select({
-          mailboxId: mailboxMessages.mailboxId,
-          count: sql<string>`count(*)::text`,
+          mailboxId: mailboxes.id,
+          count: sql<string>`count(${mailboxMessages.id})::text`,
+          unread: sql<string>`count(${mailboxMessages.id}) FILTER (WHERE NOT ${mailboxMessages.flags} @> ARRAY['\\Seen']::text[])::text`,
+          enrolled: sql<boolean>`maildock_receiving_account_enrolled(${mailboxes.accountId})`,
         })
-        .from(mailboxMessages)
-        .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
-        .where(
+        .from(mailboxes)
+        .leftJoin(
+          mailboxMessages,
           and(
-            eq(mailboxes.accountId, accountId),
+            eq(mailboxes.id, mailboxMessages.mailboxId),
             eq(mailboxMessages.actionHidden, false),
           ),
         )
-        .groupBy(mailboxMessages.mailboxId),
+        .where(and(eq(mailboxes.accountId, accountId)))
+        .groupBy(mailboxes.id),
     ]);
-    const countsByMailbox = new Map(
-      counts.map((row) => [row.mailboxId, row.count]),
-    );
-    return rows.map((row) => view(row, countsByMailbox.get(row.id) ?? "0"));
+    const countsByMailbox = new Map(counts.map((row) => [row.mailboxId, row]));
+    return rows.map((row) => {
+      const count = countsByMailbox.get(row.id);
+      return view(
+        count?.enrolled
+          ? {
+              ...row,
+              reportedMessageCount: BigInt(count.count),
+              reportedUnseenCount: BigInt(count.unread),
+            }
+          : row,
+        count?.count ?? "0",
+        count?.enrolled,
+      );
+    });
   }
 
   async countActive(accountId: string): Promise<number> {

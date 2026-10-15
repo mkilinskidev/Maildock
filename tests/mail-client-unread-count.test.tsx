@@ -77,77 +77,96 @@ describe("sidebar unread count", () => {
     document.body.innerHTML = "";
     vi.unstubAllGlobals();
   });
-  it("keeps the optimistic count after immediately switching mailboxes", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        const url = String(input);
-        if (
-          url.endsWith(`/messages/${messageId}/actions`) &&
-          init?.method === "POST"
-        )
-          return Response.json(
-            { id: "00000000-0000-4000-8000-000000000005" },
-            { status: 202 },
-          );
-        if (url.endsWith(`/messages/${messageId}`))
-          return Response.json(detail);
-        if (url.includes("/messages?pageSize=50"))
-          return Response.json({
-            items: url.includes(inboxId) ? [message] : [],
-            nextCursor: null,
-          });
-        if (url.endsWith("/mailboxes"))
-          return Response.json({ mailboxes: [inbox, other], roles: [] });
-        throw new Error(`Unexpected request: ${url}`);
-      }),
-    );
-    const host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(
-        <MailClient
-          initialNotification={{ accountId, mailboxId: inboxId }}
-          accounts={[account]}
-          mailboxesByAccount={{ [accountId]: [inbox, other] }}
-          rolesByAccount={{ [accountId]: [] }}
-        />,
+  it.each([false, true])(
+    "keeps the optimistic count after immediately switching mailboxes (server projected=%s)",
+    async (projected) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+        configurable: true,
+        value: vi.fn(),
+      });
+      let acknowledged = false;
+      const inboxView = {
+        ...inbox,
+        ...(projected ? { countsIncludePendingActions: true } : {}),
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          const url = String(input);
+          if (
+            url.endsWith(`/messages/${messageId}/actions`) &&
+            init?.method === "POST"
+          ) {
+            acknowledged = true;
+            return Response.json(
+              { id: "00000000-0000-4000-8000-000000000005" },
+              { status: 202 },
+            );
+          }
+          if (url.endsWith(`/messages/${messageId}`))
+            return Response.json(detail);
+          if (url.includes("/messages?pageSize=50"))
+            return Response.json({
+              items: url.includes(inboxId) ? [message] : [],
+              nextCursor: null,
+            });
+          if (url.endsWith("/mailboxes"))
+            return Response.json({
+              mailboxes: [
+                {
+                  ...inboxView,
+                  unseenCount: projected && acknowledged ? "4" : "5",
+                },
+                other,
+              ],
+              roles: [],
+            });
+          throw new Error(`Unexpected request: ${url}`);
+        }),
       );
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    await act(async () => {
-      (host.querySelector(".mail-list-row") as HTMLButtonElement).click();
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    await act(async () => {
-      (
-        host.querySelector('[aria-label="Mark read"]') as HTMLButtonElement
-      ).click();
-    });
-    expect(
-      host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
-    ).toBe("4");
-    await act(async () => {
-      const disclosure = [...host.querySelectorAll("button")].find(
-        (b) => b.textContent === "Other folders",
-      )!;
-      disclosure.click();
-    });
-    await act(async () => {
-      (host.querySelector('[title="Other"]') as HTMLButtonElement).click();
-    });
-    expect(
-      host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
-    ).toBe("4");
-  });
+      const host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      await act(async () => {
+        root!.render(
+          <MailClient
+            initialNotification={{ accountId, mailboxId: inboxId }}
+            accounts={[account]}
+            mailboxesByAccount={{ [accountId]: [inboxView, other] }}
+            rolesByAccount={{ [accountId]: [] }}
+          />,
+        );
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => {
+        (host.querySelector(".mail-list-row") as HTMLButtonElement).click();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => {
+        (
+          host.querySelector('[aria-label="Mark read"]') as HTMLButtonElement
+        ).click();
+      });
+      expect(
+        host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
+      ).toBe("4");
+      await act(async () => {
+        const disclosure = [...host.querySelectorAll("button")].find(
+          (b) => b.textContent === "Other folders",
+        )!;
+        disclosure.click();
+      });
+      await act(async () => {
+        (host.querySelector('[title="Other"]') as HTMLButtonElement).click();
+      });
+      expect(
+        host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
+      ).toBe("4");
+    },
+  );
 });

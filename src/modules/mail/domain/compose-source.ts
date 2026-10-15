@@ -10,6 +10,21 @@ export const sourceContext = z
     mailboxId: z.uuid(),
     messageId: z.uuid(),
     mode: composeMode,
+    identity: z
+      .object({
+        epoch: z.string().regex(/^[1-9][0-9]{0,19}$/),
+        uid: z.string().regex(/^[1-9][0-9]{0,9}$/),
+        configuration: z.string().regex(/^[1-9][0-9]{0,19}$/),
+      })
+      .strict()
+      .optional(),
+    thread: z
+      .object({
+        inReplyTo: z.string().nullable(),
+        references: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type SourceContext = z.infer<typeof sourceContext>;

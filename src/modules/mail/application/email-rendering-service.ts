@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import { visibleAttachment, visibleContent } from "./active-identity";
+import { and, eq } from "drizzle-orm";
 import { JSDOM } from "jsdom";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
@@ -56,7 +57,7 @@ export class EmailRenderingService {
     const [stored] = await this.db
       .select()
       .from(messageContents)
-      .where(eq(messageContents.messageId, messageId));
+      .where(and(eq(messageContents.messageId, messageId), visibleContent()));
     // Historical HTML can only use its reduced v1 representation until the
     // selective body refresh completes. Never activate unversioned HTML.
     const html =
@@ -74,7 +75,12 @@ export class EmailRenderingService {
       ? await this.db
           .select()
           .from(messageAttachments)
-          .where(eq(messageAttachments.messageId, messageId))
+          .where(
+            and(
+              eq(messageAttachments.messageId, messageId),
+              visibleAttachment(),
+            ),
+          )
       : [];
     const images = new Map<string, string>();
     let pending = false,

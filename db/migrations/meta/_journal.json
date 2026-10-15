@@ -295,6 +295,13 @@
       "when": 1792010000000,
       "tag": "0041_receiving_bounded_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792020000000,
+      "tag": "0042_receiving_active_reads",
+      "breakpoints": true
     }
   ]
 }

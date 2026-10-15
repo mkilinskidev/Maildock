@@ -1,11 +1,13 @@
+import { visibleAttachment, matchingComposeSource } from "./active-identity";
 import type { AttachmentService } from "./attachment-service";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { JSDOM } from "jsdom";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailAccounts,
   messages,
   messageAttachments,
+  messagePlacementProjection as placement,
 } from "../../../shared/infrastructure/database/schema";
 import { sourceContext, type ComposePrefill } from "../domain/compose-source";
 import {
@@ -41,24 +43,47 @@ export class ComposePreparationService {
     { status: "pending" } | { status: "ready"; prefill: ComposePrefill }
   > {
     const source = sourceContext.parse(input);
-    // The Phase 1D placement lookup enforces account + mailbox + message isolation.
-    const detail = await this.content.detail(
-      source.accountId,
-      source.mailboxId,
-      source.messageId,
-    );
     const [row] = await this.db
-      .select({ message: messages, email: mailAccounts.email })
+      .select({
+        message: messages,
+        email: mailAccounts.email,
+        epoch: placement.uidValidity,
+        uid: placement.uid,
+        configuration: placement.configurationBinding,
+        enrolled: sql<boolean>`maildock_receiving_account_enrolled(${messages.accountId})`,
+      })
       .from(messages)
       .innerJoin(mailAccounts, eq(mailAccounts.id, messages.accountId))
+      .innerJoin(
+        placement,
+        and(
+          eq(placement.messageId, messages.id),
+          eq(placement.mailboxId, source.mailboxId),
+          eq(placement.actionHidden, false),
+        ),
+      )
       .where(
         and(
           eq(messages.id, source.messageId),
           eq(messages.accountId, source.accountId),
+          source.identity ? matchingComposeSource(source) : undefined,
         ),
       );
     if (!row)
       throw new ReplyUnavailableError("The source message is unavailable.");
+    const identity = row.enrolled
+      ? {
+          epoch: row.epoch.toString(),
+          uid: row.uid.toString(),
+          configuration: row.configuration.toString(),
+        }
+      : undefined;
+    const detail = await this.content.detail(
+      source.accountId,
+      source.mailboxId,
+      source.messageId,
+      identity,
+    );
     const recipients =
       source.mode === "forward"
         ? { to: "", cc: "" }
@@ -106,7 +131,12 @@ export class ComposePreparationService {
           ? await this.db
               .select()
               .from(messageAttachments)
-              .where(eq(messageAttachments.messageId, source.messageId))
+              .where(
+                and(
+                  eq(messageAttachments.messageId, source.messageId),
+                  visibleAttachment(),
+                ),
+              )
           : [];
         const cidResources = new Map<string, string>();
         for (const cid of new Set(references)) {
@@ -202,7 +232,7 @@ export class ComposePreparationService {
       status: "ready",
       prefill: {
         accountId: source.accountId,
-        source,
+        source: { ...source, ...(identity ? { identity } : {}) },
         ...recipients,
         subject: derivedSubject(row.message.subject, source.mode),
         plainText,

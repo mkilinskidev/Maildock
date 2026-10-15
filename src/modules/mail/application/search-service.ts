@@ -38,11 +38,12 @@ export class SearchService {
       snippet: string;
     }>(sql`
       WITH q AS (SELECT plainto_tsquery('simple', ${query}) AS terms),
+      accounts AS MATERIALIZED (SELECT id, display_name, maildock_receiving_account_enrolled(id) AS enrolled FROM mail_accounts),
       hits AS MATERIALIZED (
-        SELECT m.id, m.internal_date, a.display_name AS account_name, p.mailbox_id, p.mailbox_name, p.flags,
-          ts_rank(m.search_vector, q.terms) AS rank
+        SELECT m.id, m.internal_date, a.display_name AS account_name, p.mailbox_id, p.mailbox_name, p.flags, c.body,
+          ts_rank(effective.vector, q.terms) AS rank
         FROM messages m
-        JOIN mail_accounts a ON a.id = m.account_id
+        JOIN accounts a ON a.id = m.account_id
         CROSS JOIN q
         JOIN LATERAL (
           SELECT mb.id AS mailbox_id, mb.name AS mailbox_name, mm.flags
@@ -52,7 +53,14 @@ export class SearchService {
             mb.selectable DESC, mb.remote_path COLLATE "C", mb.id, mm.id
           LIMIT 1
         ) p ON true
-        WHERE m.search_vector @@ q.terms
+        LEFT JOIN message_contents content ON content.message_id=m.id
+        CROSS JOIN LATERAL (SELECT CASE WHEN NOT a.enrolled THEN true ELSE content.status='ready' AND
+          maildock_receiving_visible_resource(content.message_id,content.source_mailbox_id,content.source_uid_validity,content.source_uid,content.source_configuration_binding)
+          END AS eligible) provenance
+        CROSS JOIN LATERAL (SELECT CASE WHEN provenance.eligible THEN m.search_body ELSE '' END AS body) c
+        CROSS JOIN LATERAL (SELECT CASE WHEN provenance.eligible THEN m.search_vector ELSE
+          maildock_search_vector(m.subject,m."from",m.sender,m."to",m.cc,'') END AS vector) effective
+        WHERE m.search_vector @@ q.terms AND effective.vector @@ q.terms
         ORDER BY rank DESC, m.internal_date DESC, m.id DESC
         LIMIT ${SEARCH_PAGE_SIZE + 1}
       )
@@ -60,8 +68,8 @@ export class SearchService {
         h.mailbox_id AS "mailboxId", h.mailbox_name AS "mailboxName", m.subject, m."from",
         m.internal_date::text AS date, '\\Seen' = ANY(h.flags) AS seen,
         '\\Flagged' = ANY(h.flags) AS flagged, m.size::text, m.has_attachments AS "hasAttachments",
-        left(CASE WHEN m.search_body <> '' THEN
-          replace(replace(ts_headline('simple', m.search_body, q.terms,
+        left(CASE WHEN h.body <> '' THEN
+          replace(replace(ts_headline('simple', h.body, q.terms,
             'StartSel=MAILDOCKSTARTMARKER, StopSel=MAILDOCKSTOPMARKER, MaxWords=35, MinWords=15, MaxFragments=1'),
             'MAILDOCKSTARTMARKER', ''), 'MAILDOCKSTOPMARKER', '')
           ELSE coalesce(m.subject, '') END, 320) AS snippet

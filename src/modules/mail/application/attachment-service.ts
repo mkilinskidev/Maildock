@@ -1,3 +1,4 @@
+import { visibleAttachment } from "./active-identity";
 import {
   receivingAccountEnrolled,
   receivingRequestRejected,
@@ -102,9 +103,11 @@ export class AttachmentService {
         ),
       )
       .leftJoin(blobs, eq(blobs.id, messageAttachments.blobId))
-      .where(eq(messageAttachments.id, id));
+      .where(and(eq(messageAttachments.id, id), visibleAttachment()));
     if (!row)
-      throw new AttachmentUnavailableError("Attachment is unavailable.");
+      throw new AttachmentUnavailableError(
+        "The source mailbox placement is unavailable.",
+      );
     return row;
   }
   async status(id: string) {

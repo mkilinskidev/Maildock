@@ -1,3 +1,4 @@
+import { visibleContent } from "./active-identity";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { ConversationService } from "./conversation-service";
 import { persistMessageMetadata } from "./message-metadata-persistence";
@@ -449,6 +450,7 @@ export class MessageService {
         and(
           eq(messageContents.messageId, messages.id),
           eq(messageContents.status, "ready"),
+          visibleContent(),
         ),
       )
       .where(
@@ -507,8 +509,8 @@ export class MessageService {
       FROM messages m JOIN message_placement_projection p ON p.message_id = m.id
       JOIN mailboxes b ON b.id = p.mailbox_id AND b.account_id = m.account_id
       JOIN mail_accounts a ON a.id = m.account_id
-      LEFT JOIN message_contents c ON c.message_id = m.id AND c.status = 'ready'
-      WHERE a.enabled AND b.selectable AND b.lifecycle_status = 'active'
+      LEFT JOIN message_contents c ON c.message_id = m.id AND c.status = 'ready' AND maildock_receiving_visible_resource(c.message_id,c.source_mailbox_id,c.source_uid_validity,c.source_uid,c.source_configuration_binding)
+      WHERE (a.enabled OR maildock_receiving_account_enrolled(a.id)) AND b.selectable AND b.lifecycle_status = 'active'
         AND upper(b.remote_path) = 'INBOX' AND NOT p.action_hidden
         ${after ? sql`AND (m.internal_date, m.id) < (${after[0].toISOString()}::timestamptz, ${after[1]}::uuid)` : sql``}
       ORDER BY m.internal_date DESC, m.id DESC LIMIT ${limit + 1}`);

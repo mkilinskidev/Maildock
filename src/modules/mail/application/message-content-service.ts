@@ -1,3 +1,5 @@
+import type { SourceContext } from "../domain/compose-source";
+import { visibleContent, matchingComposeSource } from "./active-identity";
 import {
   receivingAccountEnrolled,
   receivingRequestRejected,
@@ -55,6 +57,7 @@ export class MessageContentService {
     accountId: string,
     mailboxId: string,
     messageId: string,
+    identity?: SourceContext["identity"],
   ) {
     const [row] = await this.database
       .select({
@@ -68,13 +71,25 @@ export class MessageContentService {
       .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
       .innerJoin(mailAccounts, eq(mailAccounts.id, mailboxes.accountId))
       .innerJoin(messages, eq(messages.id, mailboxMessages.messageId))
-      .leftJoin(messageContents, eq(messageContents.messageId, messages.id))
+      .leftJoin(
+        messageContents,
+        and(eq(messageContents.messageId, messages.id), visibleContent()),
+      )
       .where(
         and(
           eq(mailAccounts.id, accountId),
           eq(mailboxes.id, mailboxId),
           eq(messages.id, messageId),
           eq(messages.accountId, accountId),
+          identity
+            ? matchingComposeSource({
+                accountId,
+                mailboxId,
+                messageId,
+                mode: "forward",
+                identity,
+              })
+            : undefined,
         ),
       )
       .limit(1);
@@ -82,11 +97,17 @@ export class MessageContentService {
     return row;
   }
 
-  async detail(accountId: string, mailboxId: string, messageId: string) {
+  async detail(
+    accountId: string,
+    mailboxId: string,
+    messageId: string,
+    identity?: SourceContext["identity"],
+  ) {
     const { message, placement, content } = await this.placement(
       accountId,
       mailboxId,
       messageId,
+      identity,
     );
     const enrolled = await receivingAccountEnrolled(this.database, accountId);
     if (enrolled && placement.actionHidden)
@@ -123,7 +144,7 @@ export class MessageContentService {
           this.scheduler
             ? "not_fetched"
             : (content?.status ?? "not_fetched"),
-        plainText: content?.plainText ?? null,
+        plainText: content?.status === "ready" ? content.plainText : null,
         sanitizedHtml:
           content?.status === "ready" ? content.sanitizedHtml : null,
         remoteContentBlocked: content?.remoteContentBlocked ?? false,

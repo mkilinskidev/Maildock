@@ -1,5 +1,7 @@
+import { threading } from "../domain/reply-forward";
+import { visibleAttachment, matchingComposeSource } from "./active-identity";
 import { OutgoingValidationError } from "./outgoing-message-service";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   drafts,
@@ -7,7 +9,7 @@ import {
   stagedAttachments,
   messageAttachments,
   blobs,
-  mailboxMessages,
+  messagePlacementProjection as mailboxMessages,
   mailboxes,
   messages,
 } from "../../../shared/infrastructure/database/schema";
@@ -55,7 +57,10 @@ export class DraftService {
       .from(draftAttachments)
       .innerJoin(
         messageAttachments,
-        eq(messageAttachments.id, draftAttachments.id),
+        and(
+          eq(messageAttachments.id, draftAttachments.id),
+          visibleAttachment(),
+        ),
       )
       .where(eq(draftAttachments.draftId, id))
       .for("share");
@@ -80,7 +85,10 @@ export class DraftService {
       .leftJoin(blobs, eq(blobs.id, draftAttachments.blobId))
       .leftJoin(
         messageAttachments,
-        eq(messageAttachments.id, draftAttachments.id),
+        and(
+          eq(messageAttachments.id, draftAttachments.id),
+          visibleAttachment(),
+        ),
       )
       .where(eq(draftAttachments.draftId, id))
       .orderBy(draftAttachments.position);
@@ -182,7 +190,15 @@ export class DraftService {
         const [a] = await tx
           .select()
           .from(messageAttachments)
-          .where(eq(messageAttachments.id, selected.id))
+          .where(
+            and(
+              eq(messageAttachments.id, selected.id),
+              visibleAttachment(),
+              source
+                ? sql`EXISTS(SELECT FROM message_placement_projection WHERE message_id=${source.messageId}::uuid AND mailbox_id=${source.mailboxId}::uuid AND NOT action_hidden AND ${matchingComposeSource(source)})`
+                : sql`false`,
+            ),
+          )
           .for("share");
         if (
           !a ||
@@ -257,7 +273,7 @@ export class DraftService {
       if (!inserted.length) return this.read(tx, id);
       if (source) {
         const [original] = await tx
-          .select({ id: messages.id })
+          .select({ message: messages })
           .from(messages)
           .innerJoin(
             mailboxMessages,
@@ -270,10 +286,22 @@ export class DraftService {
               eq(messages.accountId, source.accountId),
               eq(mailboxes.id, source.mailboxId),
               eq(mailboxes.accountId, source.accountId),
+              eq(mailboxMessages.actionHidden, false),
+              matchingComposeSource(source),
             ),
           );
         if (!original)
           throw new OutgoingValidationError("Source message unavailable.");
+        row.source = {
+          ...source,
+          thread: source.identity
+            ? threading(original.message, source.mode)
+            : undefined,
+        };
+        await tx
+          .update(drafts)
+          .set({ source: row.source })
+          .where(eq(drafts.id, id));
       }
       await this.attachments(tx, id, { ...fields, attachments }, row.source);
       return this.read(tx, id);

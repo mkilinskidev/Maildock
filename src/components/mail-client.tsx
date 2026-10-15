@@ -480,7 +480,13 @@ export function MailClient({
         : action === "mark_unread" && target.seen
           ? 1
           : 0;
-    const adjustmentKey = countDelta === 0 ? null : crypto.randomUUID();
+    const serverProjectedCounts = liveMailboxesByAccount[
+      target.accountId
+    ]?.find(
+      (item) => item.id === target.mailboxId,
+    )?.countsIncludePendingActions;
+    const adjustmentKey =
+      countDelta === 0 || serverProjectedCounts ? null : crypto.randomUUID();
     if (adjustmentKey)
       setCountAdjustments((current) => [
         ...current,
@@ -578,6 +584,7 @@ export function MailClient({
           location: selectionLocation,
         },
       }));
+      if (serverProjectedCounts) setFolderReloadNonce((n) => n + 1);
       if (searchActive) setSearchRefresh((n) => n + 1);
     } catch (failure) {
       activeActions.current.delete(key);
@@ -1319,7 +1326,9 @@ export function MailClient({
       BigInt(item.unseenCount) +
       BigInt(
         countAdjustments
-          .filter((a) => a.mailboxId === item.id)
+          .filter(
+            (a) => a.mailboxId === item.id && !item.countsIncludePendingActions,
+          )
           .reduce((sum, a) => sum + a.delta, 0),
       );
     return projected > 0n ? projected.toString() : null;
