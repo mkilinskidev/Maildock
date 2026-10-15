@@ -14,6 +14,11 @@ import { randomUUID } from "node:crypto";
 import { prepareReceivingFlags } from "./receiving-flags";
 import { prepareReceivingContent } from "./receiving-content";
 import {
+  DISPLAY_CONTENT_BYTES,
+  CONTENT_PROTOCOL_BYTES,
+  DisplayContentLimitError,
+} from "../domain/display-content-limits";
+import {
   listOwnedTopology,
   selectOwnedDestination,
   type SelectedDestination,
@@ -286,7 +291,10 @@ export function validateReceivingOperation(operation: ReceivingOperation) {
       operation.offset < 0 ||
       !Number.isSafeInteger(operation.maxBytes) ||
       operation.maxBytes < 1 ||
-      operation.maxBytes > 256 * 1024
+      operation.maxBytes >
+        (operation.kind === "content-slice"
+          ? DISPLAY_CONTENT_BYTES
+          : 256 * 1024)
     )
       throw new Error("Receiving slice exceeds unit budget");
   }
@@ -916,7 +924,11 @@ export async function runReceivingOperation(
               fatal: rejectDiagnostic,
             }
           : false,
-      maxLiteralSize: "maxBytes" in operation ? operation.maxBytes : 256 * 1024,
+      maxLiteralSize: contentOperation
+        ? 32 * 1024
+        : "maxBytes" in operation
+          ? operation.maxBytes
+          : 256 * 1024,
       maxResponseSize: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
         : 256 * 1024,
@@ -950,7 +962,7 @@ export async function runReceivingOperation(
             bytes >
             (topologyKind
               ? TOPOLOGY_LIMITS.bytes
-              : 64 * 1024 +
+              : (contentOperation ? CONTENT_PROTOCOL_BYTES : 64 * 1024) +
                 ("maxBytes" in operation ? operation.maxBytes : 256 * 1024))
           )
             throw new Error("Receiving operation response budget exceeded");
@@ -1176,9 +1188,14 @@ export async function runReceivingOperation(
                 c.attempt.id,
                 c.kind === "command"
                   ? outcome
-                  : connected
-                    ? "failed_remote_read"
-                    : "failed_before_execution",
+                  : c.kind === "content" &&
+                      error instanceof DisplayContentLimitError &&
+                      operation.kind === "content-slice" &&
+                      operation.maxBytes === DISPLAY_CONTENT_BYTES
+                    ? "display_content_limit_exceeded"
+                    : connected
+                      ? "failed_remote_read"
+                      : "failed_before_execution",
                 options(),
               ),
         );

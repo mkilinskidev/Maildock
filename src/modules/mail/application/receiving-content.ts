@@ -5,6 +5,10 @@ import type { ReceivingExecutor } from "../../../shared/infrastructure/database/
 import { normalizeMimeStructure } from "../../accounts/infrastructure/imap-smtp-mail-provider";
 import type { RemoteMimePart } from "../../accounts/domain/mail-provider";
 import { selectDisplayParts } from "../domain/display-parts";
+import {
+  DISPLAY_CONTENT_BYTES,
+  DisplayContentLimitError,
+} from "../domain/display-content-limits";
 import type { PublicationSource } from "./receiving-publication";
 import type {
   ReceivingOperation,
@@ -12,7 +16,7 @@ import type {
 } from "./receiving-operation";
 
 export const CONTENT_LIMITS = Object.freeze({
-  bytes: 256 * 1024,
+  bytes: DISPLAY_CONTENT_BYTES,
   chunk: 32 * 1024,
   header: 16 * 1024,
   nodes: 128,
@@ -274,8 +278,10 @@ export class ContentCollector {
             body = true;
             this.offset += bytes.length;
             this.total += bytes.length;
-            if (this.offset > this.expected!.size || this.total > this.limit)
-              throw new Error("Content encoded bound exceeded");
+            if (this.offset > this.expected!.size)
+              throw new Error("Content exceeds declared part size");
+            if (this.total > this.limit)
+              throw new DisplayContentLimitError(this.limit);
             this.raw.push(bytes);
             if (bytes.length < CONTENT_LIMITS.chunk) {
               if (this.offset !== this.expected!.size)
@@ -327,44 +333,50 @@ export class ContentCollector {
     if (this.mode === "download" && !this.validated) {
       if (!this.headers || !this.eof || this.offset !== this.expected!.size)
         throw new Error("Content lacks complete EOF evidence");
-      const raw = Buffer.concat(this.raw).toString("latin1"),
+      const bytes = Buffer.concat(this.raw, this.offset),
         encoding = this.expected!.encoding;
-      let binary: Buffer;
+      this.raw = [];
+      let binary = bytes;
       if (encoding === "base64") {
-        const compact = raw.replace(/[\r\n\t ]/g, "");
+        const compact = bytes.toString("latin1").replace(/[\r\n\t ]/g, "");
+        binary = Buffer.from(compact, "base64");
         if (
-          !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-            compact,
-          ) ||
-          Buffer.from(compact, "base64").toString("base64") !== compact
+          compact.length % 4 !== 0 ||
+          /[^A-Za-z0-9+/=]/.test(compact) ||
+          !/^[^=]*={0,2}$/.test(compact) ||
+          binary.toString("base64") !== compact
         )
           throw new Error("Malformed base64 content");
-        binary = Buffer.from(compact, "base64");
-      } else if (
-        encoding === "quoted-printable" &&
-        /=(?![0-9a-f]{2}|\r\n)/i.test(raw)
-      )
-        throw new Error("Malformed quoted-printable content");
-      else if (encoding === "7bit" && /[\x80-\xff]/.test(raw))
-        throw new Error("Invalid 7bit content");
-      if (encoding !== "base64")
+      } else if (encoding === "quoted-printable") {
+        const raw = bytes.toString("latin1");
+        if (/=(?![0-9a-f]{2}|\r\n)/i.test(raw))
+          throw new Error("Malformed quoted-printable content");
         binary = Buffer.from(
-          encoding === "quoted-printable"
-            ? raw.replace(
-                /=\r\n|=([0-9a-f]{2})/gi,
-                (_match, hex: string | undefined) =>
-                  hex ? String.fromCharCode(parseInt(hex, 16)) : "",
-              )
-            : raw,
+          raw.replace(
+            /=\r\n|=([0-9a-f]{2})/gi,
+            (_match, hex: string | undefined) =>
+              hex ? String.fromCharCode(parseInt(hex, 16)) : "",
+          ),
           "latin1",
         );
+      } else if (encoding === "7bit" && bytes.some((b) => b > 127))
+        throw new Error("Invalid 7bit content");
       // Supplement the existing tolerant MIME decoder with strict validation;
       // only the installed streaming decoder supplies the published text.
-      new TextDecoder(this.expected!.charset ?? "utf-8", {
+      const validator = new TextDecoder(this.expected!.charset ?? "utf-8", {
         fatal: true,
-      }).decode(binary!);
+      });
+      for (
+        let offset = 0;
+        offset < binary.length;
+        offset += CONTENT_LIMITS.chunk
+      )
+        validator.decode(
+          binary.subarray(offset, offset + CONTENT_LIMITS.chunk),
+          { stream: true },
+        );
+      validator.decode();
       this.validated = true;
-      this.raw = [];
     }
     return BigInt(this.total);
   }
@@ -497,12 +509,13 @@ export async function prepareReceivingContent(
           encoding = (node.encoding ?? "7bit").toLowerCase();
         if (
           !Number.isSafeInteger(size) ||
-          (declared += size) > operation.maxBytes ||
           !["7bit", "8bit", "binary", "base64", "quoted-printable"].includes(
             encoding,
           )
         )
-          throw new Error("Unsupported or oversized display part");
+          throw new Error("Unsupported display encoding or size");
+        if ((declared += size) > operation.maxBytes)
+          throw new DisplayContentLimitError(operation.maxBytes);
         const section = node === root ? "TEXT" : part.part;
         collector.download(section, size, encoding, node.parameters.charset);
         const downloaded = await context.client.download(
@@ -538,10 +551,11 @@ export async function prepareReceivingContent(
             context.assertCurrent();
             const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
             decoded += bytes.length;
+            if (decoded > operation.maxBytes)
+              throw new DisplayContentLimitError(operation.maxBytes);
             if (
-              decoded > operation.maxBytes ||
-              ((charset === "ascii" || charset === "usascii") &&
-                bytes.some((b) => b > 127))
+              (charset === "ascii" || charset === "usascii") &&
+              bytes.some((b) => b > 127)
             )
               throw new Error("Decoded content exceeds policy");
             chunks.push(bytes);

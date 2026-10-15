@@ -36,6 +36,7 @@ import { receivingResponseRelay } from "./fixtures/receiving-response-relay";
 import { metadataPeer } from "./fixtures/imap-metadata-peer";
 import { MessageContentService } from "@/modules/mail/application/message-content-service";
 import { SearchService } from "@/modules/mail/application/search-service";
+import { DISPLAY_CONTENT_BYTES } from "@/modules/mail/domain/display-content-limits";
 
 type Body = {
   type: "plain" | "html";
@@ -250,6 +251,9 @@ describe("R11 owned content retrieval", () => {
       mixed?: boolean;
       nested?: boolean;
       automatic?: boolean;
+      maxBytes?: number;
+      sliceDelayMs?: number;
+      corruptAtOffset?: number;
       epoch?: number;
       structureOverride?: string;
       corrupt?:
@@ -356,6 +360,10 @@ describe("R11 owned content retrieval", () => {
               return;
             }
             await input.beforeLiteral?.();
+            if (input.sliceDelayMs)
+              await new Promise((resolve) =>
+                setTimeout(resolve, input.sliceDelayMs),
+              );
             const matches = [
               ...c.command.matchAll(
                 /BODY\.PEEK\[([^\]]+)\](?:<(\d+)\.(\d+)>)?/g,
@@ -383,22 +391,26 @@ describe("R11 owned content retrieval", () => {
                 );
               const offset = Number(match[2] ?? 0),
                 length = Number(match[3] ?? 0);
+              const corrupt =
+                offset >= (input.corruptAtOffset ?? 0)
+                  ? input.corrupt
+                  : undefined;
               const header = Buffer.from(
                 `Content-Type: text/${body.type}; charset=${body.charset ?? "utf-8"}${body.flowed ? "; format=flowed" : ""}\r\nContent-Transfer-Encoding: ${body.encoding ?? "8bit"}\r\n\r\n`,
               );
               let chunk = isHeader
                 ? header
                 : body.value.subarray(offset, offset + length);
-              if (!isHeader && input.corrupt === "short")
+              if (!isHeader && corrupt === "short")
                 chunk = chunk.subarray(0, Math.max(0, chunk.length - 1));
               bytes += chunk.length;
               const returnedSection =
-                !isHeader && input.corrupt === "part" ? "99" : section;
+                !isHeader && corrupt === "part" ? "99" : section;
               p.send(
-                ` BODY[${returnedSection}]${isHeader ? "" : `<${input.corrupt === "offset" ? offset + 1 : offset}>`} {${chunk.length}}\r\n`,
+                ` BODY[${returnedSection}]${isHeader ? "" : `<${corrupt === "offset" ? offset + 1 : offset}>`} {${chunk.length}}\r\n`,
                 c,
               );
-              if (!isHeader && input.corrupt === "truncated") {
+              if (!isHeader && corrupt === "truncated") {
                 p.send(chunk.subarray(0, 2), c);
                 p.socket.destroy();
                 return;
@@ -421,7 +433,13 @@ describe("R11 owned content retrieval", () => {
       "OK",
       "IMAP4rev1 AUTH=PLAIN BINARY",
     );
-    cleanup.push(peer.cleanup);
+    cleanup.push(async () => {
+      if (input.maxBytes === DISPLAY_CONTENT_BYTES)
+        process.stdout.write("large-content-cleanup peer start\n");
+      await peer.cleanup();
+      if (input.maxBytes === DISPLAY_CONTENT_BYTES)
+        process.stdout.write("large-content-cleanup peer complete\n");
+    });
     const connection = {
       host: peer.endpoint.host,
       port: peer.endpoint.port,
@@ -484,7 +502,13 @@ describe("R11 owned content retrieval", () => {
     });
     if (!input.automatic) coordinator.dispatchContentRequests = async () => {};
     coordinator.dispatchFlagCommands = async () => {};
-    cleanup.push(() => coordinator.stop());
+    cleanup.push(async () => {
+      if (input.maxBytes === DISPLAY_CONTENT_BYTES)
+        process.stdout.write("large-content-cleanup coordinator start\n");
+      await coordinator.stop();
+      if (input.maxBytes === DISPLAY_CONTENT_BYTES)
+        process.stdout.write("large-content-cleanup coordinator complete\n");
+    });
     await reader`update receiving_coordinator set expires_at='-infinity'`;
     expect(await coordinator.elect()).toBe(true);
     const submit = (signal?: AbortSignal) =>
@@ -492,7 +516,7 @@ describe("R11 owned content retrieval", () => {
         kind: "content-slice",
         pendingId: message,
         offset: 0,
-        maxBytes: 256 * 1024,
+        maxBytes: input.maxBytes ?? 256 * 1024,
         requestId: randomUUID(),
         deadline: performance.now() + 9000,
         signal,
@@ -1089,4 +1113,280 @@ describe("R11 owned content retrieval", () => {
     expect((await contentRow()).plain_text).toBe("");
     expect((await contentRow()).status).toBe("ready");
   });
+
+  it.each([
+    { name: "300 KiB plain", plainBytes: 300 * 1024, htmlBytes: 0 },
+    { name: "2 MiB HTML", plainBytes: 0, htmlBytes: 2 * 1024 * 1024 },
+    {
+      name: "nested 4.5 MiB alternatives",
+      plainBytes: 2 * 1024 * 1024,
+      htmlBytes: 2.5 * 1024 * 1024,
+      nested: true,
+    },
+    { name: "exact 5 MiB", plainBytes: DISPLAY_CONTENT_BYTES, htmlBytes: 0 },
+    {
+      name: "exact 5 MiB alternatives",
+      plainBytes: 3 * 1024 * 1024,
+      htmlBytes: 2 * 1024 * 1024,
+    },
+  ])(
+    "fetches and atomically publishes $name within the unchanged deadline",
+    async ({ plainBytes, htmlBytes, nested }) => {
+      const bodies: Body[] = [];
+      global.gc?.();
+      const initialMemory = process.memoryUsage();
+      let sampledBuffers = initialMemory.arrayBuffers;
+      let sampledHeap = initialMemory.heapUsed;
+      const sampleMemory = () => {
+        const memory = process.memoryUsage();
+        sampledBuffers = Math.max(sampledBuffers, memory.arrayBuffers);
+        sampledHeap = Math.max(sampledHeap, memory.heapUsed);
+      };
+      const token = "largecontenttoken ";
+      if (plainBytes)
+        bodies.push(plain(token + "a".repeat(plainBytes - token.length)));
+      if (htmlBytes)
+        bodies.push({
+          type: "html",
+          value: Buffer.from(
+            "<p>" + token + "b".repeat(htmlBytes - token.length - 7) + "</p>",
+          ),
+        });
+      await request();
+      const h = await harness({
+        bodies,
+        nested,
+        mixed: true,
+        maxBytes: DISPLAY_CONTENT_BYTES,
+        sliceDelayMs: 2,
+        beforeLiteral: async () => sampleMemory(),
+        beforePublish: async () => {
+          sampleMemory();
+          expect(
+            (await service().detail(account, source.mailbox, message)).content
+              .status,
+          ).not.toBe("ready");
+          expect(
+            (
+              await new SearchService(database.db).search("largecontenttoken")
+            ).items.some((item) => item.id === message),
+          ).toBe(false);
+        },
+      });
+      const started = performance.now();
+      await h.submit();
+      const elapsed = performance.now() - started;
+      expect(elapsed).toBeLessThan(9000);
+      const row = await contentRow();
+      sampleMemory();
+      expect(sampledBuffers - initialMemory.arrayBuffers).toBeLessThan(
+        96 * 1024 * 1024,
+      );
+      // Peak heap includes transient DOMs and GC scheduling. Check retained
+      // memory after collection, and report the sampled transient peak separately.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      global.gc?.();
+      const retainedMemory = process.memoryUsage();
+      if (global.gc)
+        expect(retainedMemory.heapUsed - initialMemory.heapUsed).toBeLessThan(
+          128 * 1024 * 1024,
+        );
+      expect(row.status).toBe("ready");
+      expect(Buffer.byteLength(row.plain_text ?? "")).toBe(plainBytes);
+      expect(Buffer.byteLength(row.sanitized_html ?? "")).toBe(htmlBytes);
+      expect(
+        (await service().detail(account, source.mailbox, message)).content
+          .status,
+      ).toBe("ready");
+      expect(
+        (
+          await new SearchService(database.db).search("largecontenttoken")
+        ).items.some((item) => item.id === message),
+      ).toBe(true);
+      const fetches = h.peer.commands.filter((c) =>
+        c.command.startsWith("UID FETCH"),
+      );
+      expect(fetches.every((c) => c.command.startsWith("UID FETCH 1 "))).toBe(
+        true,
+      );
+      expect(
+        h.peer.commands.some((c) =>
+          /STORE|RFC822(?!\.SIZE)|BODY\.PEEK\[\]|BODY\.PEEK\[2(?:\]|\.)/.test(
+            c.command,
+          ),
+        ),
+      ).toBe(false);
+      expect(h.counters().bytes).toBeGreaterThanOrEqual(plainBytes + htmlBytes);
+      expect(h.counters().bytes).toBeLessThan(
+        plainBytes + htmlBytes + 2 * 16384,
+      );
+      for (const c of fetches)
+        for (const m of c.command.matchAll(/<(\d+)\.(\d+)>/g))
+          expect(Number(m[2])).toBe(32768);
+      process.stdout.write(
+        "large-content-evidence " +
+          JSON.stringify({
+            plainBytes,
+            htmlBytes,
+            elapsed,
+            transferred: h.counters().bytes,
+            fetches: fetches.length,
+            sampledBufferGrowth: sampledBuffers - initialMemory.arrayBuffers,
+            sampledHeapGrowth: sampledHeap - initialMemory.heapUsed,
+            retainedHeapGrowth:
+              retainedMemory.heapUsed - initialMemory.heapUsed,
+          }) +
+          "\n",
+      );
+    },
+  );
+
+  it("automatically discovers and publishes more than 2 MiB without a manual maxBytes override", async () => {
+    await request();
+    const h = await harness({
+      automatic: true,
+      bodies: [plain("a".repeat(3 * 1024 * 1024))],
+    });
+    await until(async () => (await contentRow()).status === "ready");
+    expect((await contentRow()).plain_text.length).toBe(3 * 1024 * 1024);
+    expect(h.peer.peers).toHaveLength(1);
+  });
+
+  it.each(["encoded", "decoded", "aggregate"])(
+    "rejects a group exceeding 5 MiB %s without partial publication",
+    async (kind) => {
+      await request();
+      const bodies: Body[] =
+        kind === "encoded"
+          ? [plain("a".repeat(DISPLAY_CONTENT_BYTES + 1))]
+          : kind === "decoded"
+            ? [
+                {
+                  type: "plain",
+                  value: Buffer.alloc(DISPLAY_CONTENT_BYTES / 2 + 1, 0xe9),
+                  charset: "iso-8859-1",
+                },
+              ]
+            : [
+                plain("a".repeat(3 * 1024 * 1024)),
+                { type: "html", value: Buffer.alloc(3 * 1024 * 1024, 98) },
+              ];
+      const h = await harness({ bodies, maxBytes: DISPLAY_CONTENT_BYTES });
+      await expect(h.submit()).rejects.toThrow();
+      const row = await contentRow();
+      expect(row.status).toBe("failed");
+      expect(
+        (await service().detail(account, source.mailbox, message)).content
+          .error,
+      ).toContain("5 MiB");
+      expect(row.plain_text).toBeNull();
+      expect(row.sanitized_html).toBeNull();
+      expect(h.counters().bytes).toBeLessThan(DISPLAY_CONTENT_BYTES + 32768);
+      if (kind === "encoded") expect(h.counters().bytes).toBe(0);
+    },
+  );
+
+  it.each(["base64", "quoted-printable", "utf8", "legacy", "flowed"])(
+    "decodes large %s across partial windows without losing the trailing marker",
+    async (kind) => {
+      const text =
+        (kind === "legacy" ? "café " : "Zażółć ").repeat(45000) + "ENDMARKER";
+      const body: Body =
+        kind === "base64"
+          ? {
+              type: "plain",
+              encoding: "base64",
+              value: Buffer.from(Buffer.from(text).toString("base64")),
+            }
+          : kind === "quoted-printable"
+            ? {
+                type: "plain",
+                encoding: "quoted-printable",
+                value: Buffer.from(
+                  Buffer.from(text)
+                    .toString("hex")
+                    .replace(/../g, (hex) => "=" + hex),
+                ),
+              }
+            : kind === "legacy"
+              ? {
+                  type: "plain",
+                  charset: "iso-8859-1",
+                  value: Buffer.from(text, "latin1"),
+                }
+              : kind === "flowed"
+                ? {
+                    type: "plain",
+                    flowed: true,
+                    value: Buffer.from("x \r\n".repeat(90000) + "ENDMARKER"),
+                  }
+                : plain(text);
+      await request();
+      const h = await harness({
+        bodies: [body],
+        maxBytes: DISPLAY_CONTENT_BYTES,
+      });
+      await h.submit();
+      const row = await contentRow();
+      expect(row.status).toBe("ready");
+      expect(row.plain_text).toContain("ENDMARKER");
+      if (kind !== "flowed") expect(row.plain_text).toBe(text);
+    },
+  );
+
+  it.each(["truncated", "short", "part", "offset"] as const)(
+    "rejects a large transfer with %s final slice",
+    async (corrupt) => {
+      await request();
+      const h = await harness({
+        bodies: [plain("a".repeat(3 * 1024 * 1024 + 17))],
+        maxBytes: DISPLAY_CONTENT_BYTES,
+        corrupt,
+        corruptAtOffset: 3 * 1024 * 1024,
+      });
+      await expect(h.submit()).rejects.toThrow();
+      expect((await contentRow()).status).not.toBe("ready");
+      expect((await contentRow()).plain_text).toBeNull();
+    },
+  );
+
+  it.each(["cancel", "configuration", "epoch"])(
+    "fences %s during a large transfer after multiple slices",
+    async (kind) => {
+      await request();
+      const abort = new AbortController();
+      let slices = 0;
+      const h = await harness({
+        bodies: [plain("a".repeat(3 * 1024 * 1024))],
+        maxBytes: DISPLAY_CONTENT_BYTES,
+        beforeLiteral: async () => {
+          if (++slices !== 5) return;
+          if (kind === "cancel") abort.abort();
+          else if (kind === "configuration")
+            await reader`update mail_accounts set imap_host='replacement.test' where id=${account}`;
+          else {
+            const [s] =
+              await reader`select * from receiving_mailboxes where mailbox_id=${source.mailbox}`;
+            await new ReceivingPersistence(executor).persist(
+              h.coordinator.snapshot.owner!,
+              source.mailbox,
+              {
+                epoch: BigInt(s.epoch),
+                revision: BigInt(s.revision),
+                freshThrough: BigInt(s.fresh_through),
+                historyBefore: BigInt(s.history_before),
+                reconcileAfter: BigInt(s.reconcile_after),
+              },
+              { kind: "epoch", complete: true, epoch: 8n, uidNext: 2n },
+              budget(),
+            );
+          }
+        },
+      });
+      await expect(h.submit(abort.signal)).rejects.toThrow();
+      expect(slices).toBeGreaterThanOrEqual(5);
+      expect((await contentRow()).status).not.toBe("ready");
+      expect(h.peer.peers.every((p) => p.socket.destroyed)).toBe(true);
+    },
+  );
 });

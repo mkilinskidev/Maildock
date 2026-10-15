@@ -337,6 +337,13 @@
       "when": 1792070000000,
       "tag": "0047_receiving_content_claim",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792080000000,
+      "tag": "0048_receiving_content_limit",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  DISPLAY_CONTENT_BYTES,
+  CONTENT_PUBLICATION_BYTES,
+  DisplayContentLimitError,
+} from "../domain/display-content-limits";
 import { sql } from "drizzle-orm";
 import {
   readVerifiedBlob,
@@ -66,10 +71,18 @@ export class ReceivingPublication {
       }>,
     options: Options,
   ) {
-    const payload = encode(evidence);
-    if (Buffer.byteLength(payload, "utf8") > 2 * 1024 * 1024)
-      throw Error("Completed content evidence exceeds the publication bound");
-    const captured = JSON.parse(payload) as Record<string, unknown>;
+    // Strings are immutable: capture scalar fields without duplicating the full
+    // raw content through JSON before sanitization.
+    const { html, ...captured } = { ...evidence };
+    const displayBytes =
+      Buffer.byteLength(captured.plainText ?? "", "utf8") +
+      Buffer.byteLength(html ?? "", "utf8");
+    if (
+      displayBytes > DISPLAY_CONTENT_BYTES ||
+      captured.encodedBytes < 0n ||
+      captured.encodedBytes > BigInt(DISPLAY_CONTENT_BYTES)
+    )
+      throw new DisplayContentLimitError();
     const capturedOwner = { ...owner },
       capturedSource = { ...source, state: { ...source.state } },
       capturedOptions = { ...options };
@@ -79,13 +92,10 @@ export class ReceivingPublication {
         import("../infrastructure/sanitize-email-html"),
         import("../infrastructure/search-body-text"),
       ]);
-    const sanitized =
-      captured.html === null
-        ? null
-        : sanitizeEmailHtml(captured.html as string);
-    delete captured.html;
+    const sanitized = html === null ? null : sanitizeEmailHtml(html);
     const completed = encode({
       ...captured,
+      displayBytes,
       searchText: searchBodyText(
         captured.plainText as string | null,
         sanitized?.html ?? null,
@@ -95,7 +105,7 @@ export class ReceivingPublication {
       policyVersion: EMAIL_HTML_POLICY,
       sanitized: true,
     });
-    if (Buffer.byteLength(completed, "utf8") > 2 * 1024 * 1024)
+    if (Buffer.byteLength(completed, "utf8") > CONTENT_PUBLICATION_BYTES)
       throw new Error(
         "Sanitized content evidence exceeds the publication bound",
       );
@@ -323,7 +333,8 @@ export class ReceivingPublication {
     outcome:
       | "failed_before_execution"
       | "uncertain_remote_execution"
-      | "failed_remote_read",
+      | "failed_remote_read"
+      | "display_content_limit_exceeded",
     options: Options,
   ) {
     const actor = owner.actor,

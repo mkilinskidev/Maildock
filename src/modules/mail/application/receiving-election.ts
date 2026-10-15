@@ -1,4 +1,5 @@
 import { receivingDiagnosticHandler } from "./receiving-diagnostic";
+import { DISPLAY_CONTENT_BYTES } from "../domain/display-content-limits";
 import type {
   ReceivingOperation,
   ReceivingOperationHandlers,
@@ -639,7 +640,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           kind: "content-slice",
           pendingId: id,
           offset: 0,
-          maxBytes: 256 * 1024,
+          maxBytes: DISPLAY_CONTENT_BYTES,
           requestId: randomUUID(),
           deadline: performance.now() + 10_000,
           identity: {

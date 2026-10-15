@@ -711,6 +711,15 @@ describe("R03 unified elected admission with disposable PostgreSQL", () => {
         kind: "content-slice",
         pendingId: randomUUID(),
         offset: 0,
+        maxBytes: 5 * 1024 * 1024 + 1,
+      }),
+    ).rejects.toThrow("unit budget");
+    await expect(
+      fixture.coordinator.submit({
+        ...operation("attachment-slice", id),
+        kind: "attachment-slice",
+        pendingId: randomUUID(),
+        offset: 0,
         maxBytes: 256 * 1024 + 1,
       }),
     ).rejects.toThrow("unit budget");

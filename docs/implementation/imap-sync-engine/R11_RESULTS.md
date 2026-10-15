@@ -1,5 +1,28 @@
 # R11 — On-demand message content retrieval
 
+## Completion audit (2026-10-15, before changes)
+
+The original R11 below remains historical evidence. The effective bottlenecks
+are the 256 KiB content admission and automatic request, 256 KiB aggregate
+encoded/decoded policy, and the 64 KiB + maxBytes socket ceiling. The latter must
+also carry headers, repeated BODYSTRUCTURE, per-window framing and tagged replies.
+The adapter's 256 KiB response ceiling is per response; 32 KiB slices and 16 KiB
+headers fit without raising it. Its download maxBytes limits intermediate
+transfer/charset/flowed streams as well as output and needs the full group plus a
+sentinel. Strict validation retains one bounded encoded part and concatenates it
+once; the consumer collects decoded chunks and concatenates once per part.
+
+R04-B serializes raw then sanitized evidence with two 2 MiB checks. SQL's shared
+complete-read validator also has 2 MiB; attachment authority shares that helper
+and must retain its limit. Sanitizer and search derivation parse inert DOMs with
+no explicit byte ceiling of their own; input and publication envelopes bound
+them. SQL JSON parameters have no smaller application/driver size limit here;
+the actual constraints are the evidence check, trigger OLD/NEW permit copies,
+PostgreSQL JSON/text processing and existing two-second transaction timeout.
+R05 reads committed source-matching text with no 256 KiB body ceiling. R03's
+absolute ten-second operation includes preparation, transfer and publication;
+it will remain unchanged unless measured large-body tests establish a need.
+
 2026-10-15. Isolated R11 implementation on
 `feature/imap-sync-r11-content-retrieval`, based on accepted R10
 `bc814043978b5e600c67cd309050b62e7b5d2fcf`.
@@ -278,3 +301,219 @@ R16 installs the coordinated registry/credential bindings and removes competing
 legacy consumers. Secondary synchronization remains R17. SMTP, draft and outgoing
 snapshot behavior is unchanged. No push, merge, PR, R12 implementation or Dovecot
 benchmark is included. Stop after R11.
+
+## R11 completion — 5 MiB display groups (2026-10-15)
+
+This section supersedes the original size/memory table, not its historical
+PARTIAL validation evidence. Work continues on the existing R11 branch.
+
+### Final boundaries and authority
+
+The complete selected plain/HTML group supports **5,242,880 bytes (5 MiB)** of
+aggregate encoded part data and separately 5 MiB of decoded UTF-8. Attachments
+are excluded from both selection and transfer. Automatic elected requests now
+submit that full allowance; callers may still submit a smaller bound.
+
+| Resource                                    | Completion limit                                                       |
+| ------------------------------------------- | ---------------------------------------------------------------------- |
+| Encoded selected parts, aggregate           | 5 MiB                                                                  |
+| Decoded UTF-8 plain + HTML, aggregate       | 5 MiB                                                                  |
+| UID BODY.PEEK window / literal              | 32 KiB / 32 KiB                                                        |
+| Selected MIME headers                       | 16 KiB each, at most two                                               |
+| Complete adapter response / nonliteral line | Existing 256 KiB / 64 KiB                                              |
+| Content socket input                        | Submitted maxBytes + 256 KiB protocol allowance; maximum 5.25 MiB      |
+| MIME nodes / depth                          | Existing 128 / 16                                                      |
+| Content publication JSON in application     | 64 MiB including escaping, sanitized HTML, derived search and metadata |
+| Content publication JSONB text in SQL       | 64 MiB + 4 KiB for PostgreSQL's JSONB whitespace representation        |
+| Shared attachment complete-read evidence    | Unchanged 2 MiB                                                        |
+| Absolute operation lifetime                 | Unchanged 10 seconds, including preparation and publication            |
+| Result SQL transaction                      | Unchanged min(2 seconds, remaining operation lifetime)                 |
+
+The publication envelope is independent of the 5 MiB input limit. In particular,
+plain text and its derived search representation already exceed 5 MiB together
+at the maximum input; JSON escaping and sanitized markup need further overhead.
+Pathological output exceeding the finite envelope fails; it is never truncated.
+
+Only the content branch of admission/socket policy changes. Attachment slices
+retain 256 KiB admission, and metadata, flags, topology, MOVE and APPEND keep
+their budgets. W, C=1, D, control headroom, ownership and actual retirement remain
+unchanged. Selective UID PEEK, original part/offset/UID/epoch validation, exact
+declared length, final short/empty EOF and successful tagged completion remain
+mandatory. No complete RFC822 or attachment literal is requested.
+
+Migration 0048 replaces only the existing content-result function and adds one
+fixed content-only failure outcome to the existing fenced failure function.
+Source/owner/configuration/lifecycle/epoch/revision/attempt checks, exact OLD/NEW
+write permits, revision advancement and deferred COMMIT validation are retained.
+The shared complete-read validator receives compact content metadata, excluding
+plain/sanitized/search payload fields; attachment validation still receives the
+whole original evidence with its 2 MiB ceiling. Content SQL independently checks
+encoded size and the normalized pre-sanitization display-byte certificate, and
+rejects plaintext larger than that certificate. No new unrestricted writer or
+PUBLIC function grant is introduced. Exceeding the production group limit
+persists a fixed diagnostic explicitly naming the 5 MiB encoded/decoded limit,
+visible through the existing reader error field.
+
+### Transfer, retention and deadlines
+
+One part retains at most 5 MiB encoded chunks; validation concatenates once and
+releases the chunk array immediately. Unencoded input reuses that buffer instead
+of creating full Latin-1 and binary copies. Base64 decodes once and validates
+canonical padding with nonrecursive regexes; quoted-printable retains bounded
+string/decoded representations. Fatal charset validation consumes 32 KiB views,
+avoiding a second full decoded validation string. ImapFlow continues to produce
+the actual charset/transfer/flowed output.
+
+Each decoder's intermediate streams retain the full submitted allowance plus
+one sentinel byte. The shared consumer retains decoded chunks only while the
+aggregate stays within 5 MiB, then concatenates once per part. At rejection,
+previous accepted output plus one incoming decoder chunk can transiently reach
+10 MiB + one byte; that excess chunk is not stored or published. Accepted decoded
+buffers and joined buffers are each bounded by 5 MiB; retained plain/HTML strings
+have at most 5 MiB UTF-8 combined (UTF-16 storage depends on code units).
+
+Publication captures immutable scalar/string references before its first await;
+it no longer serializes and reparses a duplicate raw-content JSON payload.
+Only the sanitized/search publication JSON is serialized for SQL. Existing DOM
+sanitization/search and PostgreSQL permit/JSON copies are still substantial,
+finite input-dependent costs. There is no claim of a 5 MiB RSS ceiling or a
+universal DOM peak-heap bound. Tests sample buffer/heap use during real transfers,
+bound sampled ArrayBuffer growth by 96 MiB including the fixture, and when GC is
+exposed check retained heap growth below 128 MiB after a full collection. Peak
+heap observations are reported separately from retained memory.
+
+Deterministic TLS cases delay each slice by 2 ms and exercise the full installed
+adapter and real PostgreSQL publication. The large-body measurements below
+demonstrate completion within the existing lifetime, so **no content-specific or
+global deadline was extended**. These are local deterministic transfer results,
+not a guarantee for arbitrary provider throughput or latency. A slower transfer
+still cancels and retires within existing ownership rules.
+
+### Scheduler investigation
+
+One bounded targeted invocation ran on exact accepted R10
+`bc814043978b5e600c67cd309050b62e7b5d2fcf` in a detached comparison checkout,
+and one on the current R11 working tree. Both used the same installed adapter,
+Node 24.21.0, disposable PostgreSQL 17.6, deterministic TLS fixtures, unchanged
+assertions/timeouts, `--maxWorkers=1 --no-file-parallelism`, and this filter:
+
+```text
+startup barrier W=4 D=1 grants|W=1 bounds simultaneous|W=1 selects due fresh
+```
+
+**R10: 3/3 passed, 28 skipped. R11: 3/3 passed, 28 skipped.** Startup asserts all
+five ordered fresh opportunities precede history; cancellation/restart checks W=1,
+actual socket closure, no overlap, current-first recovery and the exact committed
+history frontier sequence. Returning-history checks the observed due-fresh
+boundary, scheduler activity, durable source placements and publication state.
+Reported five-account fresh visibility was 945.60–1811.39 ms on R10 and
+893.16–1638.64 ms on R11. These are observations, not relaxed timing thresholds.
+
+Inspection of the exact R10→R11 diff finds no scheduler/coordinator architecture
+change. These three tests instantiate ReceivingScheduler directly, with metadata
+accounts and no elected content registry, content intents, content scans or
+content operation lifetime. R11's elected content control scan is coalesced and
+returns before SQL unless its trusted content registration and connection loader
+exist. The new integration is instead exercised by R11's automatic discovery and
+content/flags/actual-metadata fairness tests.
+
+**Classification: the three historical failures remain inconclusive and did not
+reproduce in this bounded comparison.** Neither a concrete R11 regression nor
+pre-existence of these three failures is established. No scheduler fix or negative
+regression control is justified by this evidence. The separately known healthy
+versus hung-account intermittent scenario was not rerun or redesigned.
+
+### Completion validation record
+
+Local ignored `.r11-completion-*.log` files retain all intermediate outcomes:
+
+- Initial retained R11 suite: 46/46 passed.
+- First expanded R11 + R04-B run: 103/103 passed (67 R11 + original 36 R04-B).
+- First selected regression run: 166/167 passed. Its one old R03 assertion still
+  expected 256 KiB content rejection. The control now rejects above 5 MiB and
+  independently proves attachment rejection above the unchanged 256 KiB.
+- Additional memory/reader instrumentation run: 104/107 passed. One 2 MiB HTML
+  cleanup hook timed out; two new arbitrary 256 MiB transient heap assertions
+  failed (458,052,080 and 299,143,792 bytes). These were not operation-deadline or
+  content-publication failures. Transient DOM heap is now reported separately
+  from retained memory after GC; original transfer/SQL assertions are retained.
+- First GC validation invocation: 122/127 passed; five new size cases failed
+  before transfer because parent `node --expose-gc` did not expose GC in Vitest
+  child workers. The corrected retention invocation passes
+  `--execArgv=--expose-gc` to the worker. Normal invocations retain buffer checks
+  and do not require an optional diagnostic GC hook.
+- Reader/provider/rendering regressions: 43/43 passed across four files.
+
+Final verification on the completed code:
+
+| Selection                                                                                                                          | Result                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Full R11, including all original 46 scenarios                                                                                      | **67/67 passed**, one complete invocation  |
+| R04-B publication, including four new SQL size controls                                                                            | **40/40 passed**                           |
+| R03 admission, including unchanged attachment ceiling                                                                              | **20/20 passed**                           |
+| R05 active reads, claim phase, R10 flags, R04-A publication, Stage 1 safety, MIME, display selection, sanitizer, search derivation | **147/147 passed** across nine files       |
+| Selective content provider, rendering service/UI/API                                                                               | **43/43 passed** across four files         |
+| Three specified scheduler cases on current R11                                                                                     | **3/3 passed**, 28 unrelated cases skipped |
+| Same scheduler cases on exact accepted R10                                                                                         | **3/3 passed**, separate baseline evidence |
+
+The selected completed-code coverage is **320 distinct passing scenarios**:
+67 R11 plus 250 publication/admission/reader/regression scenarios plus the three
+specified scheduler scenarios. Baseline and intermediate reruns are not added
+to that count. R04-B/R03 passed together in the 127-case invocation whose five
+GC-runner setup failures are recorded above; the final complete 67-case R11
+invocation separately supersedes those five setup failures. This is not a claim
+that every intermediate combined invocation passed.
+
+Observed complete admitted operation timings (including SQL publication):
+
+| Display input             | Display + MIME-header literal bytes fetched | UID FETCH commands | Operation time |
+| ------------------------- | ------------------------------------------- | ------------------ | -------------- |
+| 300 KiB plain             | 307,276                                     | 12                 | 1,047.60 ms    |
+| 2 MiB HTML                | 2,097,227                                   | 67                 | 3,107.85 ms    |
+| Nested 4.5 MiB plain/HTML | 4,718,743                                   | 147                | 4,445.47 ms    |
+| Exact 5 MiB plain         | 5,242,956                                   | 163                | 4,160.36 ms    |
+| Exact 5 MiB plain/HTML    | 5,243,031                                   | 163                | 4,763.21 ms    |
+
+All five include a 50,000,000-byte attachment descriptor in a mixed MIME tree;
+the peer rejects unknown requested sections. Protocol assertions prove only
+selected display sections and their MIME headers were fetched, all partial
+requests use 32 KiB, and no attachment body, RFC822 source, BINARY PEEK or STORE
+was requested. The 2.5 MiB HTML alternative was actually sanitized/published,
+and both exact 5 MiB bodies were actually fetched and committed, not simulated
+by a payload-size counter. Automatic discovery separately publishes a 3 MiB
+plain body without a caller maxBytes override. R05 reader/search checks reject
+visibility before publication and expose the body token after committed ready.
+
+For those five transfers, largest sampled ArrayBuffer growth was 26,098,238 bytes;
+largest sampled transient heap growth was 372,430,688 bytes. With GC explicitly
+exposed to the workers, maximum retained heap growth after collection was
+463,296 bytes. These include fixture/application allocations and are sampled
+diagnostics, not a process-wide maximum RSS claim. All retention assertions
+passed. The previously timed-out HTML cleanup did not reproduce in the bounded
+final full run; explicit coordinator/peer cleanup start/completion traces all
+completed. Its cause remains inconclusive; no production fix or timeout change
+is claimed for that intermediate hook failure.
+
+Final commands use `node node_modules/vitest/vitest.mjs run <selection>
+--maxWorkers=1 --no-file-parallelism`; the final R11 invocation additionally uses
+`--execArgv=--expose-gc --reporter=verbose`. Complete local evidence is retained in
+`.r11-completion-content-retention.log`, `.r11-completion-verified.log`,
+`.r11-completion-final-regressions.log`, `.r11-completion-reader.log`,
+`.r11-scheduler-r10-comparison.log` and `.r11-scheduler-current-comparison.log`.
+The temporary detached R10 comparison checkout was removed after comparison.
+
+**Completion implementation: PASS. Overall historical validation: PARTIAL.**
+The required 5 MiB behavior and final selected checks pass. The three historical
+scheduler failures and one intermediate fixture-cleanup timeout remain
+unclassified despite the bounded passing comparisons/verification. The known
+healthy-versus-hung timing issue remains outside this completion. No confirmed
+implementation blocker was found. Real-provider/production activation and the
+previously documented process-suspension limits remain outside R11.
+
+Application and worker typecheck (`pnpm typecheck`), repository lint
+(`pnpm lint`), changed supported-file Prettier and `git diff --check` all
+**passed** after the final code changes. SQL follows the existing migration
+style and is verified by the actual migrated PostgreSQL tests; no SQL Prettier
+plugin is configured.
+No Dovecot benchmark, unrelated application-wide suite, push, merge, PR or R12
+work was performed.

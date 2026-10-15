@@ -246,6 +246,7 @@ describe("R04-B fenced cache publication", () => {
     JSON.stringify(
       {
         ...readEvidence(),
+        displayBytes: 25,
         plainText: "complete body",
         sanitizedHtml: "<p>Hello</p>",
         searchText: "complete body",
@@ -262,6 +263,37 @@ describe("R04-B fenced cache publication", () => {
     const promise = new Promise<void>((resolve) => (release = resolve));
     return { release, promise };
   }
+  it.each([
+    { displayBytes: 5242881 },
+    { displayBytes: null },
+    { displayBytes: 1 },
+    { encodedBytes: "5242881" },
+  ])(
+    "SQL independently rejects invalid large-content size evidence %#",
+    async (invalid) => {
+      const attempt = await publication.claim(
+        owner,
+        source,
+        "content",
+        message,
+        budget(),
+      );
+      source = next();
+      const before = await facts();
+      const evidence = JSON.stringify({
+        ...JSON.parse(completedContent()),
+        ...invalid,
+      });
+      await expect(
+        executor.transaction(async (db) => {
+          await db.execute(
+            sql`select maildock_receiving_content_result(${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,${JSON.stringify(source.state, (_, v) => (typeof v === "bigint" ? v.toString() : v))}::jsonb,1,${message}::uuid,${attempt.id}::uuid,${evidence}::jsonb)`,
+          );
+        }, budget()),
+      ).rejects.toThrow();
+      expect(await facts()).toEqual(before);
+    },
+  );
   it("late old failure cannot replace a newer ready result", async () => {
     const old = await publication.claim(
       owner,
@@ -834,7 +866,7 @@ describe("R04-B fenced cache publication", () => {
       await expect(
         executor.transaction(async (db) => {
           await db.execute(
-            sql`select maildock_receiving_content_result(${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,${JSON.stringify(source.state, (_, v) => (typeof v === "bigint" ? v.toString() : v))}::jsonb,1,${message}::uuid,${attempt.id}::uuid,${JSON.stringify({ ...content(), html: undefined, sanitizedHtml: "<p>Hello</p>", sanitized: true, policyVersion: "email-html-v2", remoteContentBlocked: false }, (_, v) => (typeof v === "bigint" ? v.toString() : v))}::jsonb)`,
+            sql`select maildock_receiving_content_result(${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,${JSON.stringify(source.state, (_, v) => (typeof v === "bigint" ? v.toString() : v))}::jsonb,1,${message}::uuid,${attempt.id}::uuid,${JSON.stringify({ ...content(), displayBytes: 25, html: undefined, sanitizedHtml: "<p>Hello</p>", sanitized: true, policyVersion: "email-html-v2", remoteContentBlocked: false }, (_, v) => (typeof v === "bigint" ? v.toString() : v))}::jsonb)`,
           );
           const assignment =
             mutation === "subject"
