@@ -80,6 +80,7 @@ export const outgoingMessages = pgTable(
       .notNull(),
   },
   (table) => [
+    index("outgoing_messages_cleanup_account_idx").on(table.accountId),
     check(
       "outgoing_messages_mime_source",
       sql`(${table.mimeBlobId} is not null and ${table.mimeBase64} is null) or (${table.mimeBlobId} is null and ${table.mimeBase64} is not null)`,
@@ -184,6 +185,7 @@ export const messageAttachments = pgTable(
     }),
   },
   (table) => [
+    index("message_attachments_cleanup_source_idx").on(table.sourceMailboxId),
     uniqueIndex("message_attachments_part_unique").on(
       table.messageId,
       table.partId,
@@ -554,6 +556,9 @@ export const mailAccountOrderSequence = pgSequence("mail_account_order_seq", {
 export const mailAccounts = pgTable(
   "mail_accounts",
   {
+    removalRequestedAt: timestamp("removal_requested_at", {
+      withTimezone: true,
+    }),
     receivingLifecycleVersion: bigint("receiving_lifecycle_version", {
       mode: "bigint",
     })
@@ -630,6 +635,13 @@ export const mailAccounts = pgTable(
       .notNull(),
   },
   (table) => [
+    index("mail_accounts_removal_pending_idx")
+      .on(table.id)
+      .where(sql`${table.removalRequestedAt} is not null`),
+    check(
+      "mail_accounts_removal_disabled",
+      sql`${table.removalRequestedAt} is null or not ${table.enabled}`,
+    ),
     check(
       "mail_accounts_receiving_lifecycle_version_check",
       sql`${table.receivingLifecycleVersion}>0`,
@@ -1030,6 +1042,9 @@ export const conversations = pgTable(
       .notNull(),
   },
   (t) => [
+    index("conversations_cleanup_redirect_idx")
+      .on(t.accountId, t.id)
+      .where(sql`${t.mergedInto} is not null`),
     uniqueIndex("conversations_account_id_unique").on(t.accountId, t.id),
     foreignKey({
       columns: [t.accountId, t.mergedInto],
@@ -1156,6 +1171,11 @@ export const notificationEvents = pgTable(
       .notNull(),
   },
   (t) => [
+    index("notification_events_cleanup_account_idx").on(
+      t.accountId,
+      t.sequence,
+    ),
+    index("notification_events_cleanup_message_idx").on(t.messageId),
     uniqueIndex("notification_events_remote_identity").on(
       t.mailboxId,
       t.uidValidity,
@@ -1199,6 +1219,7 @@ export const messageContents = pgTable(
     }),
   },
   (table) => [
+    index("message_contents_cleanup_source_idx").on(table.sourceMailboxId),
     check(
       "message_contents_status",
       sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,
@@ -1390,6 +1411,7 @@ export const drafts = pgTable(
       .notNull(),
   },
   (t) => [
+    index("drafts_cleanup_account_idx").on(t.accountId),
     check(
       "drafts_mode",
       sql`${t.composeMode} in ('new', 'reply', 'reply_all', 'forward')`,
@@ -1505,6 +1527,7 @@ export const applicationEvents = pgTable(
       >(),
   },
   (t) => [
+    index("application_events_cleanup_mailbox_idx").on(t.mailboxId),
     check(
       "application_events_level",
       sql`${t.level} in ('info','warning','error')`,

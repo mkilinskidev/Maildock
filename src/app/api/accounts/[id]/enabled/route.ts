@@ -26,6 +26,17 @@ export async function PATCH(
         ),
       });
     } catch (error) {
+      const cause = error instanceof Error && error.cause ? error.cause : error;
+      if (
+        cause &&
+        typeof cause === "object" &&
+        "code" in cause &&
+        cause.code === "55000"
+      )
+        return Response.json(
+          { error: "Account removal is in progress." },
+          { status: 409 },
+        );
       if (error instanceof MailAccountNotFoundError)
         return Response.json({ error: error.message }, { status: 404 });
       if (error instanceof ZodError)

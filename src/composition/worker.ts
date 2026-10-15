@@ -147,6 +147,7 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    accounts,
     events,
     attachments,
     attachmentPoller: new AttachmentPoller(attachments),

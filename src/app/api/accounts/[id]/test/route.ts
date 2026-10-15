@@ -2,7 +2,10 @@ import { routeBoundary } from "@/shared/infrastructure/logging/web-boundary";
 import { requireJsonMediaType } from "@/modules/auth/application/json-media-type";
 import { z, ZodError } from "zod";
 
-import { MailAccountNotFoundError } from "@/modules/accounts/application/accounts-service";
+import {
+  DisabledMailAccountError,
+  MailAccountNotFoundError,
+} from "@/modules/accounts/application/accounts-service";
 import { accountsService } from "@/modules/accounts/infrastructure/accounts";
 import { OAuthAuthorizationError } from "@/modules/accounts/domain/oauth-mail-provider";
 import { requireOwnerApiAccess } from "@/modules/auth/application/api-access";
@@ -27,6 +30,8 @@ export async function POST(
         ),
       });
     } catch (error) {
+      if (error instanceof DisabledMailAccountError)
+        return Response.json({ error: error.message }, { status: 409 });
       if (error instanceof OAuthAuthorizationError)
         return Response.json({ error: error.message }, { status: 409 });
       if (error instanceof MailAccountNotFoundError)

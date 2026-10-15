@@ -302,9 +302,11 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
       oauthStatus: "connected",
       ...google.getMailDefaults(),
     });
-    expect(JSON.stringify(account)).not.toMatch(
-      /refresh-private|access-private|code-private|client-private/,
-    );
+    expect(
+      JSON.stringify(account, (_, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toMatch(/refresh-private|access-private|code-private|client-private/);
     expect(await authorization(id)).toEqual({
       version: 1,
       subject: identity.sub,
@@ -351,6 +353,7 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
   it("refreshes after expiry/restart, preserves omitted refresh tokens and persists rotations encrypted", async () => {
     const id = await connect();
     const initial = (await row(id)).oauthCache;
+    const initialConfiguration = (await row(id)).configurationVersion;
     fetcher.mockResolvedValue(
       Response.json({
         access_token: "renewed-access",
@@ -374,7 +377,11 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     expect(await authorization(id)).toMatchObject({
       refreshToken: "rotated-refresh",
     });
-    expect(JSON.stringify(await row(id))).not.toContain("rotated-refresh");
+    expect(
+      JSON.stringify(await row(id), (_, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toContain("rotated-refresh");
     fetcher.mockResolvedValue(
       Response.json({
         access_token: "after-expiry",
@@ -383,6 +390,7 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
       }),
     );
     expect(await newProvider.accessToken(id)).toBe("after-expiry");
+    expect((await row(id)).configurationVersion).toBe(initialConfiguration);
     expect(
       (fetcher.mock.calls.at(-1)![1].body as URLSearchParams).get(
         "refresh_token",
@@ -528,6 +536,7 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
   });
   it("preserves a still usable refresh token on reconnect when Google omits it", async () => {
     const id = await connect();
+    const before = await row(id);
     fetcher.mockImplementation(async (url: string) =>
       Response.json(
         url.includes("userinfo")
@@ -541,6 +550,12 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     expect(await authorization(id)).toMatchObject({
       refreshToken: "refresh-private",
     });
+    expect((await row(id)).configurationVersion).toBe(
+      before.configurationVersion + 1n,
+    );
+    expect((await row(id)).receivingLifecycleVersion).toBe(
+      before.receivingLifecycleVersion,
+    );
     expect(
       (fetcher.mock.calls.at(-1)![1].body as URLSearchParams).get("grant_type"),
     ).toBe("refresh_token");

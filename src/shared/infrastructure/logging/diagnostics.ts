@@ -19,7 +19,8 @@ export type FailureOperation =
   | "attachment"
   | "message-command"
   | "outgoing"
-  | "sent-copy";
+  | "sent-copy"
+  | "account-removal";
 export type FailureComponent = "jobs" | "worker" | "database" | "web";
 
 // This is an allowlist, NOT an Error/string sanitizer. Never copy properties,

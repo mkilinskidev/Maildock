@@ -47,6 +47,7 @@ export type MailAccountView = Readonly<{
   senderDisplayName: string;
   email: string;
   enabled: boolean;
+  removalStatus: "active" | "removing";
   sentCopyPolicy: SentCopyPolicy;
   providerType: "imap_smtp";
   authMethod: "password" | "oauth2";
@@ -106,6 +107,7 @@ function toView(
     senderDisplayName: row.senderDisplayName,
     email: row.email,
     enabled: row.enabled,
+    removalStatus: row.removalRequestedAt ? "removing" : "active",
     sentCopyPolicy: row.sentCopyPolicy as SentCopyPolicy,
     providerType: "imap_smtp",
     authMethod: row.authMethod as "password" | "oauth2",
@@ -280,62 +282,77 @@ export class AccountsService {
       return this.get(id);
     }
     const parsed = updateAccountInputSchema.parse(input);
-    const current = await this.getRow(id);
-    if (current.authMethod !== "password") throw new MailAccountNotFoundError();
-    let smtpPassword = current.smtpPassword;
-    if (parsed.smtp.useImapCredentials) smtpPassword = null;
-    else if (parsed.smtp.password) {
-      smtpPassword = this.encryption.encrypt(
-        parsed.smtp.password,
-        accountCredentialContext(id, "smtp"),
-      );
-    } else if (current.smtpUsesImapCredentials || !smtpPassword) {
-      throw new z.ZodError([
-        {
-          code: "custom",
-          path: ["smtp", "password"],
-          message: "SMTP password is required.",
-        },
-      ]);
-    }
+    const updated = await this.database.transaction(async (transaction) => {
+      const [current] = await transaction
+        .select()
+        .from(mailAccounts)
+        .where(eq(mailAccounts.id, id))
+        .for("update");
+      if (!current) throw new MailAccountNotFoundError();
+      if (current.authMethod !== "password")
+        throw new MailAccountNotFoundError();
+      let smtpPassword = current.smtpPassword;
+      if (parsed.smtp.useImapCredentials) smtpPassword = null;
+      else if (parsed.smtp.password) {
+        smtpPassword = this.encryption.encrypt(
+          parsed.smtp.password,
+          accountCredentialContext(id, "smtp"),
+        );
+      } else if (current.smtpUsesImapCredentials || !smtpPassword) {
+        throw new z.ZodError([
+          {
+            code: "custom",
+            path: ["smtp", "password"],
+            message: "SMTP password is required.",
+          },
+        ]);
+      }
 
-    const [updated] = await this.database
-      .update(mailAccounts)
-      .set({
-        displayName: parsed.displayName,
-        senderDisplayName:
-          parsed.senderDisplayName ?? current.senderDisplayName,
-        email: parsed.email.toLowerCase(),
-        enabled: parsed.enabled,
-        sentCopyPolicy: parsed.sentCopyPolicy ?? current.sentCopyPolicy,
-        imapHost: parsed.imap.host,
-        imapPort: parsed.imap.port,
-        imapSecurity: parsed.imap.security,
-        imapUsername: parsed.imap.username,
-        imapPassword: parsed.imap.password
-          ? this.encryption.encrypt(
-              parsed.imap.password,
-              accountCredentialContext(id, "imap"),
-            )
-          : current.imapPassword,
-        smtpHost: parsed.smtp.host,
-        smtpPort: parsed.smtp.port,
-        smtpSecurity: parsed.smtp.security,
-        smtpUsesImapCredentials: parsed.smtp.useImapCredentials,
-        smtpUsername: parsed.smtp.useImapCredentials
-          ? null
-          : parsed.smtp.username,
-        smtpPassword,
-        connectionStatus: "unverified",
-        imapStatus: "untested",
-        imapError: null,
-        smtpStatus: "untested",
-        smtpError: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(mailAccounts.id, id))
-      .returning();
-    if (!updated) throw new MailAccountNotFoundError();
+      const [updated] = await transaction
+        .update(mailAccounts)
+        .set({
+          displayName: parsed.displayName,
+          senderDisplayName:
+            parsed.senderDisplayName ?? current.senderDisplayName,
+          email: parsed.email.toLowerCase(),
+          enabled: parsed.enabled,
+          sentCopyPolicy: parsed.sentCopyPolicy ?? current.sentCopyPolicy,
+          imapHost: parsed.imap.host,
+          imapPort: parsed.imap.port,
+          imapSecurity: parsed.imap.security,
+          imapUsername: parsed.imap.username,
+          imapPassword:
+            parsed.imap.password &&
+            parsed.imap.password !==
+              this.encryption.decrypt(
+                current.imapPassword,
+                accountCredentialContext(id, "imap"),
+              )
+              ? this.encryption.encrypt(
+                  parsed.imap.password,
+                  accountCredentialContext(id, "imap"),
+                )
+              : current.imapPassword,
+          smtpHost: parsed.smtp.host,
+          smtpPort: parsed.smtp.port,
+          smtpSecurity: parsed.smtp.security,
+          smtpUsesImapCredentials: parsed.smtp.useImapCredentials,
+          smtpUsername: parsed.smtp.useImapCredentials
+            ? null
+            : parsed.smtp.username,
+          smtpPassword,
+          connectionStatus: "unverified",
+          imapStatus: "untested",
+          imapError: null,
+          smtpStatus: "untested",
+          smtpError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(mailAccounts.id, id))
+        .returning();
+      if (!updated) throw new MailAccountNotFoundError();
+      return updated;
+    });
     if (updated.enabled) await this.scheduleDiscovery(updated.id);
     return updated.enabled ? this.get(updated.id) : toView(updated, this.oauth);
   }
@@ -385,12 +402,51 @@ export class AccountsService {
     return enabled ? this.get(id) : toView(updated, this.oauth);
   }
 
-  async delete(id: string): Promise<void> {
-    const deleted = await this.database
-      .delete(mailAccounts)
-      .where(eq(mailAccounts.id, id))
-      .returning({ id: mailAccounts.id });
-    if (deleted.length === 0) throw new MailAccountNotFoundError();
+  async delete(id: string): Promise<{ status: "removed" | "removing" }> {
+    z.uuid().parse(id);
+    await this.getRow(id);
+    const result = await this.removalTransaction(
+      sql`select maildock_account_remove_start(${id}::uuid) as removed`,
+    );
+    return { status: result.removed === true ? "removed" : "removing" };
+  }
+
+  /** One bounded local-only transaction; missing accounts are settled queue no-ops. */
+  async cleanupRemoval(id: string): Promise<number> {
+    z.uuid().parse(id);
+    const result = await this.removalTransaction(
+      sql`select maildock_account_remove_batch(${id}::uuid) as affected`,
+    );
+    return Number(result.affected);
+  }
+
+  private async removalTransaction(statement: ReturnType<typeof sql>) {
+    return this.database.transaction(async (transaction) => {
+      // Set before the function statement: PostgreSQL statement_timeout does not
+      // start a new timer when set inside the currently executing function.
+      await transaction.execute(sql`set local statement_timeout='2000ms'`);
+      await transaction.execute(sql`set local lock_timeout='1000ms'`);
+      await transaction.execute(
+        sql`set local idle_in_transaction_session_timeout='2000ms'`,
+      );
+      const [result] = await transaction.execute(statement);
+      return result;
+    });
+  }
+
+  /** Keyset repair of existing terminal account rows, independent of queue delivery. */
+  async repairRemovals(
+    enqueue: (id: string) => Promise<unknown>,
+  ): Promise<void> {
+    let after: string | null = null;
+    for (;;) {
+      const rows = await this.database.execute(sql`select id from mail_accounts
+        where removal_requested_at is not null and (${after}::uuid is null or id>${after}::uuid)
+        order by id limit 32`);
+      for (const row of rows) await enqueue(row.id as string);
+      if (rows.length < 32) return;
+      after = rows.at(-1)!.id as string;
+    }
   }
 
   async testUnsaved(input: CreateAccountInput): Promise<ConnectionReport> {
@@ -405,6 +461,7 @@ export class AccountsService {
     input?: UpdateAccountInput,
   ): Promise<ConnectionReport> {
     const row = await this.getRow(id);
+    if (!row.enabled) throw new DisabledMailAccountError();
     if (input && row.authMethod !== "password")
       throw new MailAccountNotFoundError();
     const providerInput = input

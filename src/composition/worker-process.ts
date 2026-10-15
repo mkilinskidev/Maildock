@@ -1,3 +1,4 @@
+import { registerAccountRemovalWorker } from "../modules/accounts/infrastructure/account-removal-jobs";
 import { logFailure } from "../shared/infrastructure/logging/diagnostics";
 import { createLogger } from "../shared/infrastructure/logging/logger";
 import { registerAttachmentWorker } from "../modules/mail/infrastructure/attachment-jobs";
@@ -85,6 +86,7 @@ async function main() {
       await waitForReadinessPoll();
     if (stopping) return;
     await worker.jobs.start();
+    await registerAccountRemovalWorker(worker.jobs.boss, worker.accounts);
     await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
     await worker.attachmentPoller.start();
     await registerSentCopyWorker(worker.jobs.boss, worker.sentCopy);

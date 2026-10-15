@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, lte } from "drizzle-orm";
+import { sql, and, eq, gt, lte } from "drizzle-orm";
 import { z } from "zod";
 import {
   OAuthAuthorizationError,
@@ -322,6 +322,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         await tx
           .update(mailAccounts)
           .set({
+            configurationVersion: sql`${mailAccounts.configurationVersion}+1`,
             email,
             imapUsername: email,
             oauthCache: this.encryptAuthorization(

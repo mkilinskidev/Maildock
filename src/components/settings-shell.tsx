@@ -145,6 +145,14 @@ export function SettingsShell({
   const selectedAccount = section.startsWith("account:")
     ? accountItems.find((a) => a.id === section.slice(8))
     : undefined;
+  const removalInProgress = accountItems.some(
+    (account) => account.removalStatus === "removing",
+  );
+  useEffect(() => {
+    if (!removalInProgress) return;
+    const timer = window.setInterval(() => router.refresh(), 3000);
+    return () => window.clearInterval(timer);
+  }, [removalInProgress, router]);
   useEffect(() => {
     leaving.current = false;
     const currentUrl = window.location.href;
@@ -256,7 +264,13 @@ export function SettingsShell({
             <h2>Accounts</h2>
             {accountItems.map((a, index) => (
               <div className="settings-account-row" key={a.id}>
-                {item(`account:${a.id}`, a.displayName, a.email)}
+                {item(
+                  `account:${a.id}`,
+                  a.displayName,
+                  a.removalStatus === "removing"
+                    ? "Removing local data..."
+                    : a.email,
+                )}
                 <div className="settings-account-order">
                   <button
                     type="button"

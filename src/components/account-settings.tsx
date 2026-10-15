@@ -138,6 +138,7 @@ export function AccountSettings({
     return () => onBusyChange(false);
   }, [pending, onBusyChange]);
   const working =
+    account.removalStatus === "removing" ||
     account.mailboxDiscovery.status === "pending" ||
     account.mailboxDiscovery.status === "running" ||
     mailboxes.some((m) =>
@@ -172,6 +173,18 @@ export function AccountSettings({
       ...accountConnectionPayload(form, useImapCredentials),
     };
   }
+
+  if (account.removalStatus === "removing")
+    return (
+      <section className="settings-section" role="status">
+        <h2>{account.displayName}</h2>
+        <p>
+          Removing account and local mail data. Cleanup will continue after a
+          restart.
+        </p>
+        <p>Messages on the mail server are preserved.</p>
+      </section>
+    );
 
   return (
     <>

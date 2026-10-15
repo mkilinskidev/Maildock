@@ -4,7 +4,7 @@ import {
 } from "../domain/oauth-mail-provider";
 import { OAuthProviderConfigs } from "./oauth-provider-configs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, lte } from "drizzle-orm";
+import { sql, and, eq, gt, lte } from "drizzle-orm";
 import {
   ConfidentialClientApplication,
   CryptoProvider,
@@ -257,6 +257,7 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
       const [updated] = await this.database
         .update(mailAccounts)
         .set({
+          configurationVersion: sql`${mailAccounts.configurationVersion}+1`,
           email,
           imapUsername: email,
           oauthCache: encrypted,

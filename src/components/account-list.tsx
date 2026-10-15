@@ -80,8 +80,10 @@ export function AccountList({
       }[oauthResult.oauth_error] ?? "OAuth connection failed. Try again.")
     : null;
 
-  const discoveryInProgress = accounts.some((account) =>
-    ["pending", "running"].includes(account.mailboxDiscovery.status),
+  const discoveryInProgress = accounts.some(
+    (account) =>
+      account.removalStatus === "removing" ||
+      ["pending", "running"].includes(account.mailboxDiscovery.status),
   );
   useEffect(() => {
     if (!discoveryInProgress) return;
@@ -185,7 +187,11 @@ export function AccountList({
                 <p className="muted">{account.email}</p>
               </div>
               <span className={"status-pill" + (account.enabled ? "" : " off")}>
-                {account.enabled ? "Enabled" : "Disabled"}
+                {account.removalStatus === "removing"
+                  ? "Removing local data"
+                  : account.enabled
+                    ? "Enabled"
+                    : "Disabled"}
               </span>
             </div>
             <div className="account-summary">
@@ -232,7 +238,9 @@ export function AccountList({
               )}
               <button
                 className="button secondary"
-                disabled={pending === account.id}
+                disabled={
+                  pending === account.id || account.removalStatus === "removing"
+                }
                 onClick={() => mutate(account.id, "test")}
               >
                 Test connection
@@ -246,14 +254,18 @@ export function AccountList({
               </button>
               <button
                 className="button secondary"
-                disabled={pending === account.id}
+                disabled={
+                  pending === account.id || account.removalStatus === "removing"
+                }
                 onClick={() => mutate(account.id, "toggle", !account.enabled)}
               >
                 {account.enabled ? "Disable" : "Enable"}
               </button>
               <button
                 className="button danger"
-                disabled={pending === account.id}
+                disabled={
+                  pending === account.id || account.removalStatus === "removing"
+                }
                 onClick={() => mutate(account.id, "delete")}
               >
                 Delete

@@ -413,9 +413,11 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
     expect(row.authMethod).toBe("oauth2");
     expect(row.imapPassword).toBeNull();
     expect(row.oauthCache).toBeTruthy();
-    expect(JSON.stringify(row)).not.toMatch(
-      /refresh-secret|access-secret|code-secret|client-secret/,
-    );
+    expect(
+      JSON.stringify(row, (_, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    ).not.toMatch(/refresh-secret|access-secret|code-secret|client-secret/);
     const view = await accounts.get(accountId);
     expect(JSON.stringify(view)).not.toMatch(
       /refresh-secret|access-secret|code-secret|client-secret/,
@@ -442,6 +444,10 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
   }, 10000);
 
   it("requires the same remote Microsoft identity on reconnect", async () => {
+    const [initial] = await database.db
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, accountId));
     const url = new URL(await oauth.begin("session-1", accountId));
     expect(
       await oauth.complete(
@@ -455,6 +461,10 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
       .select()
       .from(mailAccounts)
       .where(eq(mailAccounts.id, accountId));
+    expect(before.configurationVersion).toBe(initial.configurationVersion + 1n);
+    expect(before.receivingLifecycleVersion).toBe(
+      initial.receivingLifecycleVersion,
+    );
     fake.homeAccountId = "different-account";
     await expect(
       oauth.complete(
@@ -472,6 +482,10 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
   });
 
   it("resolves worker credentials, persists rotated cache, and marks revoked authorization", async () => {
+    const [beforeRefresh] = await database.db
+      .select()
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, accountId));
     fake.renew = true;
     const resolved = await accounts.getProviderImapAccountForWork(accountId);
     expect(resolved.imap.credential).toEqual({
@@ -486,6 +500,7 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
       .select()
       .from(mailAccounts)
       .where(eq(mailAccounts.id, accountId));
+    expect(row.configurationVersion).toBe(beforeRefresh.configurationVersion);
     expect(JSON.stringify(row.oauthCache)).not.toContain("refresh-secret-v2");
     const smtp = smtpOptions({
       ...resolved.imap,
