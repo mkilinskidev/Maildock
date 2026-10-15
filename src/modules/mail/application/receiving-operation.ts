@@ -1,3 +1,10 @@
+import { prepareReceivingAttachment } from "./receiving-attachment";
+import type { BlobStorage } from "../../../shared/application/blob-storage";
+import {
+  RECEIVING_ATTACHMENT_BYTES,
+  RECEIVING_ATTACHMENT_ENCODED_BYTES,
+  RECEIVING_ATTACHMENT_LIFETIME_MS,
+} from "../domain/receiving-attachment-limits";
 import { ImapFlow, type ImapFlowOptions } from "imapflow";
 import type {
   ProviderConnection,
@@ -161,6 +168,9 @@ export type ReceivingOperationContext = Readonly<{
   /** SQL is prohibited until the socket has retired. R04 supplies publication. */
   transaction: <T>(work: (db: ReceivingDatabase) => Promise<T>) => Promise<T>;
   publication: Readonly<{
+    attachmentResult: (
+      evidence: Parameters<ReceivingPublication["attachmentResult"]>[4],
+    ) => Promise<void>;
     contentResult: (
       evidence: Parameters<ReceivingPublication["contentResult"]>[4],
     ) => Promise<void>;
@@ -184,6 +194,7 @@ export type ReceivingOperationHandler =
   | Readonly<{ topology: "list" | "select" }>
   | Readonly<{ flags: true }>
   | Readonly<{ content: true }>
+  | Readonly<{ attachment: BlobStorage }>
   | Readonly<{
       /** Trusted composition only. This phase has no client or arbitrary SQL port. */
       preNetwork: (
@@ -257,7 +268,11 @@ export function validateReceivingOperation(operation: ReceivingOperation) {
     !/^[a-zA-Z0-9-]{1,64}$/.test(operation.requestId) ||
     !Number.isFinite(operation.deadline) ||
     operation.deadline <= performance.now() ||
-    operation.deadline > performance.now() + 10_000
+    operation.deadline >
+      performance.now() +
+        (operation.kind === "attachment-slice"
+          ? RECEIVING_ATTACHMENT_LIFETIME_MS
+          : 10_000)
   )
     throw new Error("Invalid receiving operation envelope");
   const identity = operation.identity;
@@ -294,7 +309,7 @@ export function validateReceivingOperation(operation: ReceivingOperation) {
       operation.maxBytes >
         (operation.kind === "content-slice"
           ? DISPLAY_CONTENT_BYTES
-          : 256 * 1024)
+          : RECEIVING_ATTACHMENT_BYTES)
     )
       throw new Error("Receiving slice exceeds unit budget");
   }
@@ -322,6 +337,14 @@ export async function runReceivingOperation(
   const flagOperation = typeof handler !== "function" && "flags" in handler;
   const contentOperation =
     typeof handler !== "function" && "content" in handler;
+  const attachmentOperation =
+    typeof handler !== "function" && "attachment" in handler;
+  const attachmentStorage =
+    typeof handler !== "function" && "attachment" in handler
+      ? handler.attachment
+      : undefined;
+  let attachment:
+    Awaited<ReturnType<typeof prepareReceivingAttachment>> | undefined;
   let content: Awaited<ReturnType<typeof prepareReceivingContent>> | undefined;
   let flags: Awaited<ReturnType<typeof prepareReceivingFlags>> | undefined;
   const topologyKind =
@@ -381,30 +404,33 @@ export async function runReceivingOperation(
   const preWork = new Set<Promise<unknown>>();
   let preparing = false;
   const options = () => ({ deadline: operation.deadline, signal });
-  const publication = new ReceivingPublication({
-    transaction: <T>(
-      work: (db: ReceivingDatabase) => Promise<T>,
-      budget: Parameters<ReceivingExecutor["transaction"]>[1],
-    ) => {
-      guard();
-      if (
-        sqlWork.size ||
-        (phase !== "PRE_NETWORK_CLAIM" &&
-          phase !== "CLAIM_SETTLED" &&
-          phase !== "RESULT_PUBLICATION") ||
-        (phase === "RESULT_PUBLICATION" ? !socketSettled : Boolean(client))
-      )
-        throw new Error(
-          "Receiving capability phase or serial SQL scope fenced",
-        );
-      const pending = boundary.executor.transaction(work, budget);
-      sqlWork.add(pending);
-      void pending
-        .finally(() => sqlWork.delete(pending))
-        .catch(() => undefined);
-      return pending;
+  const publication = new ReceivingPublication(
+    {
+      transaction: <T>(
+        work: (db: ReceivingDatabase) => Promise<T>,
+        budget: Parameters<ReceivingExecutor["transaction"]>[1],
+      ) => {
+        guard();
+        if (
+          sqlWork.size ||
+          (phase !== "PRE_NETWORK_CLAIM" &&
+            phase !== "CLAIM_SETTLED" &&
+            phase !== "RESULT_PUBLICATION") ||
+          (phase === "RESULT_PUBLICATION" ? !socketSettled : Boolean(client))
+        )
+          throw new Error(
+            "Receiving capability phase or serial SQL scope fenced",
+          );
+        const pending = boundary.executor.transaction(work, budget);
+        sqlWork.add(pending);
+        void pending
+          .finally(() => sqlWork.delete(pending))
+          .catch(() => undefined);
+        return pending;
+      },
     },
-  });
+    attachmentStorage,
+  );
   const boundIntent = () => {
     if (!("pendingId" in operation) || !("account" in operation.identity))
       throw new Error("Pre-network claim requires a persisted intent identity");
@@ -460,6 +486,7 @@ export async function runReceivingOperation(
       marker.generation !== String(owner.generation) ||
       marker.phase !== "claimed" ||
       marker.kind !== kind ||
+      (attachmentOperation && marker.part !== recovered.intent.part_id) ||
       marker.account !== (operation.identity as { account: string }).account ||
       marker.mailbox !== source.mailbox ||
       marker.configuration !== String(source.configuration) ||
@@ -580,7 +607,9 @@ export async function runReceivingOperation(
             await (
               contentOperation
                 ? publication.contentClaim.bind(publication)
-                : publication.claim.bind(publication)
+                : attachmentOperation
+                  ? publication.attachmentClaim.bind(publication)
+                  : publication.claim.bind(publication)
             )(owner, source, kind, intent, preBudget(), attempt);
           } catch (error) {
             // Never resend a claim. Recovery must find this exact UUID, not merely
@@ -835,8 +864,8 @@ export async function runReceivingOperation(
     },
   }) as OwnedReceivingClient;
   const rejectDiagnostic = (entry: unknown) => {
-    if (flags || content) {
-      (flags ?? content)!.collector.reject();
+    if (flags || content || attachment) {
+      (flags ?? content ?? attachment)!.collector.reject();
       void retireSocket();
     } else {
       topologyFailure ??= new Error("IMAP diagnostic rejected topology", {
@@ -864,6 +893,14 @@ export async function runReceivingOperation(
         boundary.executor,
       );
       handler = content.handler;
+    }
+    if (attachmentOperation) {
+      attachment = await prepareReceivingAttachment(
+        { ...operation, signal },
+        boundary.executor,
+        attachmentStorage!,
+      );
+      handler = attachment.handler;
     }
     if (topologyKind) {
       topology = await prepareReceivingTopology({
@@ -912,9 +949,11 @@ export async function runReceivingOperation(
       ...imapOptions(connection),
       disableAutoIdle: true,
       disableCompression: true,
-      ...(contentOperation ? { disableBinary: true } : {}),
+      ...(contentOperation || attachmentOperation
+        ? { disableBinary: true }
+        : {}),
       logger:
-        topologyKind || flagOperation || contentOperation
+        topologyKind || flagOperation || contentOperation || attachmentOperation
           ? {
               debug() {},
               info() {},
@@ -924,17 +963,18 @@ export async function runReceivingOperation(
               fatal: rejectDiagnostic,
             }
           : false,
-      maxLiteralSize: contentOperation
-        ? 32 * 1024
-        : "maxBytes" in operation
-          ? operation.maxBytes
-          : 256 * 1024,
+      maxLiteralSize:
+        contentOperation || attachmentOperation
+          ? 32 * 1024
+          : "maxBytes" in operation
+            ? operation.maxBytes
+            : 256 * 1024,
       maxResponseSize: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
         : 256 * 1024,
       maxLineLength: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
-        : contentOperation
+        : contentOperation || attachmentOperation
           ? 64 * 1024
           : undefined,
       receivingResponse: topology
@@ -952,7 +992,12 @@ export async function runReceivingOperation(
                 guard();
                 return content!.collector.observe(response, request);
               }
-            : undefined,
+            : attachment
+              ? (response, request) => {
+                  guard();
+                  return attachment!.collector.observe(response, request);
+                }
+              : undefined,
       receivingBytes: (() => {
         let bytes = 0;
         return (count: number) => {
@@ -962,8 +1007,10 @@ export async function runReceivingOperation(
             bytes >
             (topologyKind
               ? TOPOLOGY_LIMITS.bytes
-              : (contentOperation ? CONTENT_PROTOCOL_BYTES : 64 * 1024) +
-                ("maxBytes" in operation ? operation.maxBytes : 256 * 1024))
+              : attachmentOperation
+                ? RECEIVING_ATTACHMENT_ENCODED_BYTES + 8 * 1024 * 1024
+                : (contentOperation ? CONTENT_PROTOCOL_BYTES : 64 * 1024) +
+                  ("maxBytes" in operation ? operation.maxBytes : 256 * 1024))
           )
             throw new Error("Receiving operation response budget exceeded");
         };
@@ -999,6 +1046,53 @@ export async function runReceivingOperation(
         client: ownedClient,
         retireSocket,
         publication: Object.freeze({
+          attachmentResult: (
+            evidence: Parameters<ReceivingPublication["attachmentResult"]>[4],
+          ) =>
+            publish(async (c) => {
+              if (!attachmentOperation || c.kind !== "attachment")
+                throw new Error(
+                  "Attachment publication requires typed admission",
+                );
+              const write = () =>
+                publication.attachmentResult(
+                  owner,
+                  c.source,
+                  c.intent,
+                  c.attempt.id,
+                  evidence,
+                  options(),
+                );
+              try {
+                await write();
+              } catch (error) {
+                const recovery = await publication.recover(
+                  owner,
+                  c.source,
+                  "attachment",
+                  c.intent,
+                  preBudget(),
+                );
+                const marker = recovery.intent
+                  .receiving_attempt as Attempt | null;
+                if (
+                  marker?.id !== c.attempt.id ||
+                  !recovery.authority.activeSource
+                )
+                  throw error;
+                if (
+                  recovery.intent.status === "ready" &&
+                  marker.phase === "succeeded"
+                )
+                  return;
+                if (
+                  !(error instanceof ReceivingUnresolvedError) ||
+                  recovery.state.revision !== c.source.state.revision
+                )
+                  throw error;
+                await write();
+              }
+            }),
           contentResult: (
             evidence: Parameters<ReceivingPublication["contentResult"]>[4],
           ) =>

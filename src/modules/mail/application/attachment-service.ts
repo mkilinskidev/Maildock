@@ -1,3 +1,5 @@
+import { RECEIVING_ATTACHMENT_BYTES } from "../domain/receiving-attachment-limits";
+import { addAbortSignal } from "node:stream";
 import { visibleAttachment } from "./active-identity";
 import {
   receivingAccountEnrolled,
@@ -26,6 +28,7 @@ import {
 import {
   BlobLimitError,
   readVerifiedBlob,
+  verifyBlob,
   type BlobStorage,
   type StoredBlob,
 } from "../../../shared/application/blob-storage";
@@ -195,14 +198,53 @@ export class AttachmentService {
       throw new AttachmentUnavailableError(
         "Attachment is not ready. Prepare it first.",
       );
+    const bytes = await readVerifiedBlob(
+      this.storage,
+      storedBlob(row.blob),
+      row.attachment.sourceConfigurationBinding !== null
+        ? RECEIVING_ATTACHMENT_BYTES
+        : this.limits.maxAttachmentBytes,
+    );
+    const current = await this.lookup(this.db, id);
+    if (
+      current.attachment.status !== "ready" ||
+      current.attachment.blobId !== row.blob.id
+    )
+      throw new AttachmentUnavailableError(
+        "Attachment changed during verification.",
+      );
     return {
-      bytes: await readVerifiedBlob(
-        this.storage,
-        storedBlob(row.blob),
-        this.limits.maxAttachmentBytes,
-      ),
+      bytes,
       filename: row.attachment.filename,
     };
+  }
+  async downloadStream(id: string, signal?: AbortSignal) {
+    const row = await this.lookup(this.db, id);
+    if (row.attachment.status !== "ready" || !row.blob)
+      throw new AttachmentUnavailableError(
+        "Attachment is not ready. Prepare it first.",
+      );
+    await verifyBlob(
+      this.storage,
+      storedBlob(row.blob),
+      row.attachment.sourceConfigurationBinding !== null
+        ? RECEIVING_ATTACHMENT_BYTES
+        : this.limits.maxAttachmentBytes,
+      signal,
+    );
+    // Revalidate source after asynchronous disk verification, before exposing bytes.
+    const current = await this.lookup(this.db, id);
+    if (
+      current.attachment.blobId !== row.blob.id ||
+      current.attachment.status !== "ready"
+    )
+      throw new AttachmentUnavailableError(
+        "Attachment changed during verification.",
+      );
+    signal?.throwIfAborted();
+    const stream = await this.storage.open(row.blob.storageKey);
+    if (signal) addAbortSignal(signal, stream);
+    return { stream, size: row.blob.size, filename: row.attachment.filename };
   }
   async inlineResource(
     messageId: string,

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, rename, rm, stat, opendir } from "node:fs/promises";
 import path from "node:path";
 import {
   BlobLimitError,
@@ -83,5 +83,48 @@ export class LocalBlobStorage implements BlobStorage {
   }
   async delete(key: string) {
     await rm(this.location(key), { force: true });
+  }
+
+  /** Maintenance seam only: ALL web/worker/storage writers must be stopped for
+   * the entire call. The callback must check the durable blobs registry, retaining
+   * even unreferenced registered keys (draft/outgoing snapshots may share them).
+   * Never call this on an elected heartbeat or use age as publication authority. */
+  async reclaimWhileQuiescent(isRegistered: (key: string) => Promise<boolean>) {
+    let temporary = 0,
+      finalized = 0;
+    const entries = async function* (directory: string) {
+      let dir;
+      try {
+        dir = await opendir(directory);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      for await (const entry of dir) yield entry;
+    };
+    const uuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    for await (const entry of entries(path.join(this.root, "tmp"))) {
+      if (!entry.isFile() || !uuid.test(entry.name)) continue;
+      await rm(path.join(this.root, "tmp", entry.name));
+      temporary++;
+    }
+    for await (const shard of entries(path.join(this.root, "blobs"))) {
+      if (!shard.isDirectory() || !/^[0-9a-f]{2}$/.test(shard.name)) continue;
+      for await (const entry of entries(
+        path.join(this.root, "blobs", shard.name),
+      )) {
+        if (
+          !entry.isFile() ||
+          !uuid.test(entry.name) ||
+          entry.name.slice(0, 2) !== shard.name
+        )
+          continue;
+        if (await isRegistered(entry.name)) continue;
+        await this.delete(entry.name);
+        finalized++;
+      }
+    }
+    return { temporary, finalized };
   }
 }

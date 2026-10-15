@@ -142,6 +142,7 @@ export class ContentCollector {
     private readonly uid: bigint,
     private readonly epoch: bigint,
     private readonly limit: number,
+    private readonly encodedOnly = false,
   ) {}
   reject() {
     this.failed = true;
@@ -282,7 +283,7 @@ export class ContentCollector {
               throw new Error("Content exceeds declared part size");
             if (this.total > this.limit)
               throw new DisplayContentLimitError(this.limit);
-            this.raw.push(bytes);
+            if (!this.encodedOnly) this.raw.push(bytes);
             if (bytes.length < CONTENT_LIMITS.chunk) {
               if (this.offset !== this.expected!.size)
                 throw new Error("Short content read");
@@ -322,7 +323,7 @@ export class ContentCollector {
     } else if (response.tag !== "*")
       throw new Error("Uncorrelated content completion");
   };
-  finish() {
+  finishCommand() {
     if (
       this.failed ||
       !this.tag ||
@@ -330,6 +331,14 @@ export class ContentCollector {
       BigInt(this.selectedEpoch ?? 0) !== this.epoch
     )
       throw new Error("Incomplete selected content evidence");
+  }
+  finish() {
+    this.finishCommand();
+    if (this.mode === "download" && this.encodedOnly) {
+      if (!this.eof || this.offset !== this.expected!.size)
+        throw new Error("Attachment lacks complete EOF evidence");
+      return BigInt(this.total);
+    }
     if (this.mode === "download" && !this.validated) {
       if (!this.headers || !this.eof || this.offset !== this.expected!.size)
         throw new Error("Content lacks complete EOF evidence");

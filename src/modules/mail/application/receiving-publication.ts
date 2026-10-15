@@ -6,11 +6,11 @@ import {
 } from "../domain/display-content-limits";
 import { sql } from "drizzle-orm";
 import {
-  readVerifiedBlob,
+  verifyBlob,
   type BlobStorage,
   type StoredBlob,
 } from "../../../shared/application/blob-storage";
-import { DEFAULT_ATTACHMENT_LIMITS } from "../../../shared/application/attachment-limits";
+import { RECEIVING_ATTACHMENT_BYTES } from "../domain/receiving-attachment-limits";
 import type {
   ReceivingOwner,
   ReceivingState,
@@ -137,10 +137,11 @@ export class ReceivingPublication {
     delete captured.blob;
     if (!this.storage || !(await this.storage.exists(blob.key)))
       throw new Error("Finalized blob is missing");
-    await readVerifiedBlob(
+    await verifyBlob(
       this.storage,
       blob,
-      DEFAULT_ATTACHMENT_LIMITS.maxAttachmentBytes,
+      RECEIVING_ATTACHMENT_BYTES,
+      capturedOptions.signal,
     );
     if (!(await this.storage.exists(blob.key)))
       throw new Error("Finalized blob disappeared");
@@ -324,6 +325,25 @@ export class ReceivingPublication {
     }, options);
   }
 
+  attachmentClaim(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    kind: IntentKind,
+    intent: string,
+    options: Options,
+    attemptId = randomUUID(),
+  ): Promise<Attempt> {
+    if (kind !== "attachment")
+      throw new Error("Attachment claim kind mismatch");
+    return this.executor.transaction(async (db) => {
+      const [row] =
+        await db.execute(sql`select maildock_receiving_attachment_claim(
+        ${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,
+        ${encode(source.state)}::jsonb,${source.configuration}::bigint,${intent}::uuid,${attemptId}::uuid) as attempt`);
+      return Object.freeze(row.attempt as Attempt);
+    }, options);
+  }
+
   fail(
     owner: ReceivingOwner,
     source: PublicationSource,
@@ -342,11 +362,17 @@ export class ReceivingPublication {
       mailbox = source.mailbox,
       binding = source.configuration,
       expected = encode(source.state);
-    return this.executor.transaction(async (db) => {
-      await db.execute(
-        sql`select maildock_receiving_attempt_failure(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${kind},${intent}::uuid,${attempt}::uuid,${outcome})`,
-      );
-    }, options);
+    return this.executor.transaction(
+      async (db) => {
+        await db.execute(
+          sql`select maildock_receiving_attempt_failure(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${kind},${intent}::uuid,${attempt}::uuid,${outcome})`,
+        );
+      },
+      {
+        ...options,
+        deadline: Math.min(options.deadline, performance.now() + 2000),
+      },
+    );
   }
 
   async recover(

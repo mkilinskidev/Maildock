@@ -19,6 +19,37 @@ export class BlobLimitError extends Error {
   }
 }
 
+/** Integrity verification with constant retained buffers, including cancellation. */
+export async function verifyBlob(
+  storage: BlobStorage,
+  blob: StoredBlob,
+  maxBytes: number,
+  signal?: AbortSignal,
+) {
+  if (!Number.isSafeInteger(blob.size) || blob.size > maxBytes || blob.size < 0)
+    throw new BlobLimitError();
+  signal?.throwIfAborted();
+  const stream = await storage.open(blob.key);
+  const abort = () => stream.destroy(new Error("Blob verification cancelled"));
+  signal?.addEventListener("abort", abort, { once: true });
+  const hash = createHash("sha256");
+  let size = 0;
+  try {
+    signal?.throwIfAborted();
+    for await (const chunk of stream) {
+      signal?.throwIfAborted();
+      size += chunk.length;
+      if (size > blob.size || size > maxBytes) throw new BlobLimitError();
+      hash.update(chunk);
+    }
+    if (size !== blob.size || hash.digest("hex") !== blob.sha256)
+      throw new Error("Blob integrity check failed.");
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    stream.destroy();
+  }
+}
+
 export async function readVerifiedBlob(
   storage: BlobStorage,
   blob: StoredBlob,

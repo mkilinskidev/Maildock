@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BlobLimitError } from "@/shared/application/blob-storage";
 import { AttachmentUnavailableError } from "@/modules/mail/application/attachment-service";
@@ -18,7 +19,7 @@ vi.mock("@/modules/accounts/infrastructure/accounts", () => ({
   attachmentService: {
     status,
     request: prepare,
-    download,
+    downloadStream: download,
     upload,
     removeStaged: remove,
   },
@@ -76,7 +77,8 @@ describe("authenticated attachment endpoints", () => {
   });
   it("forces attachment download with safe Unicode headers and private/no-store isolation", async () => {
     download.mockResolvedValue({
-      bytes: Buffer.from([0, 255]),
+      stream: Readable.from([Buffer.from([0, 255])]),
+      size: 2,
       filename: "Zażółć.pdf\r\nX-Evil: yes",
     });
     const req = request();

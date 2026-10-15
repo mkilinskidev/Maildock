@@ -720,7 +720,7 @@ describe("R03 unified elected admission with disposable PostgreSQL", () => {
         kind: "attachment-slice",
         pendingId: randomUUID(),
         offset: 0,
-        maxBytes: 256 * 1024 + 1,
+        maxBytes: 100 * 1024 * 1024 + 1,
       }),
     ).rejects.toThrow("unit budget");
     await expect(
