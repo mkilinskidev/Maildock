@@ -57,6 +57,9 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   private controlActive = false;
   private flagSelection?: Promise<void>;
   private readonly selectedFlags = new Set<string>();
+  private contentSelection?: Promise<void>;
+  private readonly selectedContent = new Set<string>();
+  private contentCursor?: { at: string; id: string };
 
   constructor(
     private readonly config: Readonly<{
@@ -331,6 +334,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.scheduler.start();
       this.scheduleHeartbeat();
       void this.dispatchFlagCommands().catch(() => undefined);
+      void this.dispatchContentRequests().catch(() => undefined);
       return true;
     } catch (error) {
       this.lose();
@@ -501,6 +505,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           if (live) {
             this.scheduleHeartbeat();
             void this.dispatchFlagCommands().catch(() => undefined);
+            void this.dispatchContentRequests().catch(() => undefined);
           }
         });
       },
@@ -513,6 +518,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     if (await this.renew()) {
       this.scheduler?.notify(accountId);
       await this.dispatchFlagCommands();
+      await this.dispatchContentRequests();
     }
   }
 
@@ -584,6 +590,78 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     return this.flagSelection;
   }
 
+  /** Bounded R02 intent discovery on existing elected control opportunities. */
+  dispatchContentRequests(): Promise<void> {
+    if (this.contentSelection) return this.contentSelection;
+    const handler = this.config.operationHandlers?.["content-slice"];
+    if (
+      this.phase !== "owner" ||
+      !this.config.loadOperationConnection ||
+      !handler ||
+      typeof handler === "function" ||
+      !("content" in handler)
+    )
+      return Promise.resolve();
+    this.contentSelection = (async () => {
+      const rows = await this.control(async (db) => {
+        await this.validate(db, this.owner!);
+        const after = this.contentCursor
+          ? sql`and (updated_at,message_id)>(${this.contentCursor.at}::timestamptz,${this.contentCursor.id}::uuid)`
+          : sql``;
+        return db.execute(sql`with candidates as materialized (
+          select message_id,updated_at,status,source_mailbox_id,source_uid_validity,source_uid,source_configuration_binding,receiving_attempt
+          from message_contents where status in ('pending','fetching') and source_configuration_binding is not null
+          ${after} order by updated_at,message_id limit 32
+        ) select c.message_id,c.updated_at::text as cursor_at,c.source_mailbox_id,c.source_configuration_binding,m.account_id,a.receiving_lifecycle_version,
+          (a.enabled and a.removal_requested_at is null
+            and (c.status='pending' or (c.receiving_attempt->>'phase'='claimed' and coalesce((c.receiving_attempt->>'reads')::integer,1)<3))
+            and c.source_configuration_binding=a.configuration_version and c.source_configuration_binding=s.configuration_binding
+            and c.source_uid_validity=s.epoch
+            and maildock_receiving_visible_resource(c.message_id,c.source_mailbox_id,c.source_uid_validity,c.source_uid,c.source_configuration_binding)) as eligible
+          from candidates c left join messages m on m.id=c.message_id
+          left join mail_accounts a on a.id=m.account_id left join receiving_mailboxes s on s.mailbox_id=c.source_mailbox_id
+          order by c.updated_at,c.message_id`);
+      });
+      this.assertCurrent();
+      const accounts = new Set<string>();
+      const last = rows.at(-1);
+      this.contentCursor = last
+        ? { at: String(last.cursor_at), id: String(last.message_id) }
+        : undefined;
+      for (const row of rows) {
+        if (row.eligible !== true) continue;
+        const id = String(row.message_id),
+          account = String(row.account_id);
+        if (accounts.has(account) || this.selectedContent.has(id)) continue;
+        accounts.add(account);
+        this.selectedContent.add(id);
+        void this.submit({
+          kind: "content-slice",
+          pendingId: id,
+          offset: 0,
+          maxBytes: 256 * 1024,
+          requestId: randomUUID(),
+          deadline: performance.now() + 10_000,
+          identity: {
+            account,
+            mailbox: String(row.source_mailbox_id),
+            configurationVersion: BigInt(
+              row.source_configuration_binding as string,
+            ),
+            receivingLifecycleVersion: BigInt(
+              row.receiving_lifecycle_version as string,
+            ),
+          },
+        })
+          .catch(() => undefined)
+          .finally(() => this.selectedContent.delete(id));
+      }
+    })().finally(() => {
+      this.contentSelection = undefined;
+    });
+    return this.contentSelection;
+  }
+
   stop(): Promise<void> {
     this.stopping ??= this.shutdown();
     return this.stopping;
@@ -594,6 +672,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     await this.election?.catch(() => undefined);
     await this.renewal;
     await this.flagSelection?.catch(() => undefined);
+    await this.contentSelection?.catch(() => undefined);
     await this.retirement;
     // Release only AFTER socket/SQL retirement. Unknown server COMMIT still
     // conflicts with this UPDATE lock; failure leaves lease expiry as fallback.

@@ -1222,6 +1222,11 @@ export const messageContents = pgTable(
   },
   (table) => [
     index("message_contents_cleanup_source_idx").on(table.sourceMailboxId),
+    index("message_contents_receiving_pending_idx")
+      .on(table.updatedAt, table.messageId)
+      .where(
+        sql`${table.status} in ('pending','fetching') and ${table.sourceConfigurationBinding} is not null`,
+      ),
     check(
       "message_contents_status",
       sql`${table.status} in ('not_fetched', 'pending', 'fetching', 'ready', 'failed')`,

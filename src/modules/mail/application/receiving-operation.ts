@@ -12,6 +12,7 @@ import type {
 import type { ReceivingOwner } from "../../../shared/infrastructure/database/receiving-authority";
 import { randomUUID } from "node:crypto";
 import { prepareReceivingFlags } from "./receiving-flags";
+import { prepareReceivingContent } from "./receiving-content";
 import {
   listOwnedTopology,
   selectOwnedDestination,
@@ -155,6 +156,9 @@ export type ReceivingOperationContext = Readonly<{
   /** SQL is prohibited until the socket has retired. R04 supplies publication. */
   transaction: <T>(work: (db: ReceivingDatabase) => Promise<T>) => Promise<T>;
   publication: Readonly<{
+    contentResult: (
+      evidence: Parameters<ReceivingPublication["contentResult"]>[4],
+    ) => Promise<void>;
     commandResult: (
       evidence: Parameters<ReceivingPublication["commandResult"]>[4],
     ) => Promise<void>;
@@ -174,6 +178,7 @@ export type ReceivingOperationHandler =
   | ReceivingOperationBody
   | Readonly<{ topology: "list" | "select" }>
   | Readonly<{ flags: true }>
+  | Readonly<{ content: true }>
   | Readonly<{
       /** Trusted composition only. This phase has no client or arbitrary SQL port. */
       preNetwork: (
@@ -307,6 +312,9 @@ export async function runReceivingOperation(
   lifetime: AbortSignal,
 ) {
   const flagOperation = typeof handler !== "function" && "flags" in handler;
+  const contentOperation =
+    typeof handler !== "function" && "content" in handler;
+  let content: Awaited<ReturnType<typeof prepareReceivingContent>> | undefined;
   let flags: Awaited<ReturnType<typeof prepareReceivingFlags>> | undefined;
   const topologyKind =
     typeof handler !== "function" && "topology" in handler
@@ -561,14 +569,11 @@ export async function runReceivingOperation(
       return trackPre(
         (async () => {
           try {
-            await publication.claim(
-              owner,
-              source,
-              kind,
-              intent,
-              preBudget(),
-              attempt,
-            );
+            await (
+              contentOperation
+                ? publication.contentClaim.bind(publication)
+                : publication.claim.bind(publication)
+            )(owner, source, kind, intent, preBudget(), attempt);
           } catch (error) {
             // Never resend a claim. Recovery must find this exact UUID, not merely
             // an executing row left by a previous remote operation.
@@ -822,8 +827,8 @@ export async function runReceivingOperation(
     },
   }) as OwnedReceivingClient;
   const rejectDiagnostic = (entry: unknown) => {
-    if (flags) {
-      flags.collector.reject();
+    if (flags || content) {
+      (flags ?? content)!.collector.reject();
       void retireSocket();
     } else {
       topologyFailure ??= new Error("IMAP diagnostic rejected topology", {
@@ -844,6 +849,13 @@ export async function runReceivingOperation(
         boundary.executor,
       );
       handler = flags.handler;
+    }
+    if (contentOperation) {
+      content = await prepareReceivingContent(
+        { ...operation, signal },
+        boundary.executor,
+      );
+      handler = content.handler;
     }
     if (topologyKind) {
       topology = await prepareReceivingTopology({
@@ -892,8 +904,9 @@ export async function runReceivingOperation(
       ...imapOptions(connection),
       disableAutoIdle: true,
       disableCompression: true,
+      ...(contentOperation ? { disableBinary: true } : {}),
       logger:
-        topologyKind || flagOperation
+        topologyKind || flagOperation || contentOperation
           ? {
               debug() {},
               info() {},
@@ -907,7 +920,11 @@ export async function runReceivingOperation(
       maxResponseSize: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
         : 256 * 1024,
-      maxLineLength: topologyKind ? TOPOLOGY_LIMITS.responseBytes : undefined,
+      maxLineLength: topologyKind
+        ? TOPOLOGY_LIMITS.responseBytes
+        : contentOperation
+          ? 64 * 1024
+          : undefined,
       receivingResponse: topology
         ? (response, request) => {
             guard();
@@ -918,7 +935,12 @@ export async function runReceivingOperation(
               guard();
               return flags!.collector.observe(response, request);
             }
-          : undefined,
+          : content
+            ? (response, request) => {
+                guard();
+                return content!.collector.observe(response, request);
+              }
+            : undefined,
       receivingBytes: (() => {
         let bytes = 0;
         return (count: number) => {
@@ -965,6 +987,57 @@ export async function runReceivingOperation(
         client: ownedClient,
         retireSocket,
         publication: Object.freeze({
+          contentResult: (
+            evidence: Parameters<ReceivingPublication["contentResult"]>[4],
+          ) =>
+            publish(async (c) => {
+              if (!contentOperation || c.kind !== "content")
+                throw new Error("Content publication requires typed admission");
+              const write = () =>
+                publication.contentResult(
+                  owner,
+                  c.source,
+                  c.intent,
+                  c.attempt.id,
+                  evidence,
+                  options(),
+                );
+              try {
+                await write();
+              } catch (error) {
+                const recovery = await publication.recover(
+                  owner,
+                  c.source,
+                  "content",
+                  c.intent,
+                  {
+                    ...options(),
+                    deadline: Math.min(
+                      operation.deadline,
+                      performance.now() + 2000,
+                    ),
+                  },
+                );
+                const marker = recovery.intent
+                  .receiving_attempt as Attempt | null;
+                if (
+                  marker?.id !== c.attempt.id ||
+                  !recovery.authority.activeSource
+                )
+                  throw error;
+                if (
+                  recovery.intent.status === "ready" &&
+                  marker.phase === "succeeded"
+                )
+                  return;
+                if (
+                  !(error instanceof ReceivingUnresolvedError) ||
+                  recovery.state.revision !== c.source.state.revision
+                )
+                  throw error;
+                await write();
+              }
+            }),
           commandResult: (
             evidence: Parameters<ReceivingPublication["commandResult"]>[4],
           ) =>

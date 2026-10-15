@@ -95,6 +95,10 @@ export class ReceivingPublication {
       policyVersion: EMAIL_HTML_POLICY,
       sanitized: true,
     });
+    if (Buffer.byteLength(completed, "utf8") > 2 * 1024 * 1024)
+      throw new Error(
+        "Sanitized content evidence exceeds the publication bound",
+      );
     return this.cacheResult(
       "content",
       capturedOwner,
@@ -290,6 +294,23 @@ export class ReceivingPublication {
         sql`select maildock_receiving_attempt_claim(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${kind},${intent}::uuid,${attempt}::uuid) as attempt`,
       );
       return Object.freeze(row.attempt as Record<string, string>);
+    }, options);
+  }
+
+  contentClaim(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    kind: IntentKind,
+    intent: string,
+    options: Options,
+    attemptId = randomUUID(),
+  ): Promise<Attempt> {
+    if (kind !== "content") throw new Error("Content claim kind mismatch");
+    return this.executor.transaction(async (db) => {
+      const [row] = await db.execute(
+        sql`select maildock_receiving_content_claim(${owner.actor}::uuid,${owner.generation}::bigint,${source.mailbox}::uuid,${encode(source.state)}::jsonb,${source.configuration}::bigint,${intent}::uuid,${attemptId}::uuid) as attempt`,
+      );
+      return Object.freeze(row.attempt as Attempt);
     }, options);
   }
 
