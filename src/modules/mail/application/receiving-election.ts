@@ -55,6 +55,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     renewal: boolean;
   }[] = [];
   private controlActive = false;
+  private flagSelection?: Promise<void>;
+  private readonly selectedFlags = new Set<string>();
 
   constructor(
     private readonly config: Readonly<{
@@ -328,6 +330,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         await this.advertiseDiagnosticEndpoint(this.config.diagnosticEndpoint);
       this.scheduler.start();
       this.scheduleHeartbeat();
+      void this.dispatchFlagCommands().catch(() => undefined);
       return true;
     } catch (error) {
       this.lose();
@@ -495,7 +498,10 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     this.heartbeat = setTimeout(
       () => {
         void this.renew().then((live) => {
-          if (live) this.scheduleHeartbeat();
+          if (live) {
+            this.scheduleHeartbeat();
+            void this.dispatchFlagCommands().catch(() => undefined);
+          }
         });
       },
       Math.max(1, Math.floor(this.ttlMs / 3)),
@@ -504,7 +510,78 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
 
   async notify(accountId: string): Promise<void> {
     if (this.phase !== "owner") return; // Follower ACK leaves DB demand intact.
-    if (await this.renew()) this.scheduler?.notify(accountId);
+    if (await this.renew()) {
+      this.scheduler?.notify(accountId);
+      await this.dispatchFlagCommands();
+    }
+  }
+
+  /** One bounded durable selection on the existing control opportunities. The
+   * selector still owns admission/fairness; this is neither a queue nor a timer.
+   * R16 will bind this isolated elected lifetime to the production worker. */
+  dispatchFlagCommands(): Promise<void> {
+    if (this.flagSelection) return this.flagSelection;
+    if (
+      this.phase !== "owner" ||
+      !this.config.loadOperationConnection ||
+      !this.config.operationHandlers?.store ||
+      typeof this.config.operationHandlers.store === "function" ||
+      !("flags" in this.config.operationHandlers.store) ||
+      !this.config.operationHandlers["exact-lookup"] ||
+      typeof this.config.operationHandlers["exact-lookup"] === "function" ||
+      !("flags" in this.config.operationHandlers["exact-lookup"])
+    )
+      return Promise.resolve();
+    this.flagSelection = (async () => {
+      const rows = await this.control(async (db) => {
+        await this.validate(db, this.owner!);
+        return db.execute(sql`
+          select c.id,c.account_id,c.mailbox_id,c.status,c.source_configuration_binding,a.receiving_lifecycle_version
+          from message_commands c join mail_accounts a on a.id=c.account_id
+          join mailboxes b on b.id=c.mailbox_id join receiving_mailboxes s on s.mailbox_id=b.id
+          where a.enabled and a.removal_requested_at is null and b.selectable and b.lifecycle_status='active'
+            and c.action in ('mark_read','mark_unread','flag','unflag')
+            and (c.status='pending' or (c.status in ('executing','failed')
+              and c.receiving_attempt->>'phase' in ('claimed','uncertain_remote_execution')
+              and coalesce((c.receiving_attempt->>'observations')::integer,0)<3))
+            and c.source_configuration_binding=a.configuration_version
+            and c.source_configuration_binding=s.configuration_binding
+            and c.source_uid_validity=s.epoch and c.source_path=b.remote_path
+            and maildock_receiving_active_source(c.account_id,c.mailbox_id,c.message_id,
+              c.source_uid_validity,c.source_uid,c.source_configuration_binding)
+          order by c.created_at,c.id limit 32`);
+      });
+      this.assertCurrent();
+      const accounts = new Set<string>();
+      for (const row of rows) {
+        const id = String(row.id),
+          account = String(row.account_id);
+        if (accounts.has(account) || this.selectedFlags.has(id)) continue;
+        accounts.add(account);
+        this.selectedFlags.add(id);
+        void this.submit({
+          kind: row.status === "pending" ? "store" : "exact-lookup",
+          pendingId: id,
+          requestId: randomUUID(),
+          deadline: performance.now() + 10_000,
+          identity: {
+            account,
+            mailbox: String(row.mailbox_id),
+            configurationVersion: BigInt(
+              row.source_configuration_binding as string,
+            ),
+            receivingLifecycleVersion: BigInt(
+              row.receiving_lifecycle_version as string,
+            ),
+          },
+        })
+          .catch(() => undefined)
+          .finally(() => this.selectedFlags.delete(id));
+      }
+    })().finally(() => {
+      this.flagSelection = undefined;
+    });
+    return this.flagSelection;
   }
 
   stop(): Promise<void> {
@@ -516,6 +593,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     this.lose();
     await this.election?.catch(() => undefined);
     await this.renewal;
+    await this.flagSelection?.catch(() => undefined);
     await this.retirement;
     // Release only AFTER socket/SQL retirement. Unknown server COMMIT still
     // conflicts with this UPDATE lock; failure leaves lease expiry as fallback.

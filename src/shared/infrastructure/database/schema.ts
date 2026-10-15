@@ -1300,6 +1300,11 @@ export const messageCommands = pgTable(
       table.accountId,
       table.createdAt,
     ),
+    index("message_commands_flag_work_idx")
+      .on(table.accountId, table.createdAt, table.id)
+      .where(
+        sql`${table.action} in ('mark_read','mark_unread','flag','unflag') and ${table.status} in ('pending','executing','failed')`,
+      ),
   ],
 );
 

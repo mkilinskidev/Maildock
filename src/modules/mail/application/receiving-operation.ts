@@ -11,6 +11,7 @@ import type {
 } from "../../../shared/infrastructure/database/receiving-executor";
 import type { ReceivingOwner } from "../../../shared/infrastructure/database/receiving-authority";
 import { randomUUID } from "node:crypto";
+import { prepareReceivingFlags } from "./receiving-flags";
 import {
   listOwnedTopology,
   selectOwnedDestination,
@@ -51,6 +52,8 @@ export type ReceivingPreNetworkContext = Readonly<{
   recover: (
     source: PublicationSource,
   ) => ReturnType<ReceivingPublication["recover"]>;
+  /** Read-only reconciliation retains the original attempt; never authorizes STORE. */
+  resume: (source: PublicationSource) => Promise<ReceivingClaim>;
 }>;
 
 export type ReceivingOperationKind =
@@ -158,6 +161,7 @@ export type ReceivingOperationContext = Readonly<{
     fail: (
       outcome: Parameters<ReceivingPublication["fail"]>[5],
     ) => Promise<void>;
+    flagConflict: () => Promise<void>;
   }>;
 }>;
 /** Trusted composition registry, not supplied by submitters. No operation bodies
@@ -169,6 +173,7 @@ type ReceivingOperationBody = (
 export type ReceivingOperationHandler =
   | ReceivingOperationBody
   | Readonly<{ topology: "list" | "select" }>
+  | Readonly<{ flags: true }>
   | Readonly<{
       /** Trusted composition only. This phase has no client or arbitrary SQL port. */
       preNetwork: (
@@ -301,6 +306,8 @@ export async function runReceivingOperation(
   handler: NonNullable<ReceivingOperationHandlers[ReceivingOperationKind]>,
   lifetime: AbortSignal,
 ) {
+  const flagOperation = typeof handler !== "function" && "flags" in handler;
+  let flags: Awaited<ReturnType<typeof prepareReceivingFlags>> | undefined;
   const topologyKind =
     typeof handler !== "function" && "topology" in handler
       ? handler.topology
@@ -458,6 +465,48 @@ export async function runReceivingOperation(
       intent,
     });
   };
+  const confirmResume = async (source: PublicationSource, attempt?: string) => {
+    if (
+      !flagOperation ||
+      operation.kind !== "exact-lookup" ||
+      !("pendingId" in operation) ||
+      !("account" in operation.identity)
+    )
+      throw new Error("Reconciliation admission required");
+    const recovered = await publication.recover(
+      owner,
+      source,
+      "command",
+      operation.pendingId,
+      preBudget(),
+    );
+    const marker = recovered.intent.receiving_attempt as Attempt | null;
+    if (
+      !marker ||
+      (attempt && marker.id !== attempt) ||
+      marker.kind !== "command" ||
+      !["claimed", "uncertain_remote_execution"].includes(marker.phase) ||
+      !["executing", "failed"].includes(String(recovered.intent.status)) ||
+      marker.account !== operation.identity.account ||
+      marker.mailbox !== source.mailbox ||
+      marker.path !== recovered.authority.path ||
+      marker.configuration !== String(source.configuration) ||
+      marker.epoch !== String(recovered.state.epoch) ||
+      marker.uid !== String(recovered.intent.source_uid) ||
+      marker.reconciliationActor !== owner.actor ||
+      marker.reconciliationGeneration !== String(owner.generation) ||
+      marker.reconciliationLifecycle !== String(capturedLifecycle) ||
+      !recovered.authority.activeSource ||
+      recovered.authority.configuration !== source.configuration
+    )
+      throw new Error("Reconciliation original attempt fenced");
+    return Object.freeze({
+      attempt: Object.freeze({ ...marker }),
+      source: captureSource({ ...source, state: recovered.state }),
+      kind: "command" as const,
+      intent: operation.pendingId,
+    });
+  };
   const trackPre = <T>(pending: Promise<T>) => {
     const settled = pending
       .catch((error) => {
@@ -472,6 +521,35 @@ export async function runReceivingOperation(
   const preNetwork: ReceivingPreNetworkContext = Object.freeze({
     signal,
     deadline: operation.deadline,
+    resume: (input: PublicationSource) => {
+      preGuard();
+      if (claimStarted || preWork.size)
+        throw new Error("Reconciliation preparation is single-use");
+      claimStarted = true;
+      const source = captureSource(input);
+      return trackPre(
+        (async () => {
+          if (
+            !flagOperation ||
+            operation.kind !== "exact-lookup" ||
+            !("pendingId" in operation)
+          )
+            throw new Error("Reconciliation admission required");
+          // Unknown resume COMMIT cannot open a socket. A later bounded selection
+          // may inspect the original mutation, never replay it.
+          await publication.flagResume(
+            owner,
+            source,
+            operation.pendingId,
+            preBudget(),
+          );
+          preGuard();
+          claim = await confirmResume(source);
+          preGuard();
+          return claim;
+        })(),
+      );
+    },
     claim: (input: PublicationSource) => {
       preGuard();
       if (claimStarted || preWork.size)
@@ -508,7 +586,12 @@ export async function runReceivingOperation(
       preGuard();
       if (preWork.size) throw new Error("Pre-network recovery must be serial");
       const source = captureSource(input);
-      const { kind, intent } = boundIntent();
+      const { kind, intent } =
+        operation.kind === "exact-lookup" &&
+        flagOperation &&
+        "pendingId" in operation
+          ? { kind: "command" as const, intent: operation.pendingId }
+          : boundIntent();
       return trackPre(
         publication
           .recover(owner, source, kind, intent, preBudget())
@@ -545,6 +628,58 @@ export async function runReceivingOperation(
     }
   };
   const providerWork = new Set<Promise<unknown>>();
+  const flagResult = async (
+    c: ReceivingClaim,
+    evidence: Parameters<ReceivingPublication["commandResult"]>[4] | null,
+  ) => {
+    const write = () =>
+      evidence === null || operation.kind === "exact-lookup"
+        ? publication.flagRecovery(
+            owner,
+            c.source,
+            c.intent,
+            c.attempt.id,
+            evidence,
+            options(),
+          )
+        : publication.commandResult(
+            owner,
+            c.source,
+            c.intent,
+            c.attempt.id,
+            evidence,
+            options(),
+          );
+    try {
+      await write();
+    } catch (error) {
+      // Recover unknown COMMIT acknowledgements and stale-result rejection under
+      // conflicting locks. Remote success alone never acknowledges settlement.
+      const recovery = await publication.recover(
+        owner,
+        c.source,
+        "command",
+        c.intent,
+        options(),
+      );
+      const marker = recovery.intent.receiving_attempt as Attempt | null;
+      if (marker?.id !== c.attempt.id || !recovery.authority.activeSource)
+        throw error;
+      if (
+        (evidence !== null &&
+          recovery.intent.status === "succeeded" &&
+          marker.phase === "succeeded") ||
+        (evidence === null &&
+          recovery.intent.status === "failed" &&
+          marker.phase === "flag_conflict")
+      )
+        return;
+      // Never rebase old evidence over newer canonical facts without MODSEQ.
+      // A new admitted lookup must fetch those flags again.
+      if (recovery.state.revision !== c.source.state.revision) throw error;
+      await write();
+    }
+  };
   const providerIterators = new Set<AsyncIterator<unknown>>();
   // A method-only facade prevents reflection from exposing client internals.
   // Even a method descriptor contains only the revocable wrapper, not ImapFlow.
@@ -686,12 +821,30 @@ export async function runReceivingOperation(
       return Reflect.get(target, property);
     },
   }) as OwnedReceivingClient;
+  const rejectDiagnostic = (entry: unknown) => {
+    if (flags) {
+      flags.collector.reject();
+      void retireSocket();
+    } else {
+      topologyFailure ??= new Error("IMAP diagnostic rejected topology", {
+        cause: entry,
+      });
+      cancellation.abort();
+    }
+  };
   try {
     guard();
     let connection = await boundary.validate({ ...operation, signal });
     guard();
     capturedLifecycle = connection.receivingLifecycleVersion;
     phase = "PRE_NETWORK_CLAIM";
+    if (flagOperation) {
+      flags = await prepareReceivingFlags(
+        { ...operation, signal },
+        boundary.executor,
+      );
+      handler = flags.handler;
+    }
     if (topologyKind) {
       topology = await prepareReceivingTopology({
         operation,
@@ -725,7 +878,10 @@ export async function runReceivingOperation(
       guard();
       if (connection.receivingLifecycleVersion !== capturedLifecycle)
         throw new Error("Receiving post-claim lifecycle fenced");
-      claim = await confirm(prepared.source, prepared.attempt.id);
+      claim =
+        operation.kind === "exact-lookup" && flagOperation
+          ? await confirmResume(prepared.source, prepared.attempt.id)
+          : await confirm(prepared.source, prepared.attempt.id);
       guard();
     } else {
       // Existing R03 no-claim handlers retain admission-only fixture behavior.
@@ -736,34 +892,17 @@ export async function runReceivingOperation(
       ...imapOptions(connection),
       disableAutoIdle: true,
       disableCompression: true,
-      logger: topologyKind
-        ? {
-            debug() {},
-            info() {},
-            trace() {},
-            warn(entry: unknown) {
-              topologyFailure ??= new Error(
-                "IMAP diagnostic rejected topology",
-                { cause: entry },
-              );
-              cancellation.abort();
-            },
-            error(entry: unknown) {
-              topologyFailure ??= new Error(
-                "IMAP diagnostic rejected topology",
-                { cause: entry },
-              );
-              cancellation.abort();
-            },
-            fatal(entry: unknown) {
-              topologyFailure ??= new Error(
-                "IMAP diagnostic rejected topology",
-                { cause: entry },
-              );
-              cancellation.abort();
-            },
-          }
-        : false,
+      logger:
+        topologyKind || flagOperation
+          ? {
+              debug() {},
+              info() {},
+              trace() {},
+              warn: rejectDiagnostic,
+              error: rejectDiagnostic,
+              fatal: rejectDiagnostic,
+            }
+          : false,
       maxLiteralSize: "maxBytes" in operation ? operation.maxBytes : 256 * 1024,
       maxResponseSize: topologyKind
         ? TOPOLOGY_LIMITS.responseBytes
@@ -774,7 +913,12 @@ export async function runReceivingOperation(
             guard();
             return topology!.collector.observe(response, request);
           }
-        : undefined,
+        : flags
+          ? (response, request) => {
+              guard();
+              return flags!.collector.observe(response, request);
+            }
+          : undefined,
       receivingBytes: (() => {
         let bytes = 0;
         return (count: number) => {
@@ -791,6 +935,7 @@ export async function runReceivingOperation(
         };
       })(),
     });
+    flags?.bind(client);
 
     client.on("error", (error) => {
       if (topologyKind) topologyFailure ??= error;
@@ -824,15 +969,22 @@ export async function runReceivingOperation(
             evidence: Parameters<ReceivingPublication["commandResult"]>[4],
           ) =>
             publish((c) =>
-              publication.commandResult(
-                owner,
-                c.source,
-                c.intent,
-                c.attempt.id,
-                evidence,
-                options(),
-              ),
+              flagOperation
+                ? flagResult(c, evidence)
+                : publication.commandResult(
+                    owner,
+                    c.source,
+                    c.intent,
+                    c.attempt.id,
+                    evidence,
+                    options(),
+                  ),
             ),
+          flagConflict: () => {
+            if (!flagOperation)
+              throw new Error("Flag conflict capability unavailable");
+            return publish((c) => flagResult(c, null));
+          },
           fail: (outcome: Parameters<ReceivingPublication["fail"]>[5]) => {
             if (
               outcome === "failed_before_execution" &&
@@ -922,26 +1074,40 @@ export async function runReceivingOperation(
       } as const);
     }
   } catch (error) {
-    if (claim && !publicationSettled && !resultUnresolved && !signal.aborted) {
+    if (
+      claim &&
+      !publicationSettled &&
+      !resultUnresolved &&
+      !signal.aborted &&
+      !(flagOperation && operation.kind === "exact-lookup")
+    ) {
       await retireSocket();
       const outcome = mutationMayHaveExecuted
         ? "uncertain_remote_execution"
         : "failed_before_execution";
       try {
         await publish((c) =>
-          publication.fail(
-            owner,
-            c.source,
-            c.kind,
-            c.intent,
-            c.attempt.id,
-            c.kind === "command"
-              ? outcome
-              : connected
-                ? "failed_remote_read"
-                : "failed_before_execution",
-            options(),
-          ),
+          flagOperation && mutationMayHaveExecuted
+            ? publication.flagUncertain(
+                owner,
+                c.source,
+                c.intent,
+                c.attempt.id,
+                options(),
+              )
+            : publication.fail(
+                owner,
+                c.source,
+                c.kind,
+                c.intent,
+                c.attempt.id,
+                c.kind === "command"
+                  ? outcome
+                  : connected
+                    ? "failed_remote_read"
+                    : "failed_before_execution",
+                options(),
+              ),
         );
       } catch (settlement) {
         throw new AggregateError(

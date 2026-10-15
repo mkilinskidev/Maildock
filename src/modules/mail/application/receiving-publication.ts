@@ -200,11 +200,75 @@ export class ReceivingPublication {
       binding = source.configuration,
       expected = encode(source.state),
       completed = encode(evidence);
-    return this.executor.transaction(async (db) => {
-      await db.execute(
-        sql`select maildock_receiving_command_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
-      );
-    }, options);
+    return this.executor.transaction(
+      async (db) => {
+        await db.execute(
+          sql`select maildock_receiving_command_result(${actor}::uuid,${term}::bigint,${mailbox}::uuid,${expected}::jsonb,${binding}::bigint,${intent}::uuid,${attempt}::uuid,${completed}::jsonb)`,
+        );
+      },
+      {
+        ...options,
+        deadline: Math.min(options.deadline, performance.now() + 2000),
+      },
+    );
+  }
+
+  flagUncertain(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    intent: string,
+    attempt: string,
+    options: Options,
+  ) {
+    return this.executor.transaction(
+      async (db) => {
+        await db.execute(sql`select maildock_receiving_flag_uncertain(${owner.actor}::uuid,${owner.generation}::bigint,
+        ${source.mailbox}::uuid,${encode(source.state)}::jsonb,${source.configuration}::bigint,${intent}::uuid,${attempt}::uuid)`);
+      },
+      {
+        ...options,
+        deadline: Math.min(options.deadline, performance.now() + 2000),
+      },
+    );
+  }
+
+  flagResume(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    intent: string,
+    options: Options,
+  ) {
+    return this.executor.transaction(
+      async (db) => {
+        await db.execute(sql`select maildock_receiving_flag_resume(${owner.actor}::uuid,${owner.generation}::bigint,
+        ${source.mailbox}::uuid,${encode(source.state)}::jsonb,${source.configuration}::bigint,${intent}::uuid)`);
+      },
+      {
+        ...options,
+        deadline: Math.min(options.deadline, performance.now() + 2000),
+      },
+    );
+  }
+
+  flagRecovery(
+    owner: ReceivingOwner,
+    source: PublicationSource,
+    intent: string,
+    attempt: string,
+    evidence: Parameters<ReceivingPublication["commandResult"]>[4] | null,
+    options: Options,
+  ) {
+    return this.executor.transaction(
+      async (db) => {
+        await db.execute(sql`select maildock_receiving_flag_recovery_result(${owner.actor}::uuid,${owner.generation}::bigint,
+        ${source.mailbox}::uuid,${encode(source.state)}::jsonb,${source.configuration}::bigint,${intent}::uuid,
+        ${attempt}::uuid,${evidence === null ? null : encode(evidence)}::jsonb)`);
+      },
+      {
+        ...options,
+        deadline: Math.min(options.deadline, performance.now() + 2000),
+      },
+    );
   }
 
   claim(
