@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import type { CredentialBudget } from "../infrastructure/oauth-refresh";
+import type { ImapDiagnostics } from "../../mail/infrastructure/receiving-diagnostic-rpc";
+import { diagnosticUnavailable } from "../../mail/infrastructure/receiving-diagnostic-rpc";
 import type { ApplicationEventService } from "../../diagnostics/application/application-event-service";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -165,6 +169,13 @@ export class AccountsService {
     private readonly discoveryScheduler?: MailboxDiscoveryScheduler,
     private readonly oauth?: OAuthProviderRegistry,
     private readonly events?: ApplicationEventService,
+    private readonly diagnostics?: ImapDiagnostics,
+    private readonly smtpDiagnostics?: {
+      testSmtp: (
+        connection: ProviderAccount["smtp"],
+        signal?: AbortSignal,
+      ) => Promise<ConnectionReport["smtp"]>;
+    },
   ) {}
 
   async list(): Promise<MailAccountView[]> {
@@ -449,54 +460,151 @@ export class AccountsService {
     }
   }
 
-  async testUnsaved(input: CreateAccountInput): Promise<ConnectionReport> {
+  async testUnsaved(
+    input: CreateAccountInput,
+    signal?: AbortSignal,
+  ): Promise<ConnectionReport> {
     const parsed = createAccountInputSchema.parse(input);
-    return this.provider.testConnection(
-      this.providerInputFromSubmitted(parsed),
-    );
+    const account = this.providerInputFromSubmitted(parsed);
+    const [imap, smtp] = await Promise.all([
+      this.diagnostics?.test({
+        identity: { ephemeral: randomUUID() },
+        connection: account.imap,
+        signal,
+      }) ?? Promise.resolve(diagnosticUnavailable),
+      this.smtpDiagnostics?.testSmtp(account.smtp, signal) ??
+        Promise.resolve(diagnosticUnavailable),
+    ]);
+    return { imap, smtp };
   }
 
   async testExisting(
     id: string,
     input?: UpdateAccountInput,
+    signal?: AbortSignal,
   ): Promise<ConnectionReport> {
     const row = await this.getRow(id);
-    if (!row.enabled) throw new DisabledMailAccountError();
+    if (!row.enabled || row.removalRequestedAt)
+      throw new DisabledMailAccountError();
     if (input && row.authMethod !== "password")
       throw new MailAccountNotFoundError();
-    const providerInput = input
+    const edited = input
       ? this.providerInputFromEdit(row, updateAccountInputSchema.parse(input))
-      : await this.providerInputFromRow(row);
-    const report = await this.provider.testConnection(providerInput);
-    const bothSuccessful = report.imap.success && report.smtp.success;
-    await this.database
-      .update(mailAccounts)
-      .set({
-        connectionStatus: bothSuccessful ? "verified" : "error",
-        imapStatus: report.imap.success ? "success" : "error",
-        imapError: report.imap.success ? null : report.imap.message,
-        smtpStatus: report.smtp.success ? "success" : "error",
-        smtpError: report.smtp.success ? null : report.smtp.message,
-        ...(bothSuccessful
-          ? { lastSuccessfulConnectionTestAt: new Date() }
-          : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(mailAccounts.id, id));
-    await this.events?.record(
-      bothSuccessful ? "account.connected" : "account.connection_failed",
-      {
-        accountId: id,
-        details: {
-          category: !report.imap.success
-            ? report.imap.category
-            : !report.smtp.success
-              ? report.smtp.category
-              : undefined,
+      : undefined;
+    // IMAP resolution belongs to the elected worker. SMTP resolves independently
+    // so an owner outage cannot disable sending or its connection test.
+    const imapTask =
+      this.diagnostics?.test({
+        identity: {
+          account: id,
+          configurationVersion: row.configurationVersion,
+          receivingLifecycleVersion: row.receivingLifecycleVersion,
         },
-      },
-    );
-    return report;
+        connection: edited?.imap,
+        signal,
+      }) ?? Promise.resolve(diagnosticUnavailable);
+    const runSmtp = async () => {
+      try {
+        const account = edited ?? (await this.providerInputFromRow(row));
+        return (
+          (await this.smtpDiagnostics?.testSmtp(account.smtp, signal)) ??
+          diagnosticUnavailable
+        );
+      } catch {
+        return {
+          success: false,
+          category: "authentication_rejected",
+          message: "SMTP credentials unavailable. Reconnect the account.",
+        } as const;
+      }
+    };
+    // Web and worker have separate refresh coalescers. Finish the IMAP grant
+    // acquisition first so a normal saved OAuth test does not race its own SMTP
+    // refresh across processes. Unavailable IMAP still proceeds to SMTP.
+    const smtpTask =
+      row.authMethod === "oauth2" ? imapTask.then(runSmtp) : runSmtp();
+    const [imap, smtp] = await Promise.all([imapTask, smtpTask]);
+    // Edited tests never publish status for the persisted configuration.
+    if (!input && !signal?.aborted) {
+      await this.database
+        .update(mailAccounts)
+        .set({
+          smtpStatus: smtp.success ? "success" : "error",
+          smtpError: smtp.success ? null : smtp.message,
+          // IMAP status is written only inside the elected, fenced handler.
+          connectionStatus: sql`case when ${imap.success} and ${mailAccounts.imapStatus}='success' and ${smtp.success} then 'verified' else 'error' end`,
+          ...(imap.success && smtp.success
+            ? { lastSuccessfulConnectionTestAt: new Date() }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(mailAccounts.id, id),
+            eq(mailAccounts.enabled, true),
+            eq(mailAccounts.configurationVersion, row.configurationVersion),
+            eq(
+              mailAccounts.receivingLifecycleVersion,
+              row.receivingLifecycleVersion,
+            ),
+            eq(mailAccounts.smtpHost, row.smtpHost),
+            eq(mailAccounts.smtpPort, row.smtpPort),
+            eq(mailAccounts.smtpSecurity, row.smtpSecurity),
+            eq(
+              mailAccounts.smtpUsesImapCredentials,
+              row.smtpUsesImapCredentials,
+            ),
+            sql`${mailAccounts.smtpUsername} is not distinct from ${row.smtpUsername}`,
+            sql`${mailAccounts.smtpPassword} is not distinct from ${row.smtpPassword ? JSON.stringify(row.smtpPassword) : null}::jsonb`,
+          ),
+        );
+      await this.events?.record(
+        imap.success && smtp.success
+          ? "account.connected"
+          : "account.connection_failed",
+        {
+          accountId: id,
+          details: {
+            category: !imap.success
+              ? imap.category
+              : !smtp.success
+                ? smtp.category
+                : undefined,
+          },
+        },
+      );
+    }
+    return { imap, smtp };
+  }
+
+  async resolveReceivingConnection(id: string, budget: CredentialBudget) {
+    const row = await this.getRow(id);
+    if (
+      !row.enabled ||
+      row.removalRequestedAt ||
+      row.configurationVersion !== budget.configurationVersion ||
+      row.receivingLifecycleVersion !== budget.receivingLifecycleVersion
+    )
+      throw new DisabledMailAccountError();
+    const credential = await this.resolveCredential(row, budget);
+    const current = await this.getRow(id);
+    if (
+      !current.enabled ||
+      current.removalRequestedAt ||
+      current.configurationVersion !== row.configurationVersion ||
+      current.receivingLifecycleVersion !== row.receivingLifecycleVersion ||
+      current.oauthStatus === "reconnect_required" ||
+      budget.signal?.aborted ||
+      performance.now() >= budget.deadline
+    )
+      throw new DisabledMailAccountError();
+    return {
+      host: row.imapHost,
+      port: row.imapPort,
+      security: row.imapSecurity as "tls" | "starttls",
+      username: row.imapUsername,
+      credential,
+    };
   }
 
   async requestMailboxDiscovery(id: string): Promise<MailAccountView> {
@@ -619,15 +727,21 @@ export class AccountsService {
 
   private async resolveCredential(
     row: AccountRow,
+    budget?: CredentialBudget,
   ): Promise<ProviderAccount["imap"]["credential"]> {
     if (row.authMethod === "oauth2") {
       if (!this.oauth)
         throw new Error("OAuth credential resolver is unavailable.");
       return {
         kind: "oauth2",
-        accessToken: await this.oauth
-          .get(row.oauthProviderId)
-          .accessToken(row.id),
+        accessToken: await this.oauth.get(row.oauthProviderId).accessToken(
+          row.id,
+          budget ?? {
+            deadline: performance.now() + 10_000,
+            configurationVersion: row.configurationVersion,
+            receivingLifecycleVersion: row.receivingLifecycleVersion,
+          },
+        ),
       };
     }
     return {

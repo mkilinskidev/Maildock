@@ -13,7 +13,10 @@ export async function POST(request: Request) {
     if (unsupported) return unsupported;
     try {
       return Response.json({
-        result: await accountsService.testUnsaved(await request.json()),
+        result: await accountsService.testUnsaved(
+          await request.json(),
+          request.signal,
+        ),
       });
     } catch (error) {
       if (error instanceof ZodError) {

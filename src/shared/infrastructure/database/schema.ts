@@ -592,6 +592,7 @@ export const mailAccounts = pgTable(
     imapPassword: jsonb("imap_password").$type<EncryptedEnvelope>(),
     authMethod: text("auth_method").default("password").notNull(),
     oauthProviderId: text("oauth_provider_id"),
+    oauthRefreshAttempt: uuid("oauth_refresh_attempt"),
     oauthCache: jsonb("oauth_cache").$type<EncryptedEnvelope>(),
     oauthHomeAccountId: text("oauth_home_account_id"),
     oauthStatus: text("oauth_status"),
@@ -867,6 +868,7 @@ export const receivingCoordinator = pgTable(
   "receiving_coordinator",
   {
     singleton: boolean("singleton").primaryKey().default(true),
+    diagnosticEndpoint: text("diagnostic_endpoint"),
     owner: uuid("owner"),
     generation: bigint("generation", { mode: "bigint" })
       .notNull()

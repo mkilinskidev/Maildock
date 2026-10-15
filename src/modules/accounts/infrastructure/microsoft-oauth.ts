@@ -1,4 +1,11 @@
 import {
+  OAuthRefreshes,
+  credentialLifetime,
+  readOAuthJson,
+  OAuthRefreshNotIssuedError,
+  type CredentialBudget,
+} from "./oauth-refresh";
+import {
   OAuthAuthorizationError,
   type OAuthMailProvider,
 } from "../domain/oauth-mail-provider";
@@ -8,7 +15,6 @@ import { sql, and, eq, gt, lte } from "drizzle-orm";
 import {
   ConfidentialClientApplication,
   CryptoProvider,
-  InteractionRequiredAuthError,
   type ICachePlugin,
 } from "@azure/msal-node";
 
@@ -44,11 +50,13 @@ export class MicrosoftAuthorizationError extends OAuthAuthorizationError {
 export class MicrosoftOAuthProvider implements OAuthMailProvider {
   readonly id = "microsoft";
   private readonly configurations: OAuthProviderConfigs;
+  private readonly refreshes: OAuthRefreshes;
   constructor(
     private readonly database: Database,
     private readonly encryption: SecretEncryption,
     private readonly config: Pick<AppConfig, "appOrigin" | "microsoft">,
   ) {
+    this.refreshes = new OAuthRefreshes(database, this.id);
     this.configurations = new OAuthProviderConfigs(
       database,
       encryption,
@@ -100,9 +108,13 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
   private async client(
     cachePlugin?: ICachePlugin,
     applicationCredentials?: { clientId: string; clientSecret: string },
+    signal?: AbortSignal,
+    onNoIssuance?: () => void,
   ) {
+    signal ??= credentialLifetime().signal;
     const credentials =
       applicationCredentials ?? (await this.applicationCredentials());
+    let grantSent = false;
     return new ConfidentialClientApplication({
       auth: {
         clientId: credentials.clientId,
@@ -111,12 +123,79 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
       },
       cache: { cachePlugin },
       system: {
+        ...(signal
+          ? {
+              networkClient: {
+                sendGetRequestAsync: async <T>(
+                  url: string,
+                  options?: { headers?: Record<string, string> },
+                ) => this.network<T>(url, "GET", signal, options),
+                sendPostRequestAsync: async <T>(
+                  url: string,
+                  options?: { headers?: Record<string, string>; body?: string },
+                ) => {
+                  if (grantSent)
+                    throw new MicrosoftAuthorizationError(
+                      "Token renewal outcome uncertain. Reconnect the account.",
+                    );
+                  grantSent = true;
+                  return this.network<T>(
+                    url,
+                    "POST",
+                    signal,
+                    options,
+                    onNoIssuance,
+                  );
+                },
+              },
+            }
+          : {}),
         loggerOptions: {
           piiLoggingEnabled: false,
           loggerCallback: () => undefined,
         },
       },
     });
+  }
+
+  private async network<T>(
+    url: string,
+    method: string,
+    signal: AbortSignal,
+    options?: { headers?: Record<string, string>; body?: string },
+    onNoIssuance?: () => void,
+  ) {
+    signal.throwIfAborted();
+    const response = await fetch(url, {
+      method,
+      headers: options?.headers,
+      body: options?.body,
+      signal,
+      redirect: "error",
+      cache: "no-store",
+    });
+    const body = (await readOAuthJson(response)) as T;
+    signal.throwIfAborted();
+    if (
+      method === "POST" &&
+      !response.ok &&
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof body.error === "string" &&
+      body.error !== "invalid_grant" &&
+      !("access_token" in body)
+    ) {
+      onNoIssuance?.();
+      throw new OAuthRefreshNotIssuedError(
+        "Microsoft token renewal failed. Check provider configuration or try again.",
+      );
+    }
+    return {
+      headers: Object.fromEntries(response.headers),
+      status: response.status,
+      body,
+    };
   }
 
   async begin(sessionId: string, accountId?: string): Promise<string> {
@@ -257,6 +336,7 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
       const [updated] = await this.database
         .update(mailAccounts)
         .set({
+          oauthRefreshAttempt: null,
           configurationVersion: sql`${mailAccounts.configurationVersion}+1`,
           email,
           imapUsername: email,
@@ -306,102 +386,61 @@ export class MicrosoftOAuthProvider implements OAuthMailProvider {
     return id;
   }
 
-  async accessToken(accountId: string): Promise<string> {
-    // Resolve installation configuration before holding an account transaction:
-    // this also works when the database pool has only one connection.
-    const applicationCredentials = await this.applicationCredentials();
-    try {
-      return await this.database.transaction(async (tx) => {
-        const [row] = await tx
-          .select()
-          .from(mailAccounts)
-          .where(
-            and(
-              eq(mailAccounts.id, accountId),
-              eq(mailAccounts.authMethod, "oauth2"),
-              eq(mailAccounts.oauthProviderId, this.id),
-            ),
-          )
-          .for("update");
-        if (
-          !row?.oauthCache ||
-          !row.oauthHomeAccountId ||
-          row.oauthStatus !== "connected"
-        ) {
-          throw new MicrosoftAuthorizationError();
-        }
-        let cache = this.encryption.decrypt(
-          row.oauthCache,
-          accountCredentialContext(accountId, "oauth-cache"),
-        );
-        const client = await this.client(
-          {
-            beforeCacheAccess: async (context) =>
-              context.tokenCache.deserialize(cache),
-            afterCacheAccess: async (context) => {
-              if (context.cacheHasChanged) {
-                cache = context.tokenCache.serialize();
-                await tx
-                  .update(mailAccounts)
-                  .set({
-                    oauthCache: this.encryption.encrypt(
-                      cache,
-                      accountCredentialContext(accountId, "oauth-cache"),
-                    ),
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(mailAccounts.id, accountId));
-              }
-            },
+  async accessToken(
+    accountId: string,
+    budget?: CredentialBudget,
+  ): Promise<string> {
+    const credentials = await this.applicationCredentials();
+    return this.refreshes.resolve(accountId, budget, async (row, lifetime) => {
+      lifetime.check();
+      if (!row.oauthCache || !row.oauthHomeAccountId)
+        throw new MicrosoftAuthorizationError();
+      let cache = this.encryption.decrypt(
+        row.oauthCache,
+        accountCredentialContext(accountId, "oauth-cache"),
+      );
+      let rejected = false;
+      const client = await this.client(
+        {
+          beforeCacheAccess: async (context) =>
+            context.tokenCache.deserialize(cache),
+          afterCacheAccess: async (context) => {
+            if (context.cacheHasChanged) cache = context.tokenCache.serialize();
           },
-          applicationCredentials,
+        },
+        credentials,
+        lifetime.signal,
+        () => {
+          rejected = true;
+        },
+      );
+      try {
+        const accounts = await client.getTokenCache().getAllAccounts();
+        const account = accounts.find(
+          (item) => item.homeAccountId === row.oauthHomeAccountId,
         );
-        try {
-          // MSAL handles access token expiry, refresh, and rotated refresh tokens in its cache.
-          const accounts = await client.getTokenCache().getAllAccounts();
-          const account = accounts.find(
-            (item) => item.homeAccountId === row.oauthHomeAccountId,
+        if (!account) throw new MicrosoftAuthorizationError();
+        lifetime.check();
+        const result = await client.acquireTokenSilent({
+          account,
+          scopes: microsoftScopes,
+        });
+        lifetime.check();
+        if (!result?.accessToken) throw new MicrosoftAuthorizationError();
+        return {
+          token: result.accessToken,
+          cache: this.encryption.encrypt(
+            cache,
+            accountCredentialContext(accountId, "oauth-cache"),
+          ),
+        };
+      } catch (error) {
+        if (rejected || error instanceof OAuthRefreshNotIssuedError)
+          throw new OAuthRefreshNotIssuedError(
+            "Microsoft token renewal failed. Check provider configuration or try again.",
           );
-          if (!account) throw new MicrosoftAuthorizationError();
-          const result = await client.acquireTokenSilent({
-            account,
-            scopes: microsoftScopes,
-          });
-          if (!result?.accessToken) throw new MicrosoftAuthorizationError();
-          return result.accessToken;
-        } catch (error) {
-          if (
-            error instanceof InteractionRequiredAuthError ||
-            error instanceof MicrosoftAuthorizationError ||
-            (error instanceof Error &&
-              /invalid_grant|no_tokens_found|interaction_required/i.test(
-                error.message,
-              ))
-          ) {
-            throw new MicrosoftAuthorizationError();
-          }
-          throw new MicrosoftAuthorizationError(
-            "Microsoft token renewal failed. Try again or reconnect the account.",
-          );
-        }
-      });
-    } catch (error) {
-      if (
-        error instanceof MicrosoftAuthorizationError &&
-        error.message === new MicrosoftAuthorizationError().message
-      ) {
-        await this.database
-          .update(mailAccounts)
-          .set({ oauthStatus: "reconnect_required", updatedAt: new Date() })
-          .where(
-            and(
-              eq(mailAccounts.id, accountId),
-              eq(mailAccounts.authMethod, "oauth2"),
-              eq(mailAccounts.oauthProviderId, this.id),
-            ),
-          );
+        throw new MicrosoftAuthorizationError();
       }
-      throw error;
-    }
+    });
   }
 }

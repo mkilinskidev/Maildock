@@ -33,6 +33,10 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
   expect(services.app.ports ?? []).toEqual([]);
   expect(services.postgres.ports ?? []).toEqual([]);
   expect(services.app.expose).toContain("3000");
+  expect(services.app.expose).not.toContain("3001");
+  expect(services.app.environment.MAILDOCK_DIAGNOSTIC_ENDPOINT).toBe(
+    "http://127.0.0.1:3001",
+  );
   expect(services.app.environment.MAILDOCK_ENV).toBe("production");
   expect(services.app.environment.NODE_ENV).toBe("production");
   expect(services.app.environment.POSTGRES_PASSWORD).toBeTruthy();
@@ -47,6 +51,7 @@ it("F9 resolved base Compose keeps two services, internal HTTP and no host publi
       "CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS",
       "POSTGRES_PASSWORD",
       "MAILDOCK_ENV",
+      "MAILDOCK_DIAGNOSTIC_ENDPOINT",
       "NODE_ENV",
     ].sort(),
   );

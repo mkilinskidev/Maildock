@@ -346,7 +346,14 @@ describe("Phase 1F Microsoft OAuth persistence and credential resolution", () =>
       kind: "oauth2",
       accessToken: "test-access",
     });
-    expect(provider.accessToken).toHaveBeenCalledWith(id);
+    expect(provider.accessToken).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({
+        configurationVersion: 1n,
+        receivingLifecycleVersion: 1n,
+        deadline: expect.any(Number),
+      }),
+    );
     await expect(oauth.begin("session-1", id)).rejects.toThrow("not found");
     const callback = new URL(await oauth.begin("session-1"));
     await database.db

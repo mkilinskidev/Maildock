@@ -33,6 +33,7 @@ export type ProtocolConnectionResult =
       success: false;
       category: ConnectionFailureCategory;
       message: string;
+      retryable?: boolean;
     }>;
 
 export type ConnectionReport = Readonly<{

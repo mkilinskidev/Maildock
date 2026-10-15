@@ -23,6 +23,12 @@ async function main() {
     await worker.database.client.end();
     throw error;
   }
+  try {
+    await worker.diagnosticRpc.start();
+  } catch (error) {
+    await worker.database.client.end();
+    throw error;
+  }
   let stopping = false;
   const shutdownController = new AbortController();
   const retentionTimer = setInterval(
@@ -162,6 +168,7 @@ async function main() {
         logFailure(worker.logger, error, "worker", "shutdown");
         process.exitCode = 1;
       } finally {
+        await worker.diagnosticRpc.stop();
         await worker.database.client.end();
       }
     } catch (error) {

@@ -1,3 +1,4 @@
+import { ReceivingDiagnosticServer } from "../modules/mail/infrastructure/receiving-diagnostic-rpc";
 import { createOAuthComposition } from "../modules/accounts/infrastructure/oauth-composition";
 import { ApplicationEventService } from "../modules/diagnostics/application/application-event-service";
 import { LocalBlobStorage } from "../shared/infrastructure/storage/local-blob-storage";
@@ -64,6 +65,16 @@ export function createWorkerComposition() {
     undefined,
     createOAuthComposition(database.db, encryption, config).registry,
     events,
+  );
+  // R09 installs only the bounded listener. R16 binds the elected lifecycle;
+  // until cutover it explicitly refuses diagnostic execution.
+  const diagnosticRpc = new ReceivingDiagnosticServer(
+    {
+      endpoint: config.diagnosticEndpoint,
+      authSecret: config.authSecret,
+      encryption,
+    },
+    () => undefined,
   );
   const mailboxes = new MailboxService(database.db);
   const jobs = new JobRuntime(config, logger);
@@ -147,6 +158,7 @@ export function createWorkerComposition() {
     provider,
   );
   return {
+    diagnosticRpc,
     accounts,
     events,
     attachments,

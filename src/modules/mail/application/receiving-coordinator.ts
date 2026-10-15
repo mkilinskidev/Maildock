@@ -20,6 +20,10 @@ export const RECEIVING_COORDINATOR_DEFAULTS = Object.freeze({
 type Turn = Awaited<ReturnType<typeof receiveInboxTurn>>;
 export type ReceivingCoordinatorConfig = Readonly<{
   connection: ProviderConnection;
+  resolveConnection?: (budget: {
+    deadline: number;
+    signal: AbortSignal;
+  }) => Promise<ProviderConnection>;
   executor: ReceivingExecutor;
   owner: ReceivingOwner;
   account: string;
@@ -74,9 +78,17 @@ export async function runOneReceivingTurn(
     { deadline: Math.min(deadline, performance.now() + 2000), signal },
   );
   assertCurrent();
+  const connection = config.resolveConnection
+    ? await config.resolveConnection({ deadline, signal })
+    : config.connection;
+  assertCurrent();
   let constructed = false;
   return receiveInboxTurn(
-    { ...config, options: { kind, deadline, signal, assertCurrent } },
+    {
+      ...config,
+      connection,
+      options: { kind, deadline, signal, assertCurrent },
+    },
     (options) => {
       assertCurrent();
       if (constructed)

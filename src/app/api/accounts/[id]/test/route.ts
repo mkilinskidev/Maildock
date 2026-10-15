@@ -27,6 +27,7 @@ export async function POST(
         result: await accountsService.testExisting(
           z.uuid().parse((await params).id),
           input,
+          request.signal,
         ),
       });
     } catch (error) {

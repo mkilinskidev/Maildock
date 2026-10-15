@@ -1,3 +1,4 @@
+import { ReceivingDiagnosticClient } from "../../mail/infrastructure/receiving-diagnostic-rpc";
 import { PgBossReceivingWakeProducer } from "../../mail/infrastructure/receiving-wake-jobs";
 import { createOAuthComposition } from "./oauth-composition";
 import { ApplicationEventService } from "../../diagnostics/application/application-event-service";
@@ -63,6 +64,7 @@ export const microsoftOAuth = oauth.microsoft;
 export const oauthProviders = oauth.registry;
 export const oauthProviderConfigs = oauth.configurations;
 
+const diagnosticProvider = new ImapSmtpMailProvider();
 export const accountsService = new AccountsService(
   db,
   encryption,
@@ -70,6 +72,12 @@ export const accountsService = new AccountsService(
   new PgBossMailboxDiscoveryScheduler(config),
   oauthProviders,
   new ApplicationEventService(db, createLogger(config)),
+  new ReceivingDiagnosticClient(db, {
+    endpoint: config.diagnosticEndpoint,
+    authSecret: config.authSecret,
+    encryption,
+  }),
+  diagnosticProvider,
 );
 
 export const mailboxService = new MailboxService(db);

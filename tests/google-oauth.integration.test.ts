@@ -432,7 +432,7 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
       expect((await row(id)).oauthStatus).toBe("connected");
     },
   );
-  it("sanitizes network exceptions and malformed token responses without marking revoked", async () => {
+  it("sanitizes uncertain responses and requires reconnect before replaying a possibly rotated grant", async () => {
     const id = await connect();
     fetcher.mockRejectedValue(
       new Error("network with refresh-private client-private"),
@@ -440,17 +440,22 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     await expect(google.accessToken(id)).rejects.toThrow(
       "temporarily unavailable",
     );
-    expect((await row(id)).oauthStatus).toBe("connected");
+    expect((await row(id)).oauthStatus).toBe("reconnect_required");
     for (const invalid of [
       {},
       { ...tokens, expires_in: 0 },
       { ...tokens, token_type: "Other" },
     ]) {
+      // An explicit new grant is needed after each uncertain token response.
+      fetcher.mockImplementation(async (url: string) =>
+        Response.json(url.includes("userinfo") ? identity : tokens),
+      );
+      await google.complete(session, (await begin(id)).state, "fresh-code");
       fetcher.mockResolvedValue(Response.json(invalid));
       await expect(google.accessToken(id)).rejects.toThrow(
         "usable access token",
       );
-      expect((await row(id)).oauthStatus).toBe("connected");
+      expect((await row(id)).oauthStatus).toBe("reconnect_required");
     }
   });
   it("does not mistake disabled configuration for revoked account authorization", async () => {
@@ -578,7 +583,11 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     await expect(
       google.complete(session, (await begin(id)).state, "code"),
     ).rejects.toThrow("Reconnect");
-    expect(await row(id)).toEqual(before);
+    expect(await row(id)).toMatchObject({
+      configurationVersion: before.configurationVersion,
+      oauthCache: before.oauthCache,
+      oauthStatus: "reconnect_required",
+    });
   });
   it("rejects reconnect targets belonging to a different provider", async () => {
     const id = await connect();

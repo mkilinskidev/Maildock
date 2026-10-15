@@ -1,3 +1,10 @@
+export type CredentialBudget = Readonly<{
+  deadline: number;
+  signal?: AbortSignal;
+  configurationVersion?: bigint;
+  receivingLifecycleVersion?: bigint;
+}>;
+
 export type OAuthProviderDefinition = Readonly<{
   id: string;
   name: string;
@@ -26,7 +33,7 @@ export interface OAuthMailProvider {
     code?: string,
     providerError?: string,
   ): Promise<string>;
-  accessToken(accountId: string): Promise<string>;
+  accessToken(accountId: string, budget?: CredentialBudget): Promise<string>;
   getMailDefaults(): OAuthMailDefaults;
 }
 

@@ -76,6 +76,7 @@ export type ReceivingIdentity =
   | Readonly<{
       account: string;
       configurationVersion: bigint;
+      receivingLifecycleVersion?: bigint;
       mailbox?: string;
     }>
   | Readonly<{ ephemeral: string }>;
@@ -141,6 +142,7 @@ export type ReceivingOperationContext = Readonly<{
   phase: ReceivingOperationPhase;
   claim: ReceivingClaim | null;
   owner: ReceivingOwner;
+  receivingLifecycleVersion?: bigint;
   signal: AbortSignal;
   deadline: number;
   assertCurrent: () => void;
@@ -686,7 +688,7 @@ export async function runReceivingOperation(
   }) as OwnedReceivingClient;
   try {
     guard();
-    let connection = await boundary.validate(operation);
+    let connection = await boundary.validate({ ...operation, signal });
     guard();
     capturedLifecycle = connection.receivingLifecycleVersion;
     phase = "PRE_NETWORK_CLAIM";
@@ -719,7 +721,7 @@ export async function runReceivingOperation(
       if (preFailed || preWork.size || sqlWork.size || !prepared)
         throw new Error("Prepared operation requires a settled matching claim");
       phase = "CLAIM_SETTLED";
-      connection = await boundary.validate(operation);
+      connection = await boundary.validate({ ...operation, signal });
       guard();
       if (connection.receivingLifecycleVersion !== capturedLifecycle)
         throw new Error("Receiving post-claim lifecycle fenced");
@@ -811,6 +813,7 @@ export async function runReceivingOperation(
           return claim;
         },
         owner,
+        receivingLifecycleVersion: capturedLifecycle,
         signal,
         deadline: operation.deadline,
         assertCurrent: guard,

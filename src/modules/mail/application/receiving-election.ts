@@ -1,3 +1,4 @@
+import { receivingDiagnosticHandler } from "./receiving-diagnostic";
 import type {
   ReceivingOperation,
   ReceivingOperationHandlers,
@@ -69,7 +70,15 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       tuning?: SchedulerInput["tuning"];
       historyAllowed?: SchedulerInput["historyAllowed"];
       onAdmission?: SchedulerInput["onAdmission"];
+      diagnosticEndpoint?: string;
       operationHandlers?: ReceivingOperationHandlers;
+      /** External credential work. Called only after DB scope settlement. */
+      resolveOperationConnection?: (
+        operation: ReceivingOperation,
+        connection: Account["connection"] & {
+          receivingLifecycleVersion?: bigint;
+        },
+      ) => Promise<Account["connection"]>;
       createOperationClient?: ReceivingOperationBoundary["createClient"];
       /** DB-only captured configuration loader, also supports pre-mailbox bootstrap. */
       loadOperationConnection?: (
@@ -302,7 +311,10 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         beforeAdmission: () => this.renew(),
         controlHeadroom: true,
         operations: {
-          handlers: this.config.operationHandlers ?? {},
+          handlers: {
+            diagnostic: receivingDiagnosticHandler,
+            ...this.config.operationHandlers,
+          },
           boundary: {
             owner,
             executor: this.config.executor,
@@ -312,6 +324,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           },
         },
       });
+      if (this.config.diagnosticEndpoint)
+        await this.advertiseDiagnosticEndpoint(this.config.diagnosticEndpoint);
       this.scheduler.start();
       this.scheduleHeartbeat();
       return true;
@@ -340,7 +354,9 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   }
 
   private async operationConnection(operation: ReceivingOperation) {
-    return this.control(
+    const captured: Account["connection"] & {
+      receivingLifecycleVersion?: bigint;
+    } = await this.control(
       async (db) => {
         await this.validate(db, this.owner!);
         const identity = operation.identity;
@@ -352,6 +368,11 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           identity.configurationVersion,
           identity.mailbox,
         );
+        if (
+          identity.receivingLifecycleVersion !== undefined &&
+          identity.receivingLifecycleVersion !== receivingLifecycleVersion
+        )
+          throw new Error("Receiving captured lifecycle changed");
         if (operation.diagnosticConnection)
           return {
             ...structuredClone(operation.diagnosticConnection),
@@ -374,6 +395,51 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         signal: this.cancellation.signal,
       },
     );
+    if (
+      !this.config.resolveOperationConnection ||
+      operation.diagnosticConnection
+    )
+      return captured;
+    const connection = await this.config.resolveOperationConnection(
+      operation,
+      captured,
+    );
+    if (operation.signal?.aborted || performance.now() >= operation.deadline)
+      throw new Error("Credential resolution expired");
+    await this.control(
+      async (db) => {
+        await this.validate(db, this.owner!);
+        if ("account" in operation.identity) {
+          const lifecycle = await this.validateConfiguration(
+            db,
+            operation.identity.account,
+            operation.identity.configurationVersion,
+            operation.identity.mailbox,
+          );
+          if (lifecycle !== captured.receivingLifecycleVersion)
+            throw new Error("Receiving credential lifecycle changed");
+        }
+      },
+      {
+        deadline: Math.min(operation.deadline, performance.now() + 2000),
+        signal: this.cancellation.signal,
+      },
+    );
+    this.assertCurrent();
+    return {
+      ...connection,
+      receivingLifecycleVersion: captured.receivingLifecycleVersion,
+    };
+  }
+
+  async advertiseDiagnosticEndpoint(endpoint: string | null) {
+    this.assertCurrent();
+    return this.control(async (db) => {
+      const [row] =
+        await db.execute(sql`select maildock_receiving_diagnostic_endpoint(
+        ${this.owner!.actor}::uuid,${this.owner!.generation}::bigint,${endpoint}) as live`);
+      if (row.live !== true) throw new Error("Diagnostic advertisement fenced");
+    });
   }
 
   private async validate(db: ReceivingDatabase, owner: ReceivingOwner) {

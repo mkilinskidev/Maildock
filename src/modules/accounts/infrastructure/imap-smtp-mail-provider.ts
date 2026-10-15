@@ -235,7 +235,7 @@ export function smtpOptions(
   };
 }
 
-function sanitizeError(
+export function sanitizeError(
   error: unknown,
   protocol: "IMAP" | "SMTP",
 ): Exclude<ProtocolConnectionResult, { success: true }> {
@@ -1507,16 +1507,32 @@ export class ImapSmtpMailProvider implements MailProvider {
     }
   }
 
-  private async testSmtp(
+  async testSmtp(
     connection: ProviderConnection,
+    signal?: AbortSignal,
   ): Promise<ProtocolConnectionResult> {
+    if (signal?.aborted)
+      return {
+        success: false,
+        category: "connection_timeout",
+        message: "SMTP test cancelled.",
+      };
     const transport = this.factories.createSmtp(smtpOptions(connection));
+    const cancel = () => transport.close();
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
       await transport.verify();
+      if (signal?.aborted)
+        return {
+          success: false,
+          category: "connection_timeout",
+          message: "SMTP test cancelled.",
+        };
       return { success: true };
     } catch (error) {
       return sanitizeError(error, "SMTP");
     } finally {
+      signal?.removeEventListener("abort", cancel);
       transport.close();
     }
   }

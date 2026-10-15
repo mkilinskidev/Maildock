@@ -384,14 +384,9 @@ describe("Phase 0 PostgreSQL foundations", () => {
     const provider: MailProvider = {
       fetchMessageContent: async () => ({ plainText: null, html: null }),
       synchronizeRecentMailbox: unusedRecentSync,
-      testConnection: async () => ({
-        imap: { success: true },
-        smtp: {
-          success: false,
-          category: "authentication_rejected",
-          message: "SMTP authentication was rejected.",
-        },
-      }),
+      testConnection: async () => {
+        throw new Error("Web diagnostics must use the owned diagnostic port.");
+      },
       listMailboxes: async () => ({ mailboxes: [], capabilities: [] }),
     };
     const service = new AccountsService(
@@ -401,6 +396,17 @@ describe("Phase 0 PostgreSQL foundations", () => {
         config.credentialsEncryption.keys,
       ),
       provider,
+      undefined,
+      undefined,
+      undefined,
+      { test: async () => ({ success: true }) },
+      {
+        testSmtp: async () => ({
+          success: false,
+          category: "authentication_rejected",
+          message: "SMTP authentication was rejected.",
+        }),
+      },
     );
     const id = "00000000-0000-4000-8000-000000000012";
     await service.create({

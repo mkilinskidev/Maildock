@@ -1,3 +1,10 @@
+import {
+  OAuthRefreshes,
+  OAuthRefreshNotIssuedError,
+  readOAuthJson,
+  credentialLifetime,
+  type CredentialBudget,
+} from "./oauth-refresh";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { sql, and, eq, gt, lte } from "drizzle-orm";
 import { z } from "zod";
@@ -57,11 +64,13 @@ class GoogleReconnectRequired extends GoogleAuthorizationError {
 export class GoogleOAuthProvider implements OAuthMailProvider {
   readonly id = "google";
   private readonly configurations: OAuthProviderConfigs;
+  private readonly refreshes: OAuthRefreshes;
   constructor(
     private readonly database: Database,
     private readonly encryption: SecretEncryption,
     private readonly config: Pick<AppConfig, "appOrigin">,
   ) {
+    this.refreshes = new OAuthRefreshes(database, this.id);
     this.configurations = new OAuthProviderConfigs(
       database,
       encryption,
@@ -128,7 +137,10 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
       accountCredentialContext(accountId, "oauth-cache"),
     );
   }
-  private async requestToken(parameters: Record<string, string>) {
+  private async requestToken(
+    parameters: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
     // Never let fetch/JSON/Google errors (which can contain credentials) escape.
     let response: Response;
     let body: unknown;
@@ -137,11 +149,11 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(parameters),
-        signal: AbortSignal.timeout(15_000),
+        signal: signal ?? AbortSignal.timeout(10_000),
         redirect: "error",
         cache: "no-store",
       });
-      body = await response.json();
+      body = await readOAuthJson(response);
     } catch {
       throw new GoogleAuthorizationError(
         "Google token service is temporarily unavailable. Try again.",
@@ -155,8 +167,12 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         failure.data.error === "invalid_grant"
       )
         throw new GoogleReconnectRequired();
+      if (failure.success)
+        throw new OAuthRefreshNotIssuedError(
+          "Google token renewal failed. Check provider configuration or try again.",
+        );
       throw new GoogleAuthorizationError(
-        "Google token renewal failed. Check provider configuration or try again.",
+        "Google token response was uncertain. Reconnect the account.",
       );
     }
     const parsed = tokenResponse.safeParse(body);
@@ -171,16 +187,16 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
       throw new GoogleReconnectRequired();
     return parsed.data;
   }
-  private async identity(accessToken: string) {
+  private async identity(accessToken: string, signal?: AbortSignal) {
     try {
       const response = await fetch(identityEndpoint, {
         headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(15_000),
+        signal: signal ?? AbortSignal.timeout(10_000),
         redirect: "error",
         cache: "no-store",
       });
       if (!response.ok) throw new Error();
-      return identityResponse.parse(await response.json());
+      return identityResponse.parse(await readOAuthJson(response));
     } catch {
       throw new GoogleAuthorizationError(
         "Google did not return a verified mailbox identity. Try connecting again.",
@@ -238,6 +254,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
     code?: string,
     providerError?: string,
   ): Promise<string> {
+    const lifetime = credentialLifetime();
     if (!state || state.length > 512)
       throw new GoogleAuthorizationError("Invalid Google authorization state.");
     const [pending] = await this.database
@@ -269,25 +286,65 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         "Google did not return a valid authorization code.",
       );
     const credentials = await this.credentials();
-    const tokens = await this.requestToken({
-      ...{
-        client_id: credentials.clientId,
-        client_secret: credentials.clientSecret,
+    const tokens = await this.requestToken(
+      {
+        ...{
+          client_id: credentials.clientId,
+          client_secret: credentials.clientSecret,
+        },
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: this.redirectUri(),
+        code_verifier: this.encryption.decrypt(
+          pending.codeVerifier,
+          stateContext,
+        ),
       },
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: this.redirectUri(),
-      code_verifier: this.encryption.decrypt(
-        pending.codeVerifier,
-        stateContext,
-      ),
-    });
-    const identity = await this.identity(tokens.access_token);
+      lifetime.signal,
+    );
+    const identity = await this.identity(tokens.access_token, lifetime.signal);
+    lifetime.check();
     const email = identity.email.toLowerCase();
     const id = pending.accountId ?? randomUUID();
     if (pending.accountId) {
-      // Serialize against background refresh; compare trusted subject before any
-      // credential replacement. Email can change on a Workspace account.
+      // Read, validate the fallback grant on the wire, then compare under lock.
+      const [snapshot] = await this.database
+        .select()
+        .from(mailAccounts)
+        .where(eq(mailAccounts.id, id));
+      if (!snapshot?.oauthCache)
+        throw new GoogleAuthorizationError("Google account was not found.");
+      const previous = this.readAuthorization(id, snapshot.oauthCache);
+      if (previous.subject !== identity.sub)
+        throw new GoogleAuthorizationError(
+          "Reconnect using the same Google account.",
+        );
+      let refreshToken = tokens.refresh_token;
+      if (!refreshToken) {
+        // Claim/CAS through the same refresh resolver; no token request under SQL.
+        await this.accessToken(id, {
+          deadline: lifetime.deadline,
+          signal: lifetime.signal,
+          configurationVersion: snapshot.configurationVersion,
+          receivingLifecycleVersion: snapshot.receivingLifecycleVersion,
+        });
+        const [renewed] = await this.database
+          .select()
+          .from(mailAccounts)
+          .where(eq(mailAccounts.id, id));
+        if (
+          !renewed?.oauthCache ||
+          renewed.configurationVersion !== snapshot.configurationVersion
+        )
+          throw new GoogleAuthorizationError(
+            "Google credentials changed. Try connecting again.",
+          );
+        snapshot.oauthCache = renewed.oauthCache;
+        refreshToken = this.readAuthorization(
+          id,
+          renewed.oauthCache,
+        ).refreshToken;
+      }
       await this.database.transaction(async (tx) => {
         const [current] = await tx
           .select()
@@ -302,26 +359,19 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
           .for("update");
         if (!current?.oauthCache)
           throw new GoogleAuthorizationError("Google account was not found.");
-        const previous = this.readAuthorization(id, current.oauthCache);
-        if (previous.subject !== identity.sub)
+        if (
+          current.configurationVersion !== snapshot.configurationVersion ||
+          JSON.stringify(current.oauthCache) !==
+            JSON.stringify(snapshot.oauthCache)
+        )
           throw new GoogleAuthorizationError(
-            "Reconnect using the same Google account.",
+            "Google credentials changed. Try connecting again.",
           );
-        let refreshToken = tokens.refresh_token ?? previous.refreshToken;
-        // A missing new refresh token must not erase the old one. Validate its
-        // continued usability before treating reconnect as successful.
-        if (!tokens.refresh_token) {
-          const renewed = await this.requestToken({
-            client_id: credentials.clientId,
-            client_secret: credentials.clientSecret,
-            grant_type: "refresh_token",
-            refresh_token: refreshToken,
-          });
-          refreshToken = renewed.refresh_token ?? refreshToken;
-        }
+        lifetime.check();
         await tx
           .update(mailAccounts)
           .set({
+            oauthRefreshAttempt: null,
             configurationVersion: sql`${mailAccounts.configurationVersion}+1`,
             email,
             imapUsername: email,
@@ -370,67 +420,33 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
     }
     return id;
   }
-  async accessToken(accountId: string): Promise<string> {
+  async accessToken(
+    accountId: string,
+    budget?: CredentialBudget,
+  ): Promise<string> {
     const credentials = await this.credentials();
-    const result = await this.database.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(mailAccounts)
-        .where(
-          and(
-            eq(mailAccounts.id, accountId),
-            eq(mailAccounts.authMethod, "oauth2"),
-            eq(mailAccounts.oauthProviderId, this.id),
-          ),
-        )
-        .for("update");
-      if (!row) throw new GoogleReconnectRequired();
-      try {
-        if (!row.oauthCache || row.oauthStatus !== "connected")
-          throw new GoogleReconnectRequired();
-        const stored = this.readAuthorization(accountId, row.oauthCache);
-        // No persisted access-token cache: every acquisition returns a freshly
-        // issued token and restart/expiry cannot leave a stale token behind.
-        const tokens = await this.requestToken({
+    return this.refreshes.resolve(accountId, budget, async (row, lifetime) => {
+      lifetime.check();
+      const stored = this.readAuthorization(accountId, row.oauthCache!);
+      const tokens = await this.requestToken(
+        {
           client_id: credentials.clientId,
           client_secret: credentials.clientSecret,
           grant_type: "refresh_token",
           refresh_token: stored.refreshToken,
-        });
-        if (tokens.refresh_token)
-          await tx
-            .update(mailAccounts)
-            .set({
-              oauthCache: this.encryptAuthorization(
-                accountId,
-                stored.subject,
-                tokens.refresh_token,
-              ),
-              updatedAt: new Date(),
-            })
-            .where(eq(mailAccounts.id, accountId));
-        return tokens.access_token;
-      } catch (error) {
-        if (!(error instanceof GoogleReconnectRequired)) throw error;
-        // Commit revocation while holding the same row lock as refresh and
-        // reconnect, so a stale failure cannot revoke a newly replaced grant.
-        await tx
-          .update(mailAccounts)
-          .set({
-            oauthStatus: "reconnect_required",
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(mailAccounts.id, accountId),
-              eq(mailAccounts.authMethod, "oauth2"),
-              eq(mailAccounts.oauthProviderId, this.id),
-            ),
-          );
-        return error;
-      }
+        },
+        lifetime.signal,
+      );
+      return {
+        token: tokens.access_token,
+        cache: tokens.refresh_token
+          ? this.encryptAuthorization(
+              accountId,
+              stored.subject,
+              tokens.refresh_token,
+            )
+          : row.oauthCache,
+      };
     });
-    if (result instanceof GoogleReconnectRequired) throw result;
-    return result;
   }
 }

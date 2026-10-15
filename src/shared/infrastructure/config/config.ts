@@ -58,6 +58,21 @@ const schema = z
     // Test harness compatibility only. Production/development deployments use the bundled postgres service.
     DATABASE_URL: z.string().min(1).startsWith("postgresql://").optional(),
     AUTH_SECRET: secretSchema,
+    MAILDOCK_DIAGNOSTIC_ENDPOINT: z
+      .url()
+      .default("http://127.0.0.1:3001")
+      .refine((value) => {
+        const url = new URL(value);
+        return (
+          url.protocol === "http:" &&
+          url.pathname === "/" &&
+          !url.search &&
+          !url.hash &&
+          !url.username &&
+          !url.password &&
+          !!url.port
+        );
+      }, "must be a private HTTP origin with an explicit port"),
     CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
     CREDENTIALS_ENCRYPTION_KEY_ID: keyIdSchema.default("v1"),
     CREDENTIALS_ENCRYPTION_PREVIOUS_KEYS: previousKeysSchema,
@@ -191,6 +206,7 @@ export type AppConfig = Readonly<{
   appOrigin: string;
   databaseUrl: string;
   authSecret: string;
+  diagnosticEndpoint: string;
   credentialsEncryption: Readonly<{
     activeKeyId: string;
     keys: Readonly<Record<string, string>>;
@@ -241,6 +257,8 @@ export function parseConfig(
         ? result.data.DATABASE_URL
         : `postgresql://maildock:${encodeURIComponent(result.data.POSTGRES_PASSWORD!)}@postgres:5432/maildock`,
     authSecret: result.data.AUTH_SECRET,
+    diagnosticEndpoint: new URL(result.data.MAILDOCK_DIAGNOSTIC_ENDPOINT)
+      .origin,
     credentialsEncryption: Object.freeze({
       activeKeyId: result.data.CREDENTIALS_ENCRYPTION_KEY_ID,
       keys: Object.freeze({
