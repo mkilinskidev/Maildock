@@ -233,7 +233,9 @@ it("normal worker processes gate MFA, elect once, receive, reconcile, convert ol
     await until(
       async () =>
         Number(
-          (await reader`select count(*) from mailbox_messages`)[0].count,
+          (
+            await reader`select count(*) from receiving_current_placements p join mailboxes b on b.id=p.mailbox_id where b.account_id=${id} and b.remote_path='INBOX'`
+          )[0].count,
         ) === 130,
     );
     await until(
@@ -290,22 +292,23 @@ it("normal worker processes gate MFA, elect once, receive, reconcile, convert ol
         await reader`select flags from mailbox_messages where mailbox_id=${state.id} and uid=2`
       )[0].flags,
     ).toContain("\\Seen");
-    // A pre-cutover job can only retain demand; no independent LIST/FETCH runner.
+    // A pre-cutover job retains demand; only the elected worker synchronizes it.
     const { PgBoss } = await import("pg-boss");
     const boss = new PgBoss(url);
     await boss.start();
     try {
       const [secondary] =
         await reader`select id,receiving_request_generation from mailboxes where account_id=${id} and remote_path='Archive'`;
-      const deferred = await boss.send("mailbox-recent-sync-v1", {
+      const secondaryWake = await boss.send("mailbox-recent-sync-v1", {
         version: 1,
         accountId: id,
         mailboxId: secondary.id,
       });
       await until(
         async () =>
-          (await reader`select state from pgboss.job where id=${deferred}`)[0]
-            ?.state === "completed",
+          (
+            await reader`select state from pgboss.job where id=${secondaryWake}`
+          )[0]?.state === "completed",
       );
       const [retained] =
         await reader`select receiving_request_generation,recent_sync_status from mailboxes where id=${secondary.id}`;
@@ -313,11 +316,17 @@ it("normal worker processes gate MFA, elect once, receive, reconcile, convert ol
         BigInt(secondary.receiving_request_generation),
       );
       expect(retained.recent_sync_status).toBe("not_started");
-      expect(
-        (
-          await reader`select count(*) from receiving_mailboxes where mailbox_id=${secondary.id}`
-        )[0].count,
-      ).toBe("0");
+      await until(async () => {
+        const [row] =
+          await reader`select s.history_before,(select count(*) from receiving_current_placements p where p.mailbox_id=${secondary.id})::integer as count
+          from receiving_mailboxes s where s.mailbox_id=${secondary.id}`;
+        return (
+          row?.history_before === "1" && row.count === options.uids!.length
+        );
+      });
+      const [secondaryPlacement] =
+        await reader`select message_id from receiving_current_placements where mailbox_id=${secondary.id} and uid=2`;
+      expect(secondaryPlacement.message_id).not.toBe(source.message_id);
       const foreignAccount = randomUUID(),
         foreignMailbox = randomUUID();
       await accounts.create({

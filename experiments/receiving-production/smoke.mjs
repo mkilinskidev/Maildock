@@ -409,7 +409,7 @@ try {
     const views = await new MailboxService(db).listForAccount(state.maildock);
     assert.equal(
       views.find((m) => m.remotePath === "Sent").receiving.mode,
-      "deferred",
+      "mailbox",
     );
     assert.equal(
       views.find((m) => m.remotePath === "INBOX").receiving.historyComplete,

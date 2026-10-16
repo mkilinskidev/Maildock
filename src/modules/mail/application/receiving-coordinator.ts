@@ -31,6 +31,8 @@ export type ReceivingCoordinatorConfig = Readonly<{
   receivingLifecycleVersion?: bigint;
   bootstrap?: boolean;
   mailbox: string;
+  /** Scheduling metadata only; the turn recovers its exact path under locks. */
+  mailboxPath?: string;
   authority: Readonly<{
     assertCurrent: () => void;
     /** Locked DB-clock authority check before opening IMAP. Stage 3 fixtures

@@ -97,6 +97,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       tuning?: SchedulerInput["tuning"];
       historyAllowed?: SchedulerInput["historyAllowed"];
       onAdmission?: SchedulerInput["onAdmission"];
+      onControlError?: (error: unknown) => void;
       diagnosticEndpoint?: string;
       operationHandlers?: ReceivingOperationHandlers;
       /** External credential work. Called only after DB scope settlement. */
@@ -279,7 +280,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.scheduler = new ReceivingScheduler({
         ...this.config,
         accounts: accounts.map((account) => this.bindAccount(account)),
-        beforeAdmission: () => this.renew(),
+        beforeAdmission: () => this.admissionAuthority(),
         controlHeadroom: true,
         operations: {
           handlers: {
@@ -346,10 +347,17 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             (m.receiving_due_at<=clock_timestamp() or s.mailbox_id is null) as inbox_due,
             (a.receiving_due_at<=clock_timestamp() or m.receiving_due_at<=clock_timestamp()
               or s.mailbox_id is null) as due,
-            coalesce(s.history_before>1,false) as history_pending
+            coalesce(s.history_before>1,false) as history_pending,
+            (select coalesce(jsonb_agg(f),'[]'::jsonb) from (
+              select b.id,b.remote_path,(b.receiving_due_at<=clock_timestamp() or r.mailbox_id is null) as due
+              from mailboxes b left join receiving_mailboxes r on r.mailbox_id=b.id
+              where b.account_id=a.id and b.remote_path<>'INBOX' and b.selectable and b.lifecycle_status='active'
+              order by b.id limit 128
+            ) f) as secondary
           from mail_accounts a left join mailboxes m on m.account_id=a.id and m.remote_path='INBOX'
+            and m.selectable and m.lifecycle_status='active'
           left join receiving_mailboxes s on s.mailbox_id=m.id
-          where a.enabled and (m.id is null or (m.selectable and m.lifecycle_status='active'))
+          where a.enabled and a.removal_requested_at is null
           order by a.id limit ${max + 1}`);
       if (rows.length > max)
         throw new Error("Receiving candidate capacity exceeded");
@@ -373,12 +381,32 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         result.push({
           ...account,
           bootstrap: candidate.bootstrap,
+          mailboxPath: "INBOX",
           configurationVersion: version,
           durableInboxDue: row.inbox_due === true,
           receivingLifecycleVersion: BigInt(
             row.receiving_lifecycle_version as string,
           ),
         });
+        const secondary = row.secondary as {
+          id: string;
+          remote_path: string;
+          due: boolean;
+        }[];
+        if (secondary.length > 127)
+          throw new Error("Receiving mailbox capacity exceeded");
+        for (const folder of secondary)
+          result.push({
+            ...account,
+            mailbox: folder.id,
+            mailboxPath: folder.remote_path,
+            bootstrap: false,
+            configurationVersion: version,
+            receivingLifecycleVersion: BigInt(
+              row.receiving_lifecycle_version as string,
+            ),
+            durableInboxDue: folder.due,
+          });
       }
       return result;
     }, this.budget());
@@ -395,7 +423,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         accounts.map((account) => this.bindAccount(account)),
       );
       for (const account of accounts)
-        if (account.durableInboxDue) this.scheduler?.notify(account.account);
+        if (account.durableInboxDue)
+          this.scheduler?.notify(account.account, account.mailbox);
     })().finally(() => {
       this.membershipRefresh = undefined;
     });
@@ -530,6 +559,29 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     return this.renewal;
   }
 
+  private async admissionAuthority(): Promise<boolean> {
+    // Every admission still proves DB-clock ownership. While the lease has
+    // headroom, a compatible SHARE validation avoids an exclusive renewal
+    // convoy against other accounts' bounded publications. The existing
+    // heartbeat (or the first admission in the final two thirds) renews it.
+    if (performance.now() >= this.expiresAt - (2 * this.ttlMs) / 3)
+      return this.renew();
+    try {
+      await this.control((db) => this.validate(db, this.owner!));
+      return true;
+    } catch (error) {
+      if (!this.cancellation.signal.aborted) {
+        try {
+          this.config.onControlError?.(error);
+        } catch {
+          /* diagnostics only */
+        }
+      }
+      this.lose();
+      return false;
+    }
+  }
+
   private async extend() {
     const started = performance.now();
     try {
@@ -552,7 +604,13 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       }
       this.armExpiry(started);
       return true;
-    } catch {
+    } catch (error) {
+      try {
+        if (!this.cancellation.signal.aborted)
+          this.config.onControlError?.(error);
+      } catch {
+        /* diagnostics only */
+      }
       this.lose();
       return false;
     }
@@ -565,7 +623,15 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         void this.renew().then((live) => {
           if (live) {
             this.scheduleHeartbeat();
-            void this.refreshMembership().catch(() => this.lose());
+            void this.refreshMembership().catch((error) => {
+              try {
+                if (!this.cancellation.signal.aborted)
+                  this.config.onControlError?.(error);
+              } catch {
+                /* diagnostics only */
+              }
+              this.lose();
+            });
             void this.dispatchFlagCommands().catch(() => undefined);
             void this.dispatchContentRequests().catch(() => undefined);
             void this.dispatchAttachmentRequests().catch(() => undefined);
@@ -617,7 +683,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           mailbox_discovery_requested_at::text as requested,
           (enabled and removal_requested_at is null and
             (mailbox_discovery_status<>'success' or last_successful_mailbox_discovery_at is null
-              or mailbox_discovery_requested_at>last_successful_mailbox_discovery_at)) as eligible
+              or mailbox_discovery_requested_at>last_successful_mailbox_discovery_at
+              or last_successful_mailbox_discovery_at<clock_timestamp()-interval '60 seconds')) as eligible
           from mail_accounts where (${this.topologyCursor ?? null}::uuid is null or id>${this.topologyCursor ?? null}::uuid)
           order by id limit 32`);
       });
@@ -995,6 +1062,12 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             and (o.sent_copy_status in ('pending','saving','uncertain') or (o.sent_copy_status='saved' and o.sent_copy_sync_pending))
             and coalesce((o.receiving_attempt->>'observations')::integer,0)<3
             and coalesce(o.receiving_attempt->>'phase','')<>'repair_terminal'
+            and (o.sent_copy_status<>'saved' or exists (
+              select from receiving_current_placements p join messages msg on msg.id=p.message_id
+              where p.mailbox_id=o.sent_copy_mailbox_id
+                and (o.sent_copy_uid is not null and p.uid=o.sent_copy_uid and p.uid_validity=o.sent_copy_uid_validity
+                  or o.sent_copy_uid is null and msg.rfc_message_id=o.message_id)
+            ))
           ${after} order by o.updated_at,o.id limit 32
         ) select o.*,o.updated_at::text as cursor_at,a.configuration_version,a.receiving_lifecycle_version,
           (a.enabled and a.removal_requested_at is null) as account_active,

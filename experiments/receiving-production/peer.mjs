@@ -40,6 +40,7 @@ const control = {
   pauseAttachment: false,
   largeHtml: true,
   move: true,
+  uidplus: true,
 };
 const plain = Buffer.from("Hello R16\n");
 const png = Buffer.from(
@@ -64,17 +65,56 @@ function account(name) {
     accounts.set(
       name,
       new Map(
-        ["INBOX", "Sent", "Archive", "Trash"].map((folder) => [
+        (process.env.R17_MAILBOXES === "1"
+          ? [
+              "INBOX",
+              "Sent",
+              "Archive",
+              "Trash",
+              "Drafts",
+              "Junk",
+              "Przechowalnia",
+              "Projects",
+              "[Gmail]/All Mail",
+              "[Gmail]/Important",
+              "Container",
+              "LargeA",
+              "LargeB",
+            ]
+          : ["INBOX", "Sent", "Archive", "Trash"]
+        ).map((folder) => [
           folder,
           {
-            next: folder === "INBOX" ? 1025 : 1,
+            next:
+              folder === "INBOX"
+                ? 1025
+                : folder.startsWith("Large")
+                  ? 261
+                  : process.env.R17_MAILBOXES === "1" &&
+                      !["Sent", "Archive", "Trash", "Container"].includes(
+                        folder,
+                      )
+                    ? 4
+                    : 1,
             messages: new Map(
               folder === "INBOX"
                 ? Array.from({ length: 1024 }, (_, i) => [
                     i + 1,
                     { id: `<r16-${i + 1}@fixture.test>`, flags: [] },
                   ])
-                : [],
+                : process.env.R17_MAILBOXES === "1" &&
+                    !["Sent", "Archive", "Trash", "Container"].includes(folder)
+                  ? Array.from(
+                      { length: folder.startsWith("Large") ? 260 : 3 },
+                      (_, i) => [
+                        i + 1,
+                        {
+                          id: `<r17-overlap-${i + 1}@fixture.test>`,
+                          flags: [],
+                        },
+                      ],
+                    )
+                  : [],
             ),
           },
         ]),
@@ -127,7 +167,7 @@ const imap = tlsServer(tls, (socket) => {
   const send = (line) => socket.write(line + "\r\n");
   const ok = (tag, text = "Completed") => send(`${tag} OK ${text}`);
   const caps = () =>
-    `IMAP4rev1 AUTH=PLAIN SASL-IR UIDPLUS${control.move ? " MOVE" : ""}`;
+    `IMAP4rev1 AUTH=PLAIN SASL-IR${control.uidplus ? " UIDPLUS" : ""}${control.move ? " MOVE" : ""}`;
   socket.on("error", () => {});
   socket.on("close", () => {
     stats.active--;
@@ -160,7 +200,7 @@ const imap = tlsServer(tls, (socket) => {
     if (control.drop === "APPEND") {
       control.drop = null;
       socket.destroy();
-    } else ok(tag, `[APPENDUID 7 ${uid}] Copied`);
+    } else ok(tag, control.uidplus ? `[APPENDUID 7 ${uid}] Copied` : "Copied");
   };
   socket.on("data", (chunk) => {
     input = Buffer.concat([input, chunk]);
@@ -224,7 +264,7 @@ const imap = tlsServer(tls, (socket) => {
                 command.endsWith(" " + name),
             ))
               send(
-                `* ${command.startsWith("LSUB") ? "LSUB" : "LIST"} (${name === "INBOX" ? "" : "\\" + name}) "/" "${name}"`,
+                `* ${command.startsWith("LSUB") ? "LSUB" : "LIST"} (${name === "Container" ? "\\Noselect" : ["Sent", "Archive", "Trash", "Drafts", "Junk"].includes(name) ? "\\" + name : ""}) "/" "${name}"`,
               );
           ok(tag);
         } else if (/^(SELECT|EXAMINE) /.test(command)) {
@@ -351,7 +391,11 @@ const imap = tlsServer(tls, (socket) => {
           if (control.drop === "MOVE") {
             control.drop = null;
             socket.destroy();
-          } else ok(tag, `[COPYUID 7 ${uid} ${mapped}] Moved`);
+          } else
+            ok(
+              tag,
+              control.uidplus ? `[COPYUID 7 ${uid} ${mapped}] Moved` : "Moved",
+            );
         } else if (command.startsWith("APPEND ")) {
           const size = Number(/\{(\d+)\+?\}$/.exec(command)[1]);
           if (size > 25 * 1024 * 1024) throw new Error("Fixture MIME ceiling");
@@ -445,6 +489,13 @@ const http = httpServer(async (req, res) => {
           '</div><img src="https://remote.invalid/image"><img src="cid:r16-inline">',
       );
     Object.assign(control, update);
+    if (update.action === "create-folders") {
+      for (let i = 0; i < 40; i++)
+        account(update.username).set(`Extra-${i}`, {
+          next: 1,
+          messages: new Map(),
+        });
+    }
     if (update.action) {
       const folder = account(update.username).get(update.folder ?? "INBOX");
       if (update.action === "arrival")

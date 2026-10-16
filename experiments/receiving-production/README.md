@@ -1,5 +1,37 @@
 # R16 normal deployment smoke
 
+## R17 multi-mailbox validation
+
+Use the same disposable normal Compose deployment described below, with
+`R17_MAILBOXES=1` in the **fixture** service's environment. This seeds two large
+secondary folders, custom folders, all five product roles, a nonselectable
+container and overlapping Gmail-like IMAP labels per account. It does not contact
+a real provider. The built application uses its normal W2/C1/D2 worker.
+
+Run `smoke.mjs setup`, then `r17-smoke.mjs sync`, `quiet`, `moves`, `sent` and `reader`
+using the same one-shot producer command below. `sync` requires all 24 selectable
+mailboxes and 3,124 independent active placements, then sets a manual Archive
+mapping to `Przechowalnia`. `quiet` changes flags/membership remotely without a
+wake. `moves` and `sent` test both UIDPLUS and no-UIDPLUS visibility; Sent also
+checks the server-copy policy and original MIME digests.
+It manually maps Sent to the custom Projects mailbox. `reader` checks secondary
+body retrieval, body search, cross-mailbox rejection and the authenticated render route.
+
+`r17-smoke.mjs many` adds 80 empty remote folders and waits for ordinary periodic
+LIST and receiving to complete all 104 selectable mailboxes, without requesting
+discovery or sending a wake. Restart only the app and run `r17-smoke.mjs restart`
+to verify retained identities/coverage/manual mapping and folder reads. Retain
+each phase's own JSON result; a failed phase is not a successful complete run.
+
+Use `resources.mjs LABEL` during activity and `resources.mjs LABEL --gc` for an
+explicit inspector-GC retained-heap comparison before/after `many`. Both inspect
+the actual web/worker; producer memory is excluded. GC samples are labelled and
+are not natural peak-memory measurements. Keep the inspector confined to the
+disposable override. Preserve raw results outside the checkout and shut down
+only the explicitly isolated project when finished.
+
+## Original deployment setup
+
 This disposable fixture exercises the built application image with the normal
 `container-entrypoint.mjs`, web server and compiled worker. It never connects to a
 real mail provider. The producer imports the same compiled application services

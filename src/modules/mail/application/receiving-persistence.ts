@@ -322,7 +322,7 @@ export class ReceivingPersistence {
         sql`update receiving_mailboxes set epoch=${next.epoch}::bigint,revision=${next.revision}::bigint,fresh_through=${next.freshThrough}::bigint,history_before=${next.historyBefore}::bigint,reconcile_after=${next.reconcileAfter}::bigint,configuration_binding=coalesce(${mutation.kind === "epoch" ? (identity?.configuration ?? null) : null}::bigint,configuration_binding) where mailbox_id=${mailbox}::uuid`,
       );
       // Only a completed current observation represents this generation. Never
-      // clear account-wide topology/business demand or secondary mailbox demand.
+      // clear account-wide topology/business demand or another mailbox's demand.
       if (settlement) {
         if (
           mutation.kind !== "repair" ||

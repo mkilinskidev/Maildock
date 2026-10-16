@@ -23,6 +23,7 @@ export const RECEIVING_SCHEDULER_DEFAULTS = Object.freeze({
 });
 
 export type ReceivingWorkKind = "fresh" | "history";
+type MailboxRotation = "inbox" | "secondary" | "history";
 type Pending = {
   at: number;
   operation: ReceivingOperation;
@@ -68,6 +69,11 @@ export class ReceivingScheduler {
   private wake?: () => void;
   private freshCursor = 0;
   private historyCursor = 0;
+  private readonly mailboxCursors = new Map<
+    string,
+    Record<MailboxRotation, string> & { lastInbox: boolean }
+  >();
+  private readonly lastAccount: Partial<Record<ReceivingWorkKind, string>> = {};
   private lastProtected = false;
   private protectedActive = false;
   private readonly pending: Pending[] = [];
@@ -113,13 +119,17 @@ export class ReceivingScheduler {
     if (
       this.config.tuning.workers > 16 ||
       this.config.tuning.maxAccounts > 128 ||
-      input.accounts.length > this.config.tuning.maxAccounts ||
+      new Set(input.accounts.map((a) => a.account)).size >
+        this.config.tuning.maxAccounts ||
       this.config.tuning.historyTurnMs > 10_000
     )
       throw new Error("Receiving scheduler capacity/deadline exceeded");
-    const identities = new Set(input.accounts.map((a) => a.account));
+    const identities = new Set(
+      input.accounts.map((a) => `${a.account}:${a.mailbox}`),
+    );
     if (identities.size !== input.accounts.length)
-      throw new Error("Duplicate receiving account");
+      throw new Error("Duplicate receiving mailbox");
+    this.validateMembership(input.accounts);
     // Each active turn can request at most one DB transaction at a time.
     // D executing plus D queued permits 2D-1 data admissions and one serialized
     // control request. This reserves aggregate headroom, not a running lane.
@@ -177,25 +187,30 @@ export class ReceivingScheduler {
   }
 
   /** Bounded local hint; neither completion nor durable demand acknowledgment. */
-  notify(accountId: string): void {
+  notify(accountId: string, mailboxId?: string): void {
     if (this.cancellation.signal.aborted) return;
-    const account = this.accounts.find((a) => a.config.account === accountId);
-    if (!account) return;
-    account.wakeGeneration++;
-    account.freshDue = performance.now();
+    for (const account of this.accounts.filter(
+      (a) =>
+        a.config.account === accountId &&
+        (!mailboxId || a.config.mailbox === mailboxId),
+    )) {
+      account.wakeGeneration++;
+      account.freshDue = performance.now();
+    }
     this.wake?.();
   }
 
   /** Refresh only captured membership, preserving healthy fairness/backoff state.
    * Retired active allocations keep C until their original work has settled. */
   reconcileAccounts(configs: readonly AccountConfig[]): void {
-    if (
-      configs.length > this.config.tuning.maxAccounts ||
-      new Set(configs.map((c) => c.account)).size !== configs.length
-    )
-      throw new Error("Receiving candidate capacity exceeded");
+    this.validateMembership(configs);
+    const membership = new Map(
+      configs.map((c) => [`${c.account}:${c.mailbox}`, c]),
+    );
     for (const current of this.accounts) {
-      const next = configs.find((c) => c.account === current.config.account);
+      const next = membership.get(
+        `${current.config.account}:${current.config.mailbox}`,
+      );
       current.retired =
         !next ||
         next.mailbox !== current.config.mailbox ||
@@ -206,9 +221,11 @@ export class ReceivingScheduler {
     for (let i = this.accounts.length - 1; i >= 0; i--)
       if (this.accounts[i].retired && !this.accounts[i].active)
         this.accounts.splice(i, 1);
+    const retained = new Set(
+      this.accounts.map((a) => `${a.config.account}:${a.config.mailbox}`),
+    );
     for (const config of configs) {
-      if (this.accounts.some((a) => a.config.account === config.account))
-        continue;
+      if (retained.has(`${config.account}:${config.mailbox}`)) continue;
       const timing = receivingTiming(config.timing);
       this.accounts.push({
         config: {
@@ -225,7 +242,25 @@ export class ReceivingScheduler {
         wakeGeneration: 0,
       });
     }
+    for (const id of this.mailboxCursors.keys())
+      if (!configs.some((c) => c.account === id))
+        this.mailboxCursors.delete(id);
     this.wake?.();
+  }
+
+  private validateMembership(configs: readonly AccountConfig[]) {
+    const counts = new Map<string, number>();
+    const identities = new Set<string>();
+    for (const config of configs) {
+      counts.set(config.account, (counts.get(config.account) ?? 0) + 1);
+      identities.add(`${config.account}:${config.mailbox}`);
+    }
+    if (
+      counts.size > this.config.tuning.maxAccounts ||
+      identities.size !== configs.length ||
+      [...counts.values()].some((n) => n > 128)
+    )
+      throw new Error("Receiving candidate capacity exceeded");
   }
 
   /** Typed bounded memory admission, never a second executing route. */
@@ -300,7 +335,8 @@ export class ReceivingScheduler {
     return Object.freeze({
       active: this.active.size,
       pending: this.pending.length,
-      accounts: this.accounts.length,
+      accounts: new Set(this.accounts.map((a) => a.config.account)).size,
+      mailboxes: this.accounts.length,
       limit: this.limit,
       stopped: this.cancellation.signal.aborted,
     });
@@ -320,14 +356,68 @@ export class ReceivingScheduler {
     candidates: Account[],
     kind: ReceivingWorkKind,
   ): Account | undefined {
+    // INBOX gets the first current opportunity, then one rotating secondary
+    // opportunity even while INBOX continuously has new UIDs. History keeps
+    // its existing independent age/protection and SQL admission policy.
+    if (
+      this.accounts.some(
+        (a) => a.config.mailboxPath && a.config.mailboxPath !== "INBOX",
+      )
+    ) {
+      // Rotate accounts before choosing that account's mailbox category. A
+      // different account's INBOX completion must not consume its secondary
+      // opportunity, and each category retains its own mailbox UUID cursor.
+      const ids = [...new Set(candidates.map((a) => a.config.account))].sort();
+      const id =
+        ids.find((value) => value > (this.lastAccount[kind] ?? "")) ?? ids[0];
+      if (!id) return;
+      this.lastAccount[kind] = id;
+      candidates = candidates.filter((a) => a.config.account === id);
+      const cursors = this.mailboxCursors.get(id) ?? {
+        inbox: "",
+        secondary: "",
+        history: "",
+        lastInbox: false,
+      };
+      if (kind === "fresh") {
+        const inbox = candidates.filter(
+          (a) => !a.config.mailboxPath || a.config.mailboxPath === "INBOX",
+        );
+        const secondary = candidates.filter(
+          (a) => a.config.mailboxPath && a.config.mailboxPath !== "INBOX",
+        );
+        candidates =
+          inbox.length && (!cursors.lastInbox || !secondary.length)
+            ? inbox
+            : secondary.length
+              ? secondary
+              : inbox;
+      }
+      const rotation: MailboxRotation =
+        kind === "history"
+          ? "history"
+          : candidates[0]?.config.mailboxPath &&
+              candidates[0].config.mailboxPath !== "INBOX"
+            ? "secondary"
+            : "inbox";
+      const ordered = candidates.toSorted((a, b) =>
+        a.config.mailbox.localeCompare(b.config.mailbox),
+      );
+      const chosen =
+        ordered.find((a) => a.config.mailbox > cursors[rotation]) ?? ordered[0];
+      cursors[rotation] = chosen.config.mailbox;
+      if (kind === "fresh") cursors.lastInbox = rotation === "inbox";
+      this.mailboxCursors.set(id, cursors);
+      candidates = [chosen];
+    }
     const cursor = kind === "fresh" ? this.freshCursor : this.historyCursor;
     for (let offset = 0; offset < this.accounts.length; offset++) {
       const index = (cursor + offset) % this.accounts.length;
       const account = this.accounts[index];
       if (!candidates.includes(account)) continue;
-      if (kind === "fresh")
+      if (kind === "fresh") {
         this.freshCursor = (index + 1) % this.accounts.length;
-      else this.historyCursor = (index + 1) % this.accounts.length;
+      } else this.historyCursor = (index + 1) % this.accounts.length;
       return account;
     }
   }
@@ -344,7 +434,11 @@ export class ReceivingScheduler {
     // Grant each runnable startup account its first current opportunity before
     // any ordinary or protected history. Admission, not successful completion,
     // satisfies the barrier: an unavailable account enters its own backoff.
-    const startup = fresh.filter((a) => !a.initialFreshGranted);
+    const startup = fresh.filter(
+      (a) =>
+        !a.initialFreshGranted &&
+        (!a.config.mailboxPath || a.config.mailboxPath === "INBOX"),
+    );
     if (startup.length)
       return {
         account: this.rotate(startup, "fresh")!,
@@ -440,6 +534,7 @@ export class ReceivingScheduler {
     const wakeGeneration = account.wakeGeneration;
     const at = performance.now();
     account.active = true;
+    this.activeIdentities.add(account.config.account);
     if (kind === "fresh") account.initialFreshGranted = true;
     if (protectedHistory) {
       this.lastProtected = true;
@@ -506,6 +601,7 @@ export class ReceivingScheduler {
           this.diagnostic(() => account.config.onError?.(error, retry));
         }
       } finally {
+        this.activeIdentities.delete(account.config.account);
         if (kind === "history") this.activeHistory--;
         if (protectedHistory) this.protectedActive = false;
         this.wake?.();

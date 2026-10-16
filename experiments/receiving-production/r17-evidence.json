@@ -1,0 +1,633 @@
+{
+  "stage": "R17",
+  "base": "48b5c6c277a25d58d5bdb166f503054052568484",
+  "branch": "feature/imap-sync-r17-secondary-mailboxes",
+  "date": "2026-10-16",
+  "decision": "PARTIAL",
+  "notes": [
+    "Raw reports remain in local TEMP; this manifest contains no credentials, cookies or raw setup output.",
+    "R16 remains PARTIAL. Real Gmail acceptance is separate.",
+    "Development, focused, comparison and final runs are distinct; no merged passing total.",
+    "The development full run also reported one unhandled rejection.",
+    "Production workers=2 records scheduler W; there is one normal worker process."
+  ],
+  "tests": {
+    "development": {
+      "report": "maildock-r17-full-regression.json",
+      "sha256": "12f7ee32ac1017a357808f0acc440094cf15d371cb08186eeb456c289faf24e5",
+      "files": 133,
+      "total": 2043,
+      "passed": 2030,
+      "failed": 13,
+      "pending": 0,
+      "failures": [
+        {
+          "file": "receiving-admission.integration.test.ts",
+          "test": "R03 unified elected admission with disposable PostgreSQL queued cancellation during locked renewal cannot remove or resurrect another request",
+          "message": "Error: R03 observed barrier timed out"
+        },
+        {
+          "file": "receiving-content.integration.test.ts",
+          "test": "R11 owned content retrieval content and flags wait behind an actual owned metadata socket at C=1",
+          "message": "Error: Test timed out in 120000ms."
+        },
+        {
+          "file": "receiving-demand-settlement.integration.test.ts",
+          "test": "R15 durable settlement and quiet INBOX membership observes external flags with unchanged count and UIDNEXT while idle",
+          "message": "Error: R06 barrier deadline exceeded"
+        },
+        {
+          "file": "receiving-election.integration.test.ts",
+          "test": "Stage 4B elected receiving ownership, isolated processes/PostgreSQL two independent processes contend atomically; follower wakes stay passive; only elected owner admits sockets",
+          "message": "Error: Stage 4B barrier timed out"
+        },
+        {
+          "file": "receiving-flags.integration.test.ts",
+          "test": "R10 owned flag execution actual metadata sockets and STORE share account C=1 with W=2",
+          "message": "Error: Test timed out in 120000ms."
+        },
+        {
+          "file": "receiving-safety.integration.test.ts",
+          "test": "production receiving retirement and PostgreSQL authority gate lease expiry before logical COMMIT rejects while takeover waits",
+          "message": "Error: Test timed out in 120000ms."
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler W=1 selects due fresh at returning history boundaries and measures durable visibility",
+          "message": "Error: Fixture barrier deadline exceeded"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler backs off one hung account independently while healthy accounts commit",
+          "message": "AssertionError: expected 86250.6374 to be less than 86207.943"
+        },
+        {
+          "file": "receiving-sent-copy.integration.test.ts",
+          "test": "R13 owner routed Sent copy mismatched APPENDUID cannot publish a false UID or retry SMTP",
+          "message": "AssertionError: expected { …(36) } to match object { status: 'sent', attempts: +0, …(2) }"
+        },
+        {
+          "file": "receiving-sql-contention.test.ts",
+          "test": "rotates INBOX and every secondary independently under continuously due work (mixed accounts=false)",
+          "message": "AssertionError: a-1: expected 1 to be greater than or equal to 3"
+        },
+        {
+          "file": "receiving-sql-contention.test.ts",
+          "test": "rotates INBOX and every secondary independently under continuously due work (mixed accounts=true)",
+          "message": "AssertionError: a-2: expected 1 to be greater than or equal to 3"
+        },
+        {
+          "file": "receiving-topology.integration.test.ts",
+          "test": "R07 elected bounded topology, installed IMAP adapter and actual R04 SQL restart uses persisted identities and enrolls selectable folders before another explicit LIST",
+          "message": "Error: R07 PostgreSQL barrier timed out"
+        },
+        {
+          "file": "mfa-management.integration.test.ts",
+          "test": "F2.4 management boundaries expired cannot perform either operation",
+          "message": "AssertionError: expected 200 to be 403 // Object.is equality"
+        }
+      ]
+    },
+    "focused": {
+      "report": "maildock-r17-closed-focused.json",
+      "sha256": "52a5f7914a194747c87e89ef8699390b66d91a634ee48c01de3a6a092dde443a",
+      "files": 7,
+      "total": 99,
+      "passed": 99,
+      "failed": 0,
+      "pending": 0,
+      "failures": []
+    },
+    "baselineComparison": {
+      "report": "maildock-r17-baseline-comparison.json",
+      "sha256": "e19d98b2fd4d5ef2f86bdcdad4181829f8dbb3a82bba7c731818a6ba00f1fa96",
+      "files": 3,
+      "total": 107,
+      "passed": 103,
+      "failed": 4,
+      "pending": 0,
+      "failures": [
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler targeted startup barrier W=4 cannot be held by unavailable accounts",
+          "message": "Error: Fixture barrier deadline exceeded"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler W=1 bounds simultaneous operations and safely cancels/restarts active accounts",
+          "message": "AssertionError: controlled quiet fixture must commit complete historical E: expected 129n to be 1n // Object.is equality"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler W=1 selects due fresh at returning history boundaries and measures durable visibility",
+          "message": "Error: Fixture barrier deadline exceeded"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler backs off one hung account independently while healthy accounts commit",
+          "message": "AssertionError: expected 227748.9417 to be less than 227694.6571"
+        }
+      ]
+    },
+    "currentComparison": {
+      "report": "maildock-r17-current-comparison.json",
+      "sha256": "bde728ad479418e4cd38bc132d0331a405cf8b4b5a3f55e9eb06f730cf90e494",
+      "files": 3,
+      "total": 107,
+      "passed": 104,
+      "failed": 3,
+      "pending": 0,
+      "failures": [
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler W=1 bounds simultaneous operations and safely cancels/restarts active accounts",
+          "message": "AssertionError: controlled quiet fixture must commit complete historical E: expected 129n to be 1n // Object.is equality"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler W=1 selects due fresh at returning history boundaries and measures durable visibility",
+          "message": "Error: Fixture barrier deadline exceeded"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler backs off one hung account independently while healthy accounts commit",
+          "message": "AssertionError: expected 89260.8061 to be less than 89203.7609"
+        }
+      ]
+    },
+    "final": {
+      "report": "maildock-r17-final-regression.json",
+      "sha256": "576d1b32aa46328cbaf25238963ec7a69d0d690a3b7c21b6ae4c4187838a0664",
+      "files": 134,
+      "total": 2046,
+      "passed": 2041,
+      "failed": 5,
+      "pending": 0,
+      "failures": [
+        {
+          "file": "receiving-claim-phase.integration.test.ts",
+          "test": "R04 owned pre-network claim phase D=1: claim commits before one installed client; result settles after retirement",
+          "message": "AssertionError: expected 1 to be +0 // Object.is equality"
+        },
+        {
+          "file": "receiving-claim-phase.integration.test.ts",
+          "test": "R04 owned pre-network claim phase D=2: claim commits before one installed client; result settles after retirement",
+          "message": "AssertionError: expected 1 to be +0 // Object.is equality"
+        },
+        {
+          "file": "receiving-content.integration.test.ts",
+          "test": "R11 owned content retrieval fetches and atomically publishes 2 MiB HTML within the unchanged deadline",
+          "message": "Error: Hook timed out in 120000ms."
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler W=1 selects due fresh at returning history boundaries and measures durable visibility",
+          "message": "Error: Fixture barrier deadline exceeded"
+        },
+        {
+          "file": "receiving-scheduler.integration.test.ts",
+          "test": "isolated shared receiving scheduler backs off one hung account independently while healthy accounts commit",
+          "message": "AssertionError: expected 94960.5815 to be less than 94951.1192"
+        }
+      ]
+    },
+    "postFullBaselineDiagnostic": {
+      "report": "maildock-r17-postfull-baseline.json",
+      "sha256": "da53c177e2377b3ea057f7d2e5f662a3d0f9df86eeacba11267398653811a61b",
+      "files": 2,
+      "total": 84,
+      "passed": 3,
+      "failed": 0,
+      "pending": 81,
+      "failures": []
+    },
+    "postFullCurrentDiagnostic": {
+      "report": "maildock-r17-postfull-current.json",
+      "sha256": "a1999b24a3ee7bf9be96570c9d5158bc4f9f9d56be432c906a3cffe36a7f6e85",
+      "files": 2,
+      "total": 84,
+      "passed": 1,
+      "failed": 2,
+      "pending": 81,
+      "failures": [
+        {
+          "file": "receiving-claim-phase.integration.test.ts",
+          "test": "R04 owned pre-network claim phase D=1: claim commits before one installed client; result settles after retirement",
+          "message": "AssertionError: expected 1 to be +0 // Object.is equality"
+        },
+        {
+          "file": "receiving-claim-phase.integration.test.ts",
+          "test": "R04 owned pre-network claim phase D=2: claim commits before one installed client; result settles after retirement",
+          "message": "AssertionError: expected 1 to be +0 // Object.is equality"
+        }
+      ]
+    },
+    "contentBaseline": {
+      "report": "maildock-r17-content-baseline.json",
+      "sha256": "458dfa0c40de5ee9a06fd30f40061198747cea2e6b69c851e58f63201238d71b",
+      "files": 1,
+      "total": 67,
+      "passed": 67,
+      "failed": 0,
+      "pending": 0,
+      "failures": []
+    },
+    "postFullClosedControls": {
+      "report": "maildock-r17-postfull-closed-controls.json",
+      "sha256": "56e44195fb2934dc4895bc34a938765696d7b4cc8de51d7ef717d1322f245612",
+      "files": 2,
+      "total": 84,
+      "passed": 84,
+      "failed": 0,
+      "pending": 0,
+      "failures": []
+    },
+    "rotationBefore": {
+      "report": "maildock-r17-rotation-before.json",
+      "sha256": "8ca754b8b924703f1bbf2618a5d45f24323758fa2a57baa648aeb116bfb70f2b",
+      "files": 1,
+      "total": 3,
+      "passed": 1,
+      "failed": 2,
+      "pending": 0,
+      "failures": [
+        {
+          "file": "receiving-sql-contention.test.ts",
+          "test": "rotates INBOX and every secondary independently under continuously due work (mixed accounts=false)",
+          "message": "AssertionError: a-1: expected 0 to be greater than or equal to 3"
+        },
+        {
+          "file": "receiving-sql-contention.test.ts",
+          "test": "rotates INBOX and every secondary independently under continuously due work (mixed accounts=true)",
+          "message": "AssertionError: a-2: expected 1 to be greater than or equal to 3"
+        }
+      ]
+    },
+    "rotationAfter": {
+      "report": "maildock-r17-rotation-final.json",
+      "sha256": "42808a6fcdf709820bf39c01820b5d6539780728bdf4866b224e441fbfdc4371",
+      "files": 1,
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "pending": 0,
+      "failures": []
+    },
+    "fixtureBefore": {
+      "report": "maildock-r17-fixture-before.json",
+      "sha256": "4f4e864e954493b7b449f2989e7e627dfe9d062d67ee2a67c67a1260507fb60c",
+      "files": 1,
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pending": 0,
+      "failures": [
+        {
+          "file": "imap-fixture-cleanup.test.ts",
+          "test": "retires accepted TCP connections that have not completed the TLS handshake",
+          "message": "AssertionError: expected false to be true // Object.is equality"
+        }
+      ]
+    },
+    "fixtureAfter": {
+      "report": "maildock-r17-fixture-after.json",
+      "sha256": "65718695d12b748b7d45cd59308a6f4264277a52a8c4f9f3ec2a9a1a84a0b816",
+      "files": 1,
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pending": 0,
+      "failures": []
+    }
+  },
+  "claimScopeDiagnosticLogSha256": "6ad5f738763ac6aed9e94ae52c5d001e2f90944545e0f9eaf4b8a0ac53e4f71c",
+  "production": {
+    "project": "maildock-r17-complete",
+    "image": "sha256:6de949ec3b55d3ea589c85fce4b5bd4e1a2037c3e9f3dddb8c817a6f5f54df35",
+    "runningImage": "sha256:6de949ec3b55d3ea589c85fce4b5bd4e1a2037c3e9f3dddb8c817a6f5f54df35",
+    "workers": 2,
+    "perAccount": 1,
+    "sqlCapacity": 2,
+    "phases": [
+      {
+        "phase": "sync",
+        "result": "PASS",
+        "ms": 11971.320655000001,
+        "measurements": {
+          "placements": 3124
+        },
+        "logSha256": "d9b7abc7851768a5e9a8399930e04f24d4061903e18dbe7500861dbdd335f04e"
+      },
+      {
+        "phase": "quiet",
+        "result": "PASS",
+        "ms": 42859.254687,
+        "measurements": {
+          "quietVisibilityMs": 42744.220473999994
+        },
+        "logSha256": "af3512f3dfc197af37e5838b61ad32e7beb9ff331e826fe6a0d5d69df413bd7c"
+      },
+      {
+        "phase": "moves",
+        "result": "PASS",
+        "ms": 27363.179919,
+        "measurements": {},
+        "logSha256": "55109a14583ff228500ed1b5d8d08d6f93462df5173d13eb20d9be0af36c3ff0"
+      },
+      {
+        "phase": "sent",
+        "result": "PASS",
+        "ms": 24015.517625,
+        "measurements": {},
+        "logSha256": "f67cbeeb0eaab66b56ff8159ea2d3d08864ccce1d5af1c3d5b99a275c701bf2c"
+      },
+      {
+        "phase": "reader",
+        "result": "PASS",
+        "ms": 8848.587197,
+        "measurements": {},
+        "logSha256": "ef4535a4826ccfc378d3a0525d5a7d2767fbe7dbeb140565ee4c8e914f1f9d27"
+      },
+      {
+        "phase": "many",
+        "result": "PASS",
+        "ms": 71150.853652,
+        "measurements": {
+          "newTopologyVisibilityMs": 71132.27728,
+          "selectableMailboxes": 104
+        },
+        "logSha256": "ffe7f65d0d90783a21025c3c5675889e64de1c1a952a5d5be034abaeb872543a"
+      },
+      {
+        "phase": "restart",
+        "result": "PASS",
+        "ms": 1023.8574639999999,
+        "measurements": {},
+        "logSha256": "0a0ae8c260dfe19ee8336a4c00ae689ecdcafe102b92fe179da355245789548d"
+      },
+      {
+        "phase": "ingress",
+        "result": "PASS",
+        "ms": 90.63168600000017,
+        "measurements": {},
+        "logSha256": "42ce173d47301bf23b57676fb6ea5b30744f481d7b7367b971208202aa87029a"
+      }
+    ],
+    "resources": [
+      {
+        "label": "sync",
+        "explicitGarbageCollection": false,
+        "workerMemory": {
+          "rss": 420384768,
+          "heapTotal": 325304320,
+          "heapUsed": 204589872,
+          "external": 6330606,
+          "arrayBuffers": 2211832
+        },
+        "workerProcess": {
+          "pid": 28,
+          "argv": ["node", "dist-worker/composition/worker-process.js"],
+          "rssKiB": 412448,
+          "highWaterKiB": 453624,
+          "fileDescriptors": 35
+        },
+        "databaseBytes": "19609279",
+        "blobsKiB": 4,
+        "logSha256": "bf5c826ccaa0fc52060574db2f80535ab58c6f694c23f4fae5217a4c99ee0697"
+      },
+      {
+        "label": "sent",
+        "explicitGarbageCollection": false,
+        "workerMemory": {
+          "rss": 462905344,
+          "heapTotal": 218714112,
+          "heapUsed": 73708664,
+          "external": 5743047,
+          "arrayBuffers": 1630880
+        },
+        "workerProcess": {
+          "pid": 28,
+          "argv": ["node", "dist-worker/composition/worker-process.js"],
+          "rssKiB": 454132,
+          "highWaterKiB": 457948,
+          "fileDescriptors": 35
+        },
+        "databaseBytes": "20338367",
+        "blobsKiB": 36,
+        "logSha256": "1a6a8769483b76d7d282704a10966917682eec21d8388c3b981955a677216a07"
+      },
+      {
+        "label": "sent-gc",
+        "explicitGarbageCollection": true,
+        "workerMemory": {
+          "rss": 174817280,
+          "heapTotal": 66408448,
+          "heapUsed": 63480192,
+          "external": 5448852,
+          "arrayBuffers": 1339047
+        },
+        "workerProcess": {
+          "pid": 28,
+          "argv": ["node", "dist-worker/composition/worker-process.js"],
+          "rssKiB": 173212,
+          "highWaterKiB": 457948,
+          "fileDescriptors": 36
+        },
+        "databaseBytes": "20346559",
+        "blobsKiB": 36,
+        "logSha256": "604509cb5e04e6627361ecd18ec4bf3346404b4de793c1ee4fc18f554db036b3"
+      },
+      {
+        "label": "many",
+        "explicitGarbageCollection": false,
+        "workerMemory": {
+          "rss": 403116032,
+          "heapTotal": 232026112,
+          "heapUsed": 72719872,
+          "external": 5694497,
+          "arrayBuffers": 1582426
+        },
+        "workerProcess": {
+          "pid": 28,
+          "argv": ["node", "dist-worker/composition/worker-process.js"],
+          "rssKiB": 396224,
+          "highWaterKiB": 457948,
+          "fileDescriptors": 32
+        },
+        "databaseBytes": "20477631",
+        "blobsKiB": 36,
+        "logSha256": "19c468e25c4b5c50c3dbee54b74c356fa46979c53ccdad861c8a2ceb6e72dcb6"
+      },
+      {
+        "label": "many-gc",
+        "explicitGarbageCollection": true,
+        "workerMemory": {
+          "rss": 177786880,
+          "heapTotal": 68972544,
+          "heapUsed": 66349080,
+          "external": 5577845,
+          "arrayBuffers": 1468040
+        },
+        "workerProcess": {
+          "pid": 28,
+          "argv": ["node", "dist-worker/composition/worker-process.js"],
+          "rssKiB": 176416,
+          "highWaterKiB": 457948,
+          "fileDescriptors": 34
+        },
+        "databaseBytes": "20477631",
+        "blobsKiB": 36,
+        "logSha256": "c150bbd6f1db08ca6437aa6a8da2d7a45a64e6f500b32ab18c1e52924eaa8858"
+      }
+    ],
+    "beforeStop": {
+      "owner": "89932ab4-6837-4ba2-acaa-f46a06002841",
+      "generation": 2,
+      "live": true,
+      "enrolled": 104,
+      "historyComplete": 104,
+      "placements": 3127,
+      "migrations": 55
+    },
+    "afterStop": {
+      "owner": "89932ab4-6837-4ba2-acaa-f46a06002841",
+      "generation": 2,
+      "live": false,
+      "receivingBackends": 0
+    },
+    "stop": {
+      "stopMs": 814.6098,
+      "composeExitCode": 0,
+      "restartMutationsUnchanged": true
+    },
+    "appExitCode": 143,
+    "peerAfterStop": {
+      "active": 0,
+      "maxActive": 2,
+      "maxPerAccount": 1,
+      "append": 2,
+      "move": 2,
+      "smtp": 3,
+      "store": 0
+    },
+    "eventLogSha256": "0874606210ac9ab2faf53bdb7e22038a8598f978e619933b1c9bc95e90d7e7b4"
+  },
+  "sourceFingerprints": [
+    {
+      "path": "db/migrations/0054_receiving_secondary_mailboxes.sql",
+      "sha256": "3bb8a76668d91c2a6fc943ce24b3c6109a869d475f59dde308603caebe099372"
+    },
+    {
+      "path": "db/migrations/meta/_journal.json",
+      "sha256": "9abf58161e6c6dde2bb63dbcd93c3445386db97a5e0b37666ce3af57213c153e"
+    },
+    {
+      "path": "experiments/imap-transport/fixture.ts",
+      "sha256": "81e15a2663f46f6ab03f5ba6c51ab0dd4d3a74e9993545fa2db0c635a79a1931"
+    },
+    {
+      "path": "experiments/receiving-production/peer.mjs",
+      "sha256": "b6e910596132e80ef218e0fe1ea3c4df264eace100af7551044c81da32bfe3c8"
+    },
+    {
+      "path": "experiments/receiving-production/r17-smoke.mjs",
+      "sha256": "77f29b6c2132cbe03a2ba94beaaa35f6f78e9bbdbb2b8bda0dc4bd484e18c703"
+    },
+    {
+      "path": "experiments/receiving-production/README.md",
+      "sha256": "fd5c02204899a096f3c14be56c69a38a92afaaaae2e6da1bbcd2b239e850b053"
+    },
+    {
+      "path": "experiments/receiving-production/resources.mjs",
+      "sha256": "5ce646f86539a580882e9cc12be7b4e8748b0f1a821f9a15a07b1e768e0421be"
+    },
+    {
+      "path": "experiments/receiving-production/smoke.mjs",
+      "sha256": "23ff11f51a82448e94d711152dd15a4d0a992fa7570f41d6f7e1de4b0d425092"
+    },
+    {
+      "path": "src/components/account-settings.tsx",
+      "sha256": "ecf412d81252f3c656f019f28de2b8a31af1d51a485ed425efbd507915a27137"
+    },
+    {
+      "path": "src/components/mail-client.tsx",
+      "sha256": "6ac3f1f998bf07dc2c380186f597532291ac21a35d572bb7de97a0d23ea06bc7"
+    },
+    {
+      "path": "src/components/message-list.tsx",
+      "sha256": "ec26aca1f967972deac3f2b36e267db5240da02c96c7df8ebd82824c1ec91f00"
+    },
+    {
+      "path": "src/composition/receiving-worker.ts",
+      "sha256": "e0218954559d5105059b0d1fe9711f8f5a3fd37602cd7ed0642effead96896f4"
+    },
+    {
+      "path": "src/modules/accounts/infrastructure/imap-metadata-window.ts",
+      "sha256": "d165bd55ec6dd3b55f6be303dfabdf108fa27fce3043d5b93757f4c2fcf2e5a3"
+    },
+    {
+      "path": "src/modules/mail/application/mailbox-service.ts",
+      "sha256": "7f2704448f2e03387052ef736060a7387a4bb76eab143f64a4f9f612b2e56deb"
+    },
+    {
+      "path": "src/modules/mail/application/message-metadata-persistence.ts",
+      "sha256": "3ffdf314ef8d6ff2a7f7657055a56f1a6fad7f384b3f123d0428e23e872fcb13"
+    },
+    {
+      "path": "src/modules/mail/application/receiving-coordinator.ts",
+      "sha256": "c21d4a97e28d500431a3f59ad8d8db562c73b92420cf4d732b4c20e83e7cbefa"
+    },
+    {
+      "path": "src/modules/mail/application/receiving-demand.ts",
+      "sha256": "2cf88d9a02406b5945c0b0eb0b9c4a17c8fcfaa15b10bbd82719fc76a8703c16"
+    },
+    {
+      "path": "src/modules/mail/application/receiving-election.ts",
+      "sha256": "173ef8fc541b951ed29aa3040460ccc8e4d74417dc81c3c6261d614545735bf2"
+    },
+    {
+      "path": "src/modules/mail/application/receiving-inbox-turn.ts",
+      "sha256": "a32c35a9fcb21dfa28a224a812837e6e0363e489d41ed5d51041da1cfd0367ab"
+    },
+    {
+      "path": "src/modules/mail/application/receiving-persistence.ts",
+      "sha256": "557053c4cff2027d4ced2ecb342b8e9532c6582459309354b3afc6168013f5b4"
+    },
+    {
+      "path": "src/modules/mail/application/receiving-scheduler.ts",
+      "sha256": "3c85fef5549e3f1ff25ea1d54bc9cd2b6463a6b16fe2ec8dd6bde45b0ce6078c"
+    },
+    {
+      "path": "src/shared/infrastructure/database/receiving-authority.ts",
+      "sha256": "ffd955456a8a99e74b83a5ec04f9937755e5f6baaca640ab1001cae71e4ed5ce"
+    },
+    {
+      "path": "tests/imap-fixture-cleanup.test.ts",
+      "sha256": "bd6e03fdcfd2e1aaba774ca753bdfaa0c3ddc3f65ebd34bb6d84cfea4e847212"
+    },
+    {
+      "path": "tests/receiving-admission.integration.test.ts",
+      "sha256": "b9f0522ffad7400f00a0e73dd0b4fb361e47b3db7640cb193d430007ea2468b9"
+    },
+    {
+      "path": "tests/receiving-claim-phase.integration.test.ts",
+      "sha256": "21c39cecc675a5a7b553f3f66e4bef68edd5aca15c858c30e7d845d50f7cafb0"
+    },
+    {
+      "path": "tests/receiving-production.integration.test.ts",
+      "sha256": "9ba9928b51b46e78410de104b2d6423b8d02ba4029aceff50e07ec42e9e7515e"
+    },
+    {
+      "path": "tests/receiving-secondary.integration.test.ts",
+      "sha256": "2ca40a38b6cb026bc93c83c54dbaf989a954a5400e0670f932948e64a22e4df1"
+    },
+    {
+      "path": "tests/receiving-sql-contention.test.ts",
+      "sha256": "6210dcfed18802a490bb15adb924654a8ec8c0ac96c9a0ab428bade302d9325c"
+    },
+    {
+      "path": "tests/receiving-topology.integration.test.ts",
+      "sha256": "5cb61cf7efc7bceee0c9b0b4f091deb690042753d9c22175006e141f045e087d"
+    }
+  ]
+}

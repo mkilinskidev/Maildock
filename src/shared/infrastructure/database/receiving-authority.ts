@@ -53,11 +53,20 @@ export async function recoverInboxIdentity(
       lifecycle: BigInt(a.receiving_lifecycle_version as string),
     };
     const [folder] = await db.execute(
-      sql`select id,selectable,lifecycle_status,receiving_request_generation from mailboxes where account_id=${account}::uuid and remote_path='INBOX' for update`,
+      sql`select id,remote_path,provider_mailbox_id,selectable,lifecycle_status,receiving_request_generation from mailboxes where account_id=${account}::uuid
+        and (${bootstrap} and remote_path='INBOX' or not ${bootstrap} and id=${mailbox}::uuid) for update`,
     );
     if (!folder) {
       if (!bootstrap) throw new Error("Receiving INBOX missing");
-      return { mailbox, identity, state: null, binding: null, missing: true };
+      return {
+        mailbox,
+        path: "INBOX",
+        providerMailboxId: null,
+        identity,
+        state: null,
+        binding: null,
+        missing: true,
+      };
     }
     if (
       (!bootstrap && folder.id !== mailbox) ||
@@ -89,6 +98,8 @@ export async function recoverInboxIdentity(
         : [];
     return {
       mailbox,
+      path: folder.remote_path as string,
+      providerMailboxId: folder.provider_mailbox_id as string | null,
       identity,
       state,
       binding: s ? BigInt(s.configuration_binding as string) : null,

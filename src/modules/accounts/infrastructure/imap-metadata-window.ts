@@ -18,6 +18,8 @@ export const METADATA_WINDOW_LIMITS = Object.freeze({
 });
 
 export type MetadataWindowOptions = Readonly<{
+  path?: string;
+  providerMailboxId?: string | null;
   /** Absolute performance.now() deadline, including subsequent DB publication. */
   deadline: number;
   signal?: AbortSignal;
@@ -237,6 +239,7 @@ export async function fetchInboxMetadataWindow(
   const completed = new Map<string, number>();
   let selectedEpoch: number | undefined;
   let selectedNext: number | undefined;
+  let selectedProviderId: string | undefined;
   const observe = (
     response: ReceivingResponse,
     request?: { tag: string; command: string; sent: boolean },
@@ -265,6 +268,20 @@ export async function fetchInboxMetadataWindow(
         if (selectedNext !== undefined)
           throw new MetadataWindowError("Duplicate selected UIDNEXT");
         selectedNext = numeric(section[1]?.value, 0x100000000);
+      }
+      if (section?.[0]?.value === "MAILBOXID") {
+        const values = section[1];
+        const value =
+          Array.isArray(values) && values.length === 1
+            ? atom(values[0])?.value
+            : undefined;
+        if (
+          selectedProviderId !== undefined ||
+          typeof value !== "string" ||
+          !/^[A-Za-z0-9_-]{1,255}$/.test(value)
+        )
+          throw new MetadataWindowError("Invalid selected MAILBOXID");
+        selectedProviderId = value;
       }
     }
     if (response.tag !== "*") return;
@@ -438,8 +455,36 @@ export async function fetchInboxMetadataWindow(
     client.on("error", abort);
     await client.connect();
     guard();
-    lock = await client.getMailboxLock("INBOX");
+    if (options.path !== undefined && options.path !== "INBOX") {
+      const path = options.path;
+      if (
+        !path ||
+        /[\x00-\x1f\x7f]/.test(path) ||
+        Buffer.byteLength(path) > 4096
+      )
+        throw new MetadataWindowError("Invalid mailbox path");
+      // This single-use owned client already has exact LIST topology. Avoid
+      // ImapFlow's implicit LIST and personal-namespace prefix insertion.
+      const namespace = Reflect.get(client, "namespace");
+      const folders = Reflect.get(client, "folders") as Map<string, unknown>;
+      folders.set(path, { path, listed: true });
+      Reflect.set(client, "namespace", false);
+      try {
+        await client.mailboxOpen(path, { readOnly: true });
+      } finally {
+        Reflect.set(client, "namespace", namespace);
+      }
+    } else {
+      lock = await client.getMailboxLock("INBOX");
+    }
     guard();
+    if (
+      options.providerMailboxId &&
+      selectedProviderId !== options.providerMailboxId
+    )
+      throw new MetadataWindowError(
+        "Selected provider mailbox identity changed",
+      );
     // Fresh SELECT evidence; never STATUS's possibly stale selected cache.
     if (completed.get("EXAMINE") !== 1 && completed.get("SELECT") !== 1)
       throw new MetadataWindowError("SELECT did not complete");

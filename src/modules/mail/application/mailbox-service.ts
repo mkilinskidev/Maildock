@@ -15,7 +15,7 @@ type MailboxRow = typeof mailboxes.$inferSelect;
 
 export type MailboxView = Readonly<{
   receiving?: Readonly<{
-    mode: "inbox" | "deferred";
+    mode: "inbox" | "mailbox" | "deferred";
     historyComplete: boolean;
     freshThrough: string | null;
   }>;
@@ -183,8 +183,8 @@ export class MailboxService {
           enrolled: sql<boolean>`maildock_receiving_account_enrolled(${mailboxes.accountId})`,
           receiving: sql<
             MailboxView["receiving"]
-          >`case when maildock_receiving_account_enrolled(${mailboxes.accountId}) then
-            jsonb_build_object('mode',case when ${mailboxes.remotePath}='INBOX' then 'inbox' else 'deferred' end,
+          >`case when maildock_receiving_account_enrolled(${mailboxes.accountId}) and ${mailboxes.selectable} and ${mailboxes.lifecycleStatus}='active' then
+            jsonb_build_object('mode',case when ${mailboxes.remotePath}='INBOX' then 'inbox' else 'mailbox' end,
               'historyComplete',coalesce(${receivingMailboxes.historyBefore}=1,false),
               'freshThrough',${receivingMailboxes.freshThrough}::text) end`,
         })

@@ -236,6 +236,7 @@ describe("R04 owned pre-network claim phase", () => {
       hangMutation?: boolean;
       mutationSeen?: () => void;
       connectionLoad?: () => Promise<void>;
+      quiescentMetadata?: boolean;
     } = {},
   ) {
     const peer = await metadataPeer({
@@ -257,12 +258,27 @@ describe("R04 owned pre-network claim phase", () => {
       confirmed = false;
     let context: ReceivingOperationContext | undefined;
     let preContext: ReceivingPreNetworkContext | undefined;
+    let metadataErrors = 0;
     const coordinator = new ElectedReceivingCoordinator({
       executor,
       tuning: { workers: input.workers ?? 1 },
       loadAccount: async (_db, candidate) => ({
         ...candidate,
         connection: peer.connection,
+        ...(input.quiescentMetadata
+          ? {
+              // Phase assertions below require the shared executor to be idle.
+              // R17 also enrolls Source, so retire its startup opportunity before
+              // testing this one command. No metadata socket/publication is used.
+              createClient: () => {
+                throw new Error(
+                  "Metadata excluded from isolated claim fixture",
+                );
+              },
+              timing: { retryMs: 60_000, maxRetryMs: 60_000 },
+              onError: () => metadataErrors++,
+            }
+          : {}),
       }),
       loadOperationConnection: async () => {
         await input.connectionLoad?.();
@@ -339,9 +355,12 @@ describe("R04 owned pre-network claim phase", () => {
         },
       },
     });
+    if (input.quiescentMetadata)
+      coordinator.dispatchFlagCommands = async () => {};
     cleanup.push(() => coordinator.stop());
     await reader`update receiving_coordinator set expires_at='-infinity'`;
     expect(await coordinator.elect()).toBe(true);
+    if (input.quiescentMetadata) await until(() => metadataErrors === 2);
     owner = coordinator.snapshot.owner!;
     const submit = (signal?: AbortSignal) =>
       coordinator.submit({
@@ -377,7 +396,7 @@ describe("R04 owned pre-network claim phase", () => {
         executor = new ReceivingExecutor(url, 2);
         publication = new ReceivingPublication(executor);
       });
-      const f = await harness();
+      const f = await harness({ quiescentMetadata: true });
       await f.submit();
       expect(f.constructed()).toBe(1);
       expect(

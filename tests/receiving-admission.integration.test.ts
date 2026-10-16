@@ -355,6 +355,9 @@ describe("R03 unified elected admission with disposable PostgreSQL", () => {
     let released = false;
     await held`begin`;
     await held`select singleton from receiving_coordinator for update`;
+    // R17 normally validates a healthy lease with SHARE admission. Explicitly
+    // begin renewal to retain this test's exact blocked-renewal race.
+    const renewal = fixture.coordinator.renew();
     const cancellation = new AbortController();
     const first = fixture.coordinator.submit(
       operation("diagnostic", undefined, cancellation.signal),
@@ -377,6 +380,7 @@ describe("R03 unified elected admission with disposable PostgreSQL", () => {
       await held`commit`;
       held.release();
       released = true;
+      expect(await renewal).toBe(true);
       await second;
       expect(fixture.counts().constructed).toBe(1);
     } finally {

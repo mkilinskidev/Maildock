@@ -86,3 +86,79 @@ it("keeps the third W4/D2 publication outside its operation lifetime until data 
   expect(cancelled).toHaveLength(2);
   expect(scheduler.snapshot.active).toBe(0);
 });
+
+it.each([false, true])(
+  "rotates INBOX and every secondary independently under continuously due work (mixed accounts=%s)",
+  async (mixed) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const active = new Set<string>();
+    const seen: string[] = [];
+    const pending: (() => void)[] = [];
+    const result = {
+      state: {
+        epoch: 7n,
+        revision: 1n,
+        freshThrough: 1n,
+        historyBefore: 1n,
+        reconcileAfter: 0n,
+      },
+      count: 0,
+      moreFresh: true,
+    };
+    vi.mocked(runOneReceivingTurn).mockImplementation(
+      async (config, _kind, _deadline, signal) => {
+        expect(active.has(config.account)).toBe(false);
+        active.add(config.account);
+        seen.push(config.mailbox);
+        await new Promise<void>((resolve, reject) => {
+          const cancel = () => {
+            active.delete(config.account);
+            reject(Error("Fixture cancelled"));
+          };
+          signal.addEventListener("abort", cancel, { once: true });
+          pending.push(() => {
+            signal.removeEventListener("abort", cancel);
+            active.delete(config.account);
+            resolve();
+          });
+        });
+        return result;
+      },
+    );
+    const accounts = [
+      { account: "account-a", mailbox: "a-2", mailboxPath: "INBOX" },
+      { account: "account-a", mailbox: "a-1", mailboxPath: "CustomA" },
+      { account: "account-a", mailbox: "a-3", mailboxPath: "CustomB" },
+      ...(mixed
+        ? [{ account: "account-b", mailbox: "b-2", mailboxPath: "INBOX" }]
+        : []),
+    ].map((c) => ({ ...c, connection: {}, owner: {}, authority: {} })) as Omit<
+      ReceivingCoordinatorConfig,
+      "executor"
+    >[];
+    const scheduler = new ReceivingScheduler({
+      accounts,
+      executor: { capacity: 2 } as ReceivingExecutor,
+      controlHeadroom: true,
+      tuning: { workers: mixed ? 2 : 1 },
+    });
+    scheduler.start();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 32; i++) {
+        expect(pending.length).toBeGreaterThan(0);
+        pending.shift()!();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      for (const config of accounts)
+        expect(
+          seen.filter((m) => m === config.mailbox).length,
+          config.mailbox,
+        ).toBeGreaterThanOrEqual(3);
+    } finally {
+      await scheduler.stop();
+    }
+    expect(scheduler.snapshot.active).toBe(0);
+    expect(active.size).toBe(0);
+  },
+);

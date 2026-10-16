@@ -91,6 +91,10 @@ export async function persistMessageMetadata(
           updatedAt: synchronizedAt,
         })
         .where(eq(mailboxMessages.id, placement.id));
+      // Receiving UID bytes/envelope are immutable. In particular a COPYUID
+      // destination can share the source message and its cache provenance;
+      // rediscovery must not rewrite that shared row from a single-folder scope.
+      if (receivingPlacements) continue;
       await db
         .update(messages)
         .set(messageValues(accountId, remote, synchronizedAt))

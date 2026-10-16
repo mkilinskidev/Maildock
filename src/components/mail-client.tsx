@@ -1646,7 +1646,7 @@ export function MailClient({
                         ? "All accounts are disabled"
                         : folder?.receiving?.mode === "deferred"
                           ? "Folder synchronization is not available yet"
-                          : folder?.receiving?.mode === "inbox"
+                          : folder?.receiving
                             ? folder.receiving.historyComplete
                               ? "No messages"
                               : "Waiting for mail to sync"
@@ -1674,7 +1674,7 @@ export function MailClient({
                         ? "Enable an account in Settings to synchronize mail."
                         : folder?.receiving?.mode === "deferred"
                           ? "Saved messages and completed moves remain available. Background synchronization for this folder will be added later."
-                          : folder?.receiving?.mode === "inbox"
+                          : folder?.receiving
                             ? folder.receiving.historyComplete
                               ? "This mailbox has no messages to display."
                               : "Messages will appear as synchronization completes."

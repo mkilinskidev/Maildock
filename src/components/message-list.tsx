@@ -88,7 +88,7 @@ export function MessageList({
               mailbox.receiving.mode === "deferred" ? (
                 "Background synchronization for this folder is not available yet."
               ) : (
-                `Inbox · Older mail: ${mailbox.receiving.historyComplete ? "complete" : "in progress"}`
+                `Older mail: ${mailbox.receiving.historyComplete ? "complete" : "in progress"}`
               )
             ) : (
               <>

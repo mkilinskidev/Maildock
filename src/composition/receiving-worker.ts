@@ -52,6 +52,11 @@ export class ReceivingWorker {
       executor: this.executor!,
       ...this.input.credentials,
       diagnosticEndpoint: this.input.config.diagnosticEndpoint,
+      onControlError: (error) =>
+        this.input.logger.warn(
+          { event: "receiving.control", err: error },
+          "Receiving control failed; retiring owner",
+        ),
       operationHandlers: {
         ...receivingTopologyHandlers,
         list: { topology: "list", discover: true },

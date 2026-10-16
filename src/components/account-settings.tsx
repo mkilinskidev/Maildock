@@ -147,7 +147,7 @@ export function AccountSettings({
     mailboxes.some((m) =>
       m.receiving
         ? account.enabled &&
-          m.receiving.mode === "inbox" &&
+          m.receiving.mode !== "deferred" &&
           !m.receiving.historyComplete
         : [m.recentSync.status, m.deltaSync.status, m.backfill.status].some(
             (s) => s === "pending" || s === "running",
@@ -725,7 +725,7 @@ export function AccountSettings({
                       m.receiving.mode === "deferred" ? (
                         "Background synchronization for this folder is not available yet."
                       ) : (
-                        `Inbox · Older mail: ${m.receiving.historyComplete ? "complete" : "in progress"}`
+                        `Older mail: ${m.receiving.historyComplete ? "complete" : "in progress"}`
                       )
                     ) : (
                       <>
@@ -745,7 +745,7 @@ export function AccountSettings({
                   <details>
                     <summary>Technical sync details</summary>
                     {m.receiving ? (
-                      m.receiving.mode === "inbox" ? (
+                      m.receiving.mode !== "deferred" ? (
                         `Metadata coverage through UID ${m.receiving.freshThrough ?? "pending"}`
                       ) : (
                         "Background inventory and history are deferred."

@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { getConfig } from "/app/dist-worker/shared/infrastructure/config/config.js";
 import { createWorkerDatabase } from "/app/dist-worker/shared/infrastructure/database/database-worker.js";
 const label = process.argv[2] ?? "sample";
+const collectGarbage = process.argv.includes("--gc");
 const ports = new Set(
   (await readFile("/proc/net/tcp", "utf8"))
     .trim()
@@ -22,7 +23,7 @@ async function inspect(endpoint) {
       ws.close();
       reject(new Error("Inspector sample deadline"));
     }, 2500);
-    ws.onopen = () =>
+    const evaluate = () =>
       ws.send(
         JSON.stringify({
           id: 1,
@@ -34,8 +35,24 @@ async function inspect(endpoint) {
           },
         }),
       );
+    ws.onopen = () =>
+      collectGarbage
+        ? ws.send(
+            JSON.stringify({ id: 0, method: "HeapProfiler.collectGarbage" }),
+          )
+        : evaluate();
     ws.onmessage = (event) => {
       const result = JSON.parse(event.data);
+      if (result.id === 0) {
+        if (result.error) {
+          clearTimeout(timer);
+          ws.close();
+          reject(new Error("Inspector GC rejected"));
+          return;
+        }
+        evaluate();
+        return;
+      }
       if (result.id !== 1) return;
       clearTimeout(timer);
       ws.close();
@@ -83,6 +100,7 @@ try {
   console.log(
     JSON.stringify({
       label,
+      collectGarbage,
       at: new Date().toISOString(),
       nodes,
       processes,

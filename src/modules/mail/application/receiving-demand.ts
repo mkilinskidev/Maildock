@@ -65,7 +65,7 @@ export class ReceivingDemand {
 }
 
 // No recent/history-success prerequisite. E>1 is the only history progress test;
-// no enrollment is itself fresh work. Secondary execution awaits Stage 5.
+// no enrollment is itself fresh work. Every selectable mailbox is eligible.
 const receivingEligibility = sql`
   a.receiving_due_at<=clock_timestamp() or exists(
     select from mailboxes m left join receiving_mailboxes s on s.mailbox_id=m.id

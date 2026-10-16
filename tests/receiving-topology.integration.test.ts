@@ -135,6 +135,13 @@ async function wire(
         } else send();
         return true;
       }
+      // R17 restart also gives an empty secondary mailbox its first bounded
+      // inventory window. Explicit R07 select operations still issue no SEARCH.
+      if (/^UID SEARCH UID [0-9:,]+$/.test(c.command)) {
+        p.send("* SEARCH\r\n", c);
+        p.ok(c);
+        return true;
+      }
       return false;
     },
     {},
@@ -819,7 +826,7 @@ describe("R07 elected bounded topology, installed IMAP adapter and actual R04 SQ
     });
     expect(selectedWire.clients).toHaveLength(1);
   });
-  it("restart uses persisted identities and the R06 INBOX bootstrap before another explicit LIST", async () => {
+  it("restart uses persisted identities and enrolls selectable folders before another explicit LIST", async () => {
     await list();
     const before = await folders();
     await coordinator.stop();
@@ -827,8 +834,11 @@ describe("R07 elected bounded topology, installed IMAP adapter and actual R04 SQ
     await owner(url, firstTurn);
     await firstTurn.promise;
     await list();
+    await observed(async () => (await states()).length === before.length);
     expect((await folders()).map((m) => m.id)).toEqual(before.map((m) => m.id));
-    expect(await states()).toHaveLength(1);
+    expect((await states()).map((s) => s.mailbox_id).sort()).toEqual(
+      before.map((b) => b.id).sort(),
+    );
   });
   it("lost secondary enrollment COMMIT reply recovers exact identity without replay", async () => {
     await list();

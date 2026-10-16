@@ -166,6 +166,13 @@ export async function fixture(
         accept,
       )
     : createServer(accept);
+  // TLS 'secureConnection' is too late to own every accepted transport. A
+  // cancelled client can leave an unfinished handshake which server.close()
+  // otherwise waits on until Node's handshake timeout. Track raw TCP as well.
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string")

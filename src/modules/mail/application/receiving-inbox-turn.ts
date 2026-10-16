@@ -59,12 +59,33 @@ export async function receiveInboxTurn(
   let expected = recovered.state;
   const rebind =
     expected !== null && recovered.binding !== identity.configuration;
+  // The selected identity starts with E=F+1 and no historical coverage. Give
+  // its newest bounded page a current-priority opportunity before older pages
+  // enter protected history rotation. This also covers R07 target enrollment.
+  const firstPage =
+    recovered.path !== "INBOX" &&
+    options.kind === "fresh" &&
+    !recovered.missing &&
+    !rebind &&
+    (!expected ||
+      (expected.historyBefore > 1n &&
+        expected.historyBefore === expected.freshThrough + 1n));
+  const windowKind = firstPage ? "history" : options.kind;
   guard();
   const window = await fetchInboxMetadataWindow(
     connection,
     expected,
     {
       ...options,
+      // Secondary pages leave headroom for conversation/placement publication
+      // on small installations; the fixed adapter ceiling remains 128 UIDs.
+      windowSize:
+        recovered.path === "INBOX"
+          ? options.windowSize
+          : Math.min(options.windowSize ?? 32, 32),
+      kind: windowKind,
+      path: recovered.path,
+      providerMailboxId: recovered.providerMailboxId,
       allowIdentityTransition: true,
       selectOnly: rebind || recovered.missing,
       reconcileKnown:
@@ -147,7 +168,7 @@ export async function receiveInboxTurn(
               mailbox,
               expected,
               {
-                kind: options.kind,
+                kind: windowKind,
                 evidence: window.evidence,
                 metadata: window.metadata,
               },
