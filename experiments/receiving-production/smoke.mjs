@@ -2,6 +2,7 @@
 // These are the same application services used by authenticated HTTP handlers.
 // Synthetic owner/MFA provisioning is explicit; no browser enrollment is claimed.
 import assert from "node:assert/strict";
+import { htmlBoundary } from "./html-boundaries.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -421,6 +422,89 @@ try {
       s.mailbox_id,
     );
     assert.ok(list.items.length > 0);
+  } else if (phase === "commit-loss-restart") {
+    assert(state.commitLoss);
+    const { source, committed, counters } = state.commitLoss;
+    const lossEvidence = JSON.parse(
+      await readFile("/r16-evidence/compose-commit-loss.json", "utf8"),
+    );
+    await until(
+      async () =>
+        (
+          await sql`select expires_at>clock_timestamp() and owner<>${lossEvidence.owner.owner}::uuid and generation>${lossEvidence.owner.generation}::bigint as live from receiving_coordinator where singleton`
+        )[0].live,
+    );
+    const [row] =
+      await sql`select status,receiving_attempt from message_contents where message_id=${source.message_id}`;
+    assert.deepEqual(row, committed);
+    const stats = await peer();
+    assert.equal(stats.literalBytes, lossEvidence.peerAfterCommit.literalBytes);
+    for (const key of ["store", "move", "append", "smtp"])
+      assert.equal(stats[key], counters[key]);
+    assert.equal(
+      (await sql`select count(*)::int as n from r16_commit_audit`)[0].n,
+      1,
+    );
+    assert.equal(
+      (
+        await sql`select count(*)::int as n from message_contents where message_id=${source.message_id}`
+      )[0].n,
+      1,
+    );
+    measurements.commitLossRestart = {
+      originalAttempt: row.receiving_attempt,
+      singlePublication: true,
+      noRemoteMutation: true,
+    };
+  } else if (phase === "html-newsletter" || phase === "html-css") {
+    const kind = phase.slice(5);
+    const fixture = htmlBoundary(kind);
+    await peer({ htmlBoundary: kind });
+    const s = await source(kind === "newsletter" ? 1 : 101);
+    const before = await peer();
+    const begin = performance.now();
+    await content.request(state.maildock, s.mailbox_id, s.message_id);
+    await until(
+      async () =>
+        (await content.detail(state.maildock, s.mailbox_id, s.message_id))
+          .content.status === "ready",
+    );
+    const [row] =
+      await sql`select c.sanitized_html,c.plain_text,m.search_body from message_contents c join messages m on m.id=c.message_id where c.message_id=${s.message_id}`;
+    assert(row.sanitized_html);
+    assert.equal(
+      (row.sanitized_html.match(/<section\b/g) ?? []).length,
+      fixture.count,
+    );
+    assert(
+      !/<script|onerror=|<img[^>]+ src="https?:/i.test(row.sanitized_html),
+    );
+    // MIME plain alternative is authoritative for durable search; independently
+    // verify the HTML-only search oracle with the same compiled sanitizer.
+    assert.equal(row.search_body, row.plain_text);
+    const { sanitizeEmailHtml } =
+      await import("/app/dist-worker/modules/mail/infrastructure/sanitize-email-html.js");
+    const sanitized = sanitizeEmailHtml(fixture.html);
+    assert.equal(sanitized.searchText, fixture.searchText);
+    assert(sanitized.remoteContentBlocked);
+    const response = await renderThroughWeb(
+      state.maildock,
+      s.mailbox_id,
+      s.message_id,
+    );
+    assert.equal(response.status, 200);
+    const rendered = await response.text();
+    assert(!rendered.includes('src=\\"https://remote.invalid'));
+    measurements.htmlBoundary = {
+      kind,
+      inputBytes: Buffer.byteLength(fixture.html),
+      sections: fixture.count,
+      durationMs: performance.now() - begin,
+      literalBytes: (await peer()).literalBytes - before.literalBytes,
+      sanitizedCorrect: true,
+      searchCorrect: true,
+      authenticatedRender: true,
+    };
   } else if (phase === "reader") {
     const s = state.source;
     const htmlStarted = performance.now();

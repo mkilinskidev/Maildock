@@ -85,7 +85,11 @@ export function normalizeContentId(value: string): string {
 export function cidReference(value: string): string | null {
   if (!/^cid:/i.test(value)) return null;
   try {
-    return normalizeContentId(decodeURIComponent(value.slice(4))) || null;
+    const decoded = decodeURIComponent(value.slice(4));
+    // Decoding must not introduce NUL into the serialized HTML/database text.
+    // Treat this invalid reference like a malformed percent escape.
+    if (decoded.includes("\0")) return null;
+    return normalizeContentId(decoded) || null;
   } catch {
     return null;
   }
@@ -191,6 +195,11 @@ export function sanitizeEmailHtml(input: string): {
     };
     let remoteContentBlocked = false;
     const rawDocument = window.document;
+    // jsdom's Document named-property proxy rebuilds its descendant index after
+    // every tree change, even for a subsequent .body read. Keep stable element
+    // references while moving nodes so this remains linear for wide mail.
+    const body = rawDocument.body;
+    const head = rawDocument.head;
     // Removed markup is still a blocked resource for the privacy notice.
     for (const el of rawDocument.querySelectorAll("*")) {
       for (const attr of [...el.attributes]) {
@@ -216,16 +225,14 @@ export function sanitizeEmailHtml(input: string): {
     // Preserve body presentation through an ordinary isolated wrapper, and
     // include head style blocks in the sanitized fragment (never raw head tags).
     const wrapper = rawDocument.createElement("div");
-    for (const attr of [...rawDocument.body.attributes])
+    for (const attr of [...body.attributes])
       if (presentation.has(attr.name))
         wrapper.setAttribute(attr.name, attr.value);
     const legacyColors = [
-      rawDocument.body.getAttribute("bgcolor")
-        ? `background-color:${rawDocument.body.getAttribute("bgcolor")}`
+      body.getAttribute("bgcolor")
+        ? `background-color:${body.getAttribute("bgcolor")}`
         : "",
-      rawDocument.body.getAttribute("text")
-        ? `color:${rawDocument.body.getAttribute("text")}`
-        : "",
+      body.getAttribute("text") ? `color:${body.getAttribute("text")}` : "",
     ]
       .filter(Boolean)
       .join(";");
@@ -236,11 +243,10 @@ export function sanitizeEmailHtml(input: string): {
       );
     // Move the parsed nodes into one presentation wrapper instead of serializing
     // and reparsing the full body. DOMPurify mutates this already parsed tree.
-    for (const style of [...rawDocument.head.querySelectorAll("style")])
+    for (const style of [...head.querySelectorAll("style")])
       wrapper.append(style);
-    while (rawDocument.body.firstChild)
-      wrapper.append(rawDocument.body.firstChild);
-    rawDocument.body.append(wrapper);
+    while (body.firstChild) wrapper.append(body.firstChild);
+    body.append(wrapper);
     purifier.sanitize(wrapper, { ...config, IN_PLACE: true });
     const transformElement = (element: Element) => {
       const source =

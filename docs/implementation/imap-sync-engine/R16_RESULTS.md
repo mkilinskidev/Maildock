@@ -404,3 +404,311 @@ profiling, generated Compose environment/overrides and JSON reports are outside
 the checkout at `C:/Users/mateu/AppData/Local/Temp/maildock-r16-Eqpan3`; ignored
 `.r16-*.log` files retain chronological original failures and corrected runs.
 Generated fixture secrets are not committed or included here.
+
+## Final completion — 2026-10-16
+
+This section supplements, and does not replace, the original PARTIAL decision,
+failed runs, historical SQL profile or Luna's accepted `6676ce5` remediation above.
+Work continued on the same branch with that commit preserved. Only the additional
+sanitizer corrections below change production behavior. No scheduler redesign,
+authority expansion, deadline increase, R17 work, push, merge or PR was performed.
+
+### 1. Accepted HTML boundary validation
+
+Exactly two representative accepted inputs were added to the disposable production
+fixture: a complex newsletter with **23,889 elements** and a CSS newsletter with
+**23,471 elements, 63 style blocks and 259,833 CSS bytes**. The latter is below the
+unchanged 64-block / 262,144-byte CSS budget. Both are below 24,000 elements and
+5 MiB. Actual compiled receiving runs in the ordinary container worker; the
+producer requests content through the existing service, independently checks the
+committed result and calls the authenticated HTTPS render route.
+
+The first newsletter attempt exposed a real CPU amplification below the accepted
+element ceiling. It exhausted the existing receiving attempts instead of reaching
+ready. Its sampler recorded 44.547 seconds of worker CPU across repeated attempts,
+618.31 MiB sampled worker RSS, and a 747.18 MiB app cgroup peak. This is retained
+as failed evidence, not a successful memory-only acceptance result. An isolated
+built-sanitizer CPU profile measured **14,467.06 ms** duration and **16,469.87 ms**
+CPU. Descendant-array construction accounted for about 11.15 seconds of sampled
+time; its stack was jsdom Document named-property lookup inside sanitization.
+
+Repeated `rawDocument.body` access while moving each child invalidated and rebuilt
+jsdom's named-element descendant index. The narrowly targeted correction retains
+the already parsed `body` and `head` element references throughout the existing
+in-place transformation. It adds no parser, cache, worker or new budget. An
+isolated comparison on the rebuilt image measured **1,263.80 ms** duration and
+**2,179.32 ms** CPU. These diagnostic processes are separate from the accepted
+worker measurements below; the app container was recreated after diagnosis.
+
+| Accepted deployed case       | Peak worker RSS | Peak used heap / reserved heap | Sampled app memory / cgroup peak |  Worker CPU | Request/oracle/render duration |
+| ---------------------------- | --------------: | -----------------------------: | -------------------------------: | ----------: | -----------------------------: |
+| Complex newsletter           |      401.89 MiB |            225.67 / 305.21 MiB |              779.16 / 780.18 MiB | 3,256.45 ms |                    8,111.85 ms |
+| Multiple CSS rules/selectors |      539.18 MiB |            342.63 / 434.49 MiB |              917.66 / 918.41 MiB | 3,915.20 ms |                    6,207.99 ms |
+
+Sampling uses actual worker inspector heap, `/proc` RSS, cumulative worker CPU
+differences and app cgroup memory at approximately 100-ms intervals (316 and 230
+samples). Sampling can miss instantaneous process peaks; cgroup peak is the
+kernel high-water mark. CPU includes other ordinary worker work in the bounded
+sampling interval. Duration includes dispatch, producer validation and web/CID
+rendering, and is not sanitizer-only latency. One-shot producer resources are
+excluded from the app cgroup; the small sampler process is included. The second
+case deliberately follows the first on the same worker and includes retained heap.
+
+Both cases reached ready, preserved all 3,980 / 3,900 newsletter sections, removed
+script/active remote image sources, preserved resource markers, retained exact
+plain-text-derived durable search, passed an exact HTML-only search oracle with
+the built sanitizer, and returned HTTP 200 from the authenticated render route.
+The first successful newsletter's producer oracle differed only in inserted
+whitespace between inline siblings; the shared fixture now models that original
+wire whitespace exactly. Neither difference changes structure or resource budgets.
+The focused sanitizer/resource/search selection passed **27/27** before the full
+regression run. The original 87,380-paragraph rejection, plain fallback, terminal
+no-fallback handling, CID/privacy protections and reader isolation remain intact.
+**Gate 1: PASS** for these measured boundaries; no universal resource SLA is claimed.
+
+### 2. Stage 3C Dovecot W2/W4 diagnosis
+
+One bounded combined W2/W4 invocation ran with the original 300-second process
+ceiling, 25-second history phase limits, two-second history/publication deadline,
+all five accounts and original progress/error assertions. No deadline or history
+target was increased. Fixture preflight and all captured strict F/E/R/placement
+boundaries passed; total invocation time including cleanup was **86,802.04 ms**.
+
+The earlier W2 evidence had stopped admissions after an unresolved publication,
+while the scheduler could retire on a failed `beforeAdmission` control without
+the fixture's operation-error list recording that failure. The harness now retains
+renewal duration/outcome/error and counts failed control admission as an error.
+It also explicitly requests the same aggregate control headroom as elected
+production: W2 allows two data allocations; W4/D2 allows at most three. C=1 and
+the D=2 executor remain unchanged. This corrects the harness contract; it is not
+proof of the precise unrecorded control failure in the previous W2 run.
+
+- **W2: PASS.** All five accounts completed exactly three historical pages,
+  ending at E=617. Startup/restart were fresh-first; current arrivals were visible,
+  restart oracle and unavailable-account isolation/recovery passed. Maximum
+  observed current visibility latency was 5,837.26 ms. There were zero unexpected
+  errors, five deliberate AUTHENTICATE failures for the disabled fixture account,
+  maximum two data allocations/two sockets/two SQL sockets, no per-account
+  overlap, and zero live owned sockets/SQL scopes on retirement. All 15 history
+  turns completed; their observed p95/max were about 1,167 ms. No protected-history
+  exception was needed in these short phases. W2's capacity is unchanged by the
+  explicit control-headroom flag, so its success does not establish a deterministic
+  cure for the earlier timing-dependent stop.
+- **W4: unsuccessful.** The unchanged zero-unexpected-error assertion rejected one
+  history deadline failure for `stage3c-5` during initial receiving. Trace 30 shows
+  admission at 82,377.984 ms; owner SHARE validation took 1.64 ms; persistence was
+  requested at 82,684.648 ms but its socket was not allocated until 83,723.003 ms.
+  Thus **1,038.35 ms** was spent waiting for executor capacity, followed by roughly
+  23.33 ms connection/setup, leaving **631.65 ms** to the original turn deadline.
+  Publication did not settle in that remainder. This is a demonstrated SQL
+  admission/remaining-budget limit under concurrent work, not a Dovecot login
+  delay or missing R-progress oracle. No SQL microprofile separates all server
+  execution and lock costs inside that remainder. Max data allocations were three,
+  SQL sockets two, C overlap false. All accounts eventually had two historical
+  pages at failure capture, but no third-page/restart/failure-isolation W4 PASS is
+  claimed. The operation error is retained even though a subsequent normal
+  scheduler recovery turn completed. No rerun campaign followed this failure.
+
+R15 live observations legitimately add R/revision publications and SQL competition;
+the existing exact R oracle remains in force. The preserved trace identifies the
+limiting W4 queue interval, but does not establish that new production scheduling
+logic is defective or justify changing admission/deadline policy. **Gate 2: PARTIAL.**
+
+### 3. R15 timing-sensitive tests
+
+The bounded comparison ran the entire unchanged R15 file once on current R16:
+**37/37**, and once on the exact accepted R15 archive with the same installed
+dependencies and serial Vitest settings: **37/37**. The archive's pnpm launcher
+initially rejected its node_modules junction; invoking the existing Vitest entrypoint
+directly resolved that launcher issue without a dependency/source change.
+
+Inspection found a concrete fixture synchronization error: `seedMany` could already
+satisfy the quiet deletion/MOVE test's `revision >= 2` barrier before the newly
+elected coordinator had completed any observation. Also, independent ready/flag
+visibility proves server COMMIT, but does not prove that its acknowledgement and
+local resource retirement finished before the test calls stop. Quiet controls now
+observe the actual scheduler `onTurn` revision before changing the peer and after
+the independently visible changed publication, then stop. They retain the original
+five-second barriers, real SQL/IMAP checks, no wake/API/new UID, and unchanged
+count/UIDNEXT requirements. No arbitrary delay, timeout increase or production
+lifecycle change was introduced. Final focused/full results are recorded below.
+
+The paired passing runs alone cannot prove the earlier failures were harmless;
+the correction removes the demonstrated invalid barrier. No real production
+receiving regression was reproduced in this bounded comparison.
+
+### 4. Actual Compose COMMIT acknowledgement loss
+
+**Gate 4: PASS**, through the built production app and compiled ordinary worker,
+not an isolated executor substituted for the worker. The disposable fixture's
+existing container hosted a test-only PostgreSQL frame relay; normal production
+Compose and application database configuration are unchanged. Test credentials,
+volumes and the TLS IMAP peer were isolated. No real mailbox was used.
+
+The elected owner/generation was independently live. UID 2's ordinary content
+request created durable demand. A disposable deferred trigger held its ready
+publication at a real COMMIT using an advisory barrier. `pg_stat_activity` identified
+backend **2273**, query `commit`. Only that backend's COMMIT CommandComplete and
+associated ReadyForQuery frames were dropped; other responses were forwarded.
+Independent readers then observed the committed ready result at revision **50**,
+F=1024/E=1, original attempt `6193b7ef-3bd5-45d7-a451-d42ecb9fef2b`.
+
+While an independent transaction held the mailbox row, backend **2274** was observed
+executing `maildock_receiving_attempt_recover`, with `pg_blocking_pids` explicitly
+identifying blocker **2233**. Literal counters remained **4,181,972** during that
+wait. Releasing the lock allowed normal worker recovery. The audit held exactly
+one ready publication and the original succeeded attempt with `reads=1`.
+STORE/MOVE/APPEND/SMTP counters stayed zero. No producer manually invoked recovery.
+
+After restarting only the app, the final restart control required a different live
+owner and greater generation, the same ready result/attempt, exactly one audit row,
+and unchanged literal/mutation counters. It passed. Temporary triggers were removed
+in finally cleanup. The relay/inspector exist only in the explicit disposable
+override; no permanent proxy or production service was added.
+
+Initial deployment setup failures are retained separately: Docker rejected app
+extra_hosts with shared network mode, restarting the fixture required recreating
+the app's shared namespace, and the relay initially omitted TCP_NODELAY. Accepted
+performance/fault results use the corrected fixture. No failed setup was counted
+as successful COMMIT-loss evidence.
+
+### 5. Historical regression classifications
+
+- **Internal BigInt row:** stale serialization fixture. Public account DTOs still
+  must serialize directly; only the raw internal-row credential-leak check uses
+  an explicit bigint-to-string JSON replacer.
+- **Legacy reset status:** stale expectation. Reset records `not_started` while
+  requesting the rebuild; UID epoch reset, removed placements, cleared delta
+  checkpoints and actual rebuild request assertions remain unchanged.
+- **PgBoss poller:** incomplete/outdated fixture. Merely adding executeSql exposed
+  its stale assumption that INBOX should enqueue a legacy delta job. The corrected
+  fixture executes the real receiving-demand SQL function, checks exactly one
+  increment of the mailbox generation and the receiving account wake, and still
+  proves disabled/uninitialized/nonselectable/missing folders do not enqueue.
+- **Two historical authority expectations:** unsupported populated-receiving
+  schema certification through the old explicit F12.2 transition allowlist.
+  Tests now require conservative refusal, unchanged row hashes/functions/relations
+  and retained auth/MFA/jobs. The ordinary hardened role remains valid in the
+  existing-role case. Positive fresh-install hardening/password/no-op controls,
+  owner DDL, denial controls and actual PgBoss 41→42 migration remain. No test is
+  skipped or deleted and no Stage 1/transition allowlist is expanded.
+- **Diagnostics signal:** stale mock assertion. It now requires the actual request
+  AbortSignal passed with the account/overrides; origin/media-type denials remain.
+
+The first completion-wide attempt exposed the remaining poller expectation after
+its missing method was repaired. It was deliberately interrupted for that specific
+fixture correction; its log remains `.r16-completion-intermediate-regression.log`.
+It is not a completed all-green run or a source of combined passing totals.
+
+### 6. Final regression and quality verification
+
+The complete completion run selected **131 files / 2,027 cases**: **2,025 passed,
+two failed**, in **1,642.01 seconds**, one worker and no file parallelism. It
+included R02–R15, authority/admission/election, MIME/reader, attachments/storage,
+SMTP/Sent/outgoing, drafts/composer, authentication/security, migrations/recovery
+and actual process lifecycle. R15 passed **37/37** in that same run. The original
+R16 2,012/2,020 run remains separate evidence above. The two completion failures
+are retained in `final-regression.json`:
+
+1. The hung-account scheduler case passed its healthy-error, frontier and retry
+   assertions but its first healthy completion was at 82,055.2542 ms versus the
+   bad account's first timeout at 81,903.4174 ms: **151.84 ms later**. The assertion
+   requires completion before the deliberately short 300-ms hung-operation timeout.
+   Scheduler source and this fixture are identical to accepted R15. Exactly one
+   subsequent selected comparison per tree passed: accepted R15 **1/1**, current
+   R16 **1/1**, with the original assertion/deadlines unchanged. This identifies a
+   timing-order expectation, not a reproduced starvation or new scheduler change;
+   the failed broad-run observation remains explicit and is not relabeled PASS.
+2. The existing CID/SVG authorization test demonstrated PostgreSQL **22021**:
+   decoding `cid:%00bad` introduced a real NUL in an in-place DOM attribute, then
+   serialized it into immutable HTML text. This was a genuine defect at the
+   sanitizer/storage boundary. The final narrow correction discards a decoded NUL
+   CID just like an already rejected malformed percent escape, before assigning
+   a resource marker. It preserves valid CID normalization and does not replace
+   Luna's accepted architecture. Three new controls cover NUL at the beginning,
+   middle and end while preserving a valid sibling's case-sensitive identifier.
+   The real PostgreSQL authorization control now asserts exactly the three valid
+   references rejected by duplicate/SVG/spoof resolution; malformed escapes and
+   NUL are rejected earlier. It additionally proves persisted HTML contains no
+   NUL/bad escape and retains the original no-image/no-enqueue safety assertions.
+
+This full run **precedes the final CID correction**. Final source HTML/security
+results are separate focused evidence below; they are not combined with the
+2,025 passes to claim a green full suite. A second complete 27-minute run was not
+performed after this narrowly scoped correction. That remains a release-validation
+limit, alongside the unchanged broad-run scheduler failure and W4 acceptance.
+
+On the final CID-corrected source, the complete affected HTML/security selection
+passed **123/123 across six files** in **133.90 seconds**, including **67/67**
+receiving-content, **21/21** real authorization/database/blob attack controls,
+**21/21** sanitizer, six resource-budget, three search-text and five render-API
+tests. A separate final renderer/attachment-MIME/outgoing-MIME selection passed
+**48/48 across three files**. These are explicitly separate runs.
+
+The corrected three-file selection passed **81/81** in **128.16 seconds**:
+R15 **37/37**, incremental sync **25/25**, database authority **19/19**. These are
+separate focused results, not a replacement full-repository total. Application and
+worker typecheck and repository lint both passed again on the final source.
+Changed/new-file Prettier and working/staged whitespace checks accompany the
+commit; the full-repository formatting failure below remains visible.
+
+Repository-wide `pnpm format:check` completed with **75 style warnings**. Exactly
+73 concern files outside this change (historical experiment outputs, local runtime
+artifacts, the existing capability contract and receiving diagnostic RPC source).
+The other two were this report and the incremental fixture while they were being
+edited; both were formatted afterwards. The final changed-file format check is
+reported separately. Historical evidence and unrelated source were not rewritten
+to manufacture a repository-wide formatting PASS.
+
+No total combines unrelated runs. Evidence directory:
+`C:/Users/mateu/AppData/Local/Temp/maildock-r16-completion`.
+The versioned summary is
+[`r16-completion-evidence.json`](../../../experiments/receiving-production/r16-completion-evidence.json);
+it retains measurements, the failing W4 SQL trace, COMMIT/recovery backend evidence,
+the full-suite failure counts/hash and separate final-source controls, without
+fixture secrets or session cookies.
+
+### 7. Docker status
+
+The production image built successfully, ran ordinary migrations/web/worker and
+passed setup, receive, both accepted HTML boundaries, actual COMMIT loss, restart
+with a new elected owner and verified TLS ingress (live/ready 200, unauthenticated
+accounts 401). The final source correction was included in the measured rebuilt
+image. Default W2/C1/D2 and single elected receiving composition remain. No legacy
+receiving executor was reintroduced. The disposable project was stopped with
+`down --remove-orphans`; its evidence and isolated volumes were preserved.
+After the final CID correction the image was rebuilt again, reached Compose
+health, passed TLS ingress once more and was stopped/removed. Its image ID is
+`sha256:a7d1b6ffe5279f54c579260eb3709332f71e4e795d3f29bfa5520e90fa3431d0`.
+The earlier resource and COMMIT-loss measurements precede that final NUL guard;
+the guard only discards an invalid CID and is covered by the final focused controls.
+
+### 8. Exact remaining risks
+
+W4 has not established third-page, restart and fault-isolation acceptance under
+concurrent SQL admission. The full-suite scheduler timing failure remains despite
+the passing bounded comparison. No green full-repository run after the final CID
+correction is claimed. Repository-wide formatting
+also retains the explicitly reported issues outside this change. The HTML numbers
+are observations for the two specified accepted boundaries, not an arbitrary-mail
+or provider-wide resource guarantee.
+
+### 9. Final acceptance decision
+
+| Completion gate             | Result  | Remaining condition                                                                                   |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| 1: accepted HTML boundaries | PASS    | Two accepted cases measured; targeted CPU correction verified                                         |
+| 2: Stage 3C                 | PARTIAL | W2 PASS, W4 admission/publication deadline failure retained                                           |
+| 3: R15 timing investigation | PASS    | Invalid fixture barriers corrected; full-run R15 37/37; no demonstrated production defect             |
+| 4: Compose COMMIT loss      | PASS    | Actual worker locked recovery and original result across takeover                                     |
+| 5: historical failures      | PASS    | Narrow fixture/contracts corrections; no skips or expanded authority                                  |
+| 6: final release evidence   | PARTIAL | Broad-run timing failure, no green complete rerun after final CID fix, repository-wide style failures |
+
+The release decision remains **PARTIAL** because W4 failed a mandatory throughput/
+zero-operation-error acceptance condition. Its SQL admission latency and remaining
+two-second budget are measured; safe optimal scheduling/performance remediation
+has not been established by this bounded task. No unsafe replay, data loss,
+ownership violation or unresolved HTML resource-exhaustion defect was demonstrated
+after the targeted correction. Passing W2, HTML and actual Compose fault recovery
+do not substitute for W4 acceptance. Any final regression failures below remain
+additional explicit release risks. Stop at R16.

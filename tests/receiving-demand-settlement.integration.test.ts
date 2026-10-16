@@ -29,6 +29,7 @@ import {
 } from "@/shared/infrastructure/database/receiving-authority";
 import { ReceivingPersistence } from "@/modules/mail/application/receiving-persistence";
 import { ElectedReceivingCoordinator } from "@/modules/mail/application/receiving-election";
+import type { ReceivingCoordinatorConfig } from "@/modules/mail/application/receiving-coordinator";
 import { receiveInboxTurn } from "@/modules/mail/application/receiving-inbox-turn";
 import {
   metadataPeer,
@@ -176,7 +177,11 @@ describe("R15 durable settlement and quiet INBOX membership", () => {
       await turn(wire, "history");
     return { options, wire };
   }
-  async function start(wire: Peer, pollMs = 80) {
+  async function start(
+    wire: Peer,
+    pollMs = 80,
+    onTurn?: ReceivingCoordinatorConfig["onTurn"],
+  ) {
     await reader`update receiving_coordinator set expires_at='-infinity'`;
     const coordinator = new ElectedReceivingCoordinator({
       executor: executor(),
@@ -187,6 +192,7 @@ describe("R15 durable settlement and quiet INBOX membership", () => {
         connection: wire.connection,
         createClient: wire.createClient,
         timing: { pollMs, retryMs: 80, maxRetryMs: 160 },
+        onTurn,
       }),
     });
     cleanup.push(() => coordinator.stop());
@@ -197,10 +203,17 @@ describe("R15 durable settlement and quiet INBOX membership", () => {
     "observes %s without a new UID, wake or API call",
     async () => {
       const { options, wire } = await seedMany();
-      const coordinator = await start(wire);
-      await until(async () => BigInt((await snapshot()).revision) >= 2n);
+      let settledRevision = -1n;
+      const coordinator = await start(wire, 80, (_kind, turn) => {
+        settledRevision = turn.state.revision;
+      });
+      // seedMany already advances revision: a fixed revision>=2 is not proof
+      // that this elected lifetime completed its first quiet observation.
+      await until(() => settledRevision >= 0n);
       options.uids!.splice(0, 1);
       await until(async () => (await placements()).length === 1);
+      const visibleRevision = BigInt((await snapshot()).revision);
+      await until(() => settledRevision >= visibleRevision);
       expect((await placements())[0].uid).toBe("2");
       expect(options.uidNext).toBe(3);
       expect(
@@ -211,11 +224,19 @@ describe("R15 durable settlement and quiet INBOX membership", () => {
   );
   it("observes external flags with unchanged count and UIDNEXT while idle", async () => {
     const { options, wire } = await seedMany([1]);
-    const coordinator = await start(wire);
+    let settledRevision = -1n;
+    const coordinator = await start(wire, 80, (_kind, turn) => {
+      settledRevision = turn.state.revision;
+    });
+    await until(() => settledRevision >= 0n);
     options.flags = ["\\Flagged"];
     await until(async () =>
       (await placements())[0]?.flags.includes("\\Flagged"),
     );
+    // Independent visibility establishes COMMIT, callback establishes that its
+    // acknowledgement and local retirement settled before intentional stop.
+    const visibleRevision = BigInt((await snapshot()).revision);
+    await until(() => settledRevision >= visibleRevision);
     expect(options.uidNext).toBe(2);
     expect(await placements()).toHaveLength(1);
     await coordinator.stop();

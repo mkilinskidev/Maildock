@@ -32,6 +32,7 @@ import type {
 import { MailboxService } from "@/modules/mail/application/mailbox-service";
 import { DeltaSyncService } from "@/modules/mail/application/delta-sync-service";
 import { DeltaPoller } from "@/modules/mail/infrastructure/delta-sync-jobs";
+import { RECEIVING_WAKE_QUEUE } from "@/modules/mail/infrastructure/receiving-wake-jobs";
 import { createMailboxLock } from "@/modules/mail/infrastructure/mailbox-lock";
 import { IdleWatcherManager } from "@/modules/mail/infrastructure/idle-watchers";
 import { MessageService } from "@/modules/mail/application/message-service";
@@ -873,7 +874,7 @@ describe("Phase 1E persisted delta state", () => {
       deltaUidValidity: null,
       deltaLastSeenUid: null,
       deltaHighestModseq: null,
-      recentSyncStatus: "pending",
+      recentSyncStatus: "not_started",
     });
     expect(recentRequests).toEqual([(await mailbox()).id]);
     await seed(8, 11n, ["\\Flagged"]);
@@ -1041,9 +1042,14 @@ describe("Phase 1E persisted delta state", () => {
       .update(mailboxes)
       .set({ recentSyncStatus: "success", lifecycleStatus: "missing" })
       .where(eq(mailboxes.id, old.id));
-    const sent: string[] = [];
+    const inbox = rows.find((row) => row.remotePath === "INBOX")!;
+    const sent: { queue: string; data: object }[] = [];
     const boss = {
+      createQueue: async () => {},
       getDb: () => ({
+        executeSql: async (query: string, parameters: string[]) => ({
+          rows: await database.client.unsafe(query, parameters),
+        }),
         beginTransaction: async () => ({
           db: { executeSql: async () => ({ rows: [] }) },
           commit: async () => {},
@@ -1051,15 +1057,26 @@ describe("Phase 1E persisted delta state", () => {
         }),
       }),
       findJobs: async () => [],
-      send: async (_queue: string, data: { mailboxId: string }) => {
-        sent.push(data.mailboxId);
+      send: async (queue: string, data: object) => {
+        sent.push({ queue, data });
         return "job";
       },
     } as unknown as PgBoss;
     const poller = new DeltaPoller(db, boss, 60);
     await poller.start();
     poller.stop();
-    expect(sent).toEqual([rows.find((row) => row.remotePath === "INBOX")!.id]);
+    // INBOX producers now commit durable demand and send an account wake. They
+    // must never manufacture a competing legacy delta executor job.
+    expect(sent).toEqual([
+      { queue: RECEIVING_WAKE_QUEUE, data: { version: 1, accountId } },
+    ]);
+    const [requested] = await db
+      .select()
+      .from(mailboxes)
+      .where(eq(mailboxes.id, inbox.id));
+    expect(requested.receivingRequestGeneration).toBe(
+      inbox.receivingRequestGeneration + 1n,
+    );
     await db
       .update(mailboxes)
       .set({ recentSyncStatus: "success" })

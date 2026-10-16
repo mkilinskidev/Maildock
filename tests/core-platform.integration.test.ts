@@ -319,8 +319,13 @@ describe("Phase 0 PostgreSQL foundations", () => {
     expect(JSON.stringify(created)).not.toContain("plain-smtp-password");
     const [stored] = await db.select().from(mailAccounts);
     expect(stored).toBeDefined();
-    expect(JSON.stringify(stored)).not.toContain("plain-imap-password");
-    expect(JSON.stringify(stored)).not.toContain("plain-smtp-password");
+    // Internal rows contain receiving bigint generations; the public DTO above
+    // must remain directly JSON serializable.
+    const storedJson = JSON.stringify(stored, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value,
+    );
+    expect(storedJson).not.toContain("plain-imap-password");
+    expect(storedJson).not.toContain("plain-smtp-password");
     expect(stored?.imapPassword).toMatchObject({
       version: 1,
       algorithm: "AES-256-GCM",

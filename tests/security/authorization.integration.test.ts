@@ -843,7 +843,17 @@ describe("Phase 2H direct API + real owner session + PostgreSQL/blob attacks", (
     );
     const result = await (await POST(req(), s.context)).json();
     expect(result.document).not.toContain("data:image/");
-    expect(result.inlineFailures).toBeGreaterThanOrEqual(4);
+    // Duplicate, SVG and spoofed raster are the three valid CID references
+    // rejected by resolution. Malformed escapes and decoded NUL are discarded
+    // by sanitization before database publication or attachment lookup.
+    expect(result.inlineFailures).toBe(3);
+    const [stored] = await database.db
+      .select()
+      .from(messageContents)
+      .where(eq(messageContents.messageId, s.messageId));
+    expect(stored.sanitizedHtml).not.toContain("\0");
+    expect(stored.sanitizedHtml).not.toContain("bad");
+    expect(stored.sanitizedHtml).not.toContain("%zz");
     expect(enqueue).not.toHaveBeenCalled();
   });
   it("verified raster CID is embedded without consent; storage failure closes safely", async () => {

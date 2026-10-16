@@ -184,7 +184,7 @@ describe("F12.2 authority on real disposable PostgreSQL 18.6", () => {
     }
   });
 
-  it("transfers populated application/auth/MFA/jobs without changing row bytes or definitions", async () => {
+  it("refuses populated receiving-schema authority transfer without changing application/auth/MFA/jobs", async () => {
     await start();
     await expect(
       validateDatabaseAuthority(database!.client),
@@ -280,8 +280,13 @@ describe("F12.2 authority on real disposable PostgreSQL 18.6", () => {
     const relationsBefore = await database!
       .client`SELECT c.oid,c.relname,c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('public','drizzle','pgboss') ORDER BY c.oid`;
     const result = await transition();
-    expect(result.exitCode, result.output).toBe(0);
-    await validateDatabaseAuthority(database!.client);
+    // Receiving adds guarded objects outside the historical F12.2 allowlist.
+    // R16 supports fresh installs; refusing this upgrade must be atomic.
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output).toContain(refused);
+    await expect(
+      validateDatabaseAuthority(database!.client),
+    ).rejects.toMatchObject({ category: "database_authority" });
     expect(await snapshot()).toEqual(before);
     expect(
       await database!
@@ -308,7 +313,7 @@ describe("F12.2 authority on real disposable PostgreSQL 18.6", () => {
     await boss.start();
     expect((await boss.fetch("f122-preserved"))[0].id).toBe(jobId);
     await boss.complete("f122-preserved", jobId!);
-    expect((await transition()).exitCode).toBe(0);
+    expect((await transition()).exitCode).not.toBe(0);
   });
 
   it("rolls back a fault while the bridge exists, and a fault immediately before commit", async () => {
@@ -467,9 +472,12 @@ describe("F12.2 authority on real disposable PostgreSQL 18.6", () => {
     ).toBe(42);
     await boss.stop();
     boss = undefined;
-    expect((await transition(await readFile(sqlPath, "utf8"))).exitCode).toBe(
-      0,
-    );
+    // Even an already hardened installation cannot use the historical
+    // transition script to certify a schema beyond its explicit allowlist.
+    const refusedUpgrade = await transition(await readFile(sqlPath, "utf8"));
+    expect(refusedUpgrade.exitCode).not.toBe(0);
+    expect(refusedUpgrade.output).toContain(refused);
+    await validateDatabaseAuthority(database!.client);
   });
 
   it("rejects every forbidden role flag, transitive SET membership, server roles and inadequate scoped authority", async () => {

@@ -298,6 +298,7 @@ async function smoke() {
       injections: [],
       boundaries: [],
       retirements: [],
+      control: [],
     };
     (evidence.runs as unknown[]).push(run);
     outcomes[`W${workers}`] = "PARTIAL: started";
@@ -612,20 +613,52 @@ async function smoke() {
         accounts: selected,
         executor: executor!,
         tuning: { workers },
+        controlHeadroom: true,
         // Match the elected composition: renewal is control work before
         // admission; per-turn owner validation takes a compatible share lock.
         // A prototype FOR UPDATE renewal inside the two-second history turn
         // serialized unrelated accounts behind another result's owner lock.
-        beforeAdmission: () =>
-          executor!.transaction(
-            async (tx) => {
-              const [row] = await tx.execute(
-                sql`select maildock_receiving_renew(${actor}::uuid,${owner.generation}::bigint,60000) as live`,
-              );
-              return row.live === true;
-            },
-            { deadline: Math.min(deadline, performance.now() + 2000) },
-          ),
+        beforeAdmission: async () => {
+          const at = performance.now();
+          try {
+            const live = await executor!.transaction(
+              async (tx) => {
+                const [row] = await tx.execute(
+                  sql`select maildock_receiving_renew(${actor}::uuid,${owner.generation}::bigint,60000) as live`,
+                );
+                return row.live === true;
+              },
+              { deadline: Math.min(deadline, performance.now() + 2000) },
+            );
+            (run.control as unknown[]).push({
+              at,
+              durationMs: performance.now() - at,
+              live,
+            });
+            if (!live)
+              errors.push({
+                user: "coordinator",
+                retry: 0,
+                at,
+                error: "Admission renewal fenced",
+              });
+            return live;
+          } catch (error) {
+            errors.push({
+              user: "coordinator",
+              retry: 0,
+              at,
+              error: String(error),
+            });
+            (run.control as unknown[]).push({
+              at,
+              durationMs: performance.now() - at,
+              error: String(error),
+            });
+            save();
+            throw error;
+          }
+        },
         historyAllowed: () => history,
         onAdmission: (a) => {
           admissions.push(a);

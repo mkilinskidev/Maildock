@@ -5,6 +5,7 @@ import { createServer as httpServer, request as proxyRequest } from "node:http";
 import { createServer as httpsServer } from "node:https";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { htmlBoundary } from "./html-boundaries.mjs";
 
 const tls = {
   key: readFileSync(
@@ -435,6 +436,8 @@ const http = httpServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
     const update = JSON.parse(body);
+    if (update.htmlBoundary)
+      html = Buffer.from(htmlBoundary(update.htmlBoundary).html);
     if (update.largeHtml)
       html = Buffer.from(
         "<div>" +

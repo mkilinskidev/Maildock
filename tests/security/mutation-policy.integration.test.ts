@@ -329,7 +329,11 @@ describe("F4 real HTTP handlers and authenticated session boundary", () => {
     const empty = request("POST");
     empty.headers.delete("content-type");
     expect((await testAccount(empty, context)).status).toBe(200);
-    expect(runtime.testExisting).toHaveBeenCalledExactlyOnceWith(id, undefined);
+    expect(runtime.testExisting).toHaveBeenCalledExactlyOnceWith(
+      id,
+      undefined,
+      empty.signal,
+    );
     runtime.testExisting.mockClear();
     expect(
       (await testAccount(request("POST", "{}", origin, "text/plain"), context))

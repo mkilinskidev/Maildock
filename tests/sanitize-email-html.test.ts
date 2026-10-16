@@ -23,6 +23,27 @@ const payloads = [
 ];
 
 describe("email HTML security policy", () => {
+  it.each(["%00bad", "bad%00id", "bad%00"])(
+    "discards a decoded NUL CID (%s) while retaining a valid sibling",
+    (invalid) => {
+      const result = sanitizeEmailHtml(
+        `<p>Visible</p><img src="cid:${invalid}"><img src="cid:Valid%40EXAMPLE.TEST">`,
+      );
+      expect(result.html).not.toContain("\0");
+      const dom = new JSDOM(result.html);
+      try {
+        expect(
+          [
+            ...dom.window.document.querySelectorAll("img[data-maildock-cid]"),
+          ].map((image) => image.getAttribute("data-maildock-cid")),
+        ).toEqual(["Valid@example.test"]);
+        expect(dom.window.document.querySelector("img[src]")).toBeNull();
+        expect(result.searchText).toBe("Visible");
+      } finally {
+        dom.window.close();
+      }
+    },
+  );
   it.each(payloads)(
     "removes active and network-bearing markup: %s",
     (payload) => {

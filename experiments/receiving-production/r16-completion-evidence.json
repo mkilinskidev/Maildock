@@ -1,0 +1,649 @@
+{
+  "base": "6676ce5",
+  "decision": "PARTIAL",
+  "html": {
+    "originalDiagnostic": {
+      "durationMs": 14467.062218,
+      "cpu": {
+        "user": 16247723,
+        "system": 222151
+      },
+      "memory": {
+        "rss": 400633856,
+        "heapTotal": 301531136,
+        "heapUsed": 191805160,
+        "external": 4275822,
+        "arrayBuffers": 1193646
+      },
+      "correct": false
+    },
+    "correctedDiagnostic": {
+      "durationMs": 1263.800448,
+      "cpu": {
+        "user": 1977038,
+        "system": 202278
+      },
+      "memory": {
+        "rss": 393781248,
+        "heapTotal": 302444544,
+        "heapUsed": 205095736,
+        "external": 4275822,
+        "arrayBuffers": 1193646
+      },
+      "correct": true
+    },
+    "cases": [
+      {
+        "case": "final-newsletter",
+        "measurement": {
+          "kind": "newsletter",
+          "inputBytes": 791164,
+          "sections": 3980,
+          "durationMs": 8111.854361,
+          "literalBytes": 787345,
+          "sanitizedCorrect": true,
+          "searchCorrect": true,
+          "authenticatedRender": true
+        },
+        "peakRssKiB": 411536,
+        "peakHeapBytes": 236635768,
+        "peakReservedHeapBytes": 320032768,
+        "peakContainerBytes": 817012736,
+        "cgroupPeakBytes": 818081792,
+        "cpuMs": 3256.452,
+        "samples": 316
+      },
+      {
+        "case": "final-css",
+        "measurement": {
+          "kind": "css",
+          "inputBytes": 1032026,
+          "sections": 3900,
+          "durationMs": 6207.989436,
+          "literalBytes": 1032187,
+          "sanitizedCorrect": true,
+          "searchCorrect": true,
+          "authenticatedRender": true
+        },
+        "peakRssKiB": 552120,
+        "peakHeapBytes": 359277088,
+        "peakReservedHeapBytes": 455593984,
+        "peakContainerBytes": 962236416,
+        "cgroupPeakBytes": 963022848,
+        "cpuMs": 3915.197,
+        "samples": 230
+      }
+    ]
+  },
+  "stage3c": {
+    "outcomes": {
+      "fixture": "PASS",
+      "W2": "PASS",
+      "W4": "FAIL: mandatory acceptance condition"
+    },
+    "elapsedMs": 86802.0388,
+    "runs": [
+      {
+        "workers": 2,
+        "errors": [
+          {
+            "user": "stage3c-1",
+            "retry": 200,
+            "at": 61489.5855,
+            "error": "Error: IMAP AUTHENTICATE failed"
+          },
+          {
+            "user": "stage3c-1",
+            "retry": 400,
+            "at": 63600.2098,
+            "error": "Error: IMAP AUTHENTICATE failed"
+          },
+          {
+            "user": "stage3c-1",
+            "retry": 800,
+            "at": 65713.5611,
+            "error": "Error: IMAP AUTHENTICATE failed"
+          },
+          {
+            "user": "stage3c-1",
+            "retry": 800,
+            "at": 68746.1035,
+            "error": "Error: IMAP AUTHENTICATE failed"
+          },
+          {
+            "user": "stage3c-1",
+            "retry": 800,
+            "at": 71903.1977,
+            "error": "Error: IMAP AUTHENTICATE failed"
+          }
+        ],
+        "controlErrors": [],
+        "maxAllocations": 2,
+        "resources": {
+          "maxSockets": 2,
+          "overlap": false,
+          "liveOwned": 0,
+          "activeSlots": 0,
+          "rssBytes": 327667712,
+          "maxPgSockets": 2,
+          "livePgSockets": 0
+        },
+        "boundaries": [
+          {
+            "name": "initial-fresh",
+            "oracle": "PASS",
+            "history": [0, 0, 0, 0, 0]
+          },
+          {
+            "name": "history-1-wave",
+            "oracle": "PASS",
+            "history": [0, 0, 1, 1, 0]
+          },
+          {
+            "name": "history-1-wave",
+            "oracle": "PASS",
+            "history": [0, 1, 1, 1, 1]
+          },
+          {
+            "name": "history-1-wave",
+            "oracle": "PASS",
+            "history": [1, 1, 1, 1, 1]
+          },
+          {
+            "name": "recent-metadata",
+            "oracle": "PASS",
+            "history": [1, 1, 1, 1, 1]
+          },
+          {
+            "name": "history-2-wave",
+            "oracle": "PASS",
+            "history": [1, 1, 2, 2, 1]
+          },
+          {
+            "name": "history-2-wave",
+            "oracle": "PASS",
+            "history": [1, 2, 2, 2, 1]
+          },
+          {
+            "name": "history-2-wave",
+            "oracle": "PASS",
+            "history": [2, 2, 2, 2, 2]
+          },
+          {
+            "name": "initial-history-two",
+            "oracle": "PASS",
+            "history": [2, 2, 2, 2, 2]
+          },
+          {
+            "name": "fresh-injections-visible",
+            "oracle": "PASS",
+            "history": [2, 2, 2, 2, 2]
+          },
+          {
+            "name": "history-3-wave",
+            "oracle": "PASS",
+            "history": [2, 2, 3, 2, 2]
+          },
+          {
+            "name": "history-3-wave",
+            "oracle": "PASS",
+            "history": [2, 3, 3, 3, 2]
+          },
+          {
+            "name": "history-3-wave",
+            "oracle": "PASS",
+            "history": [3, 3, 3, 3, 3]
+          },
+          {
+            "name": "history-after-fresh-three",
+            "oracle": "PASS",
+            "history": [3, 3, 3, 3, 3]
+          },
+          {
+            "name": "restart",
+            "oracle": "PASS",
+            "history": [3, 3, 3, 3, 3]
+          },
+          {
+            "name": "account-unavailable",
+            "oracle": "PASS",
+            "history": [3, 3, 3, 3, 3]
+          },
+          {
+            "name": "healthy-progress",
+            "oracle": "PASS",
+            "history": [3, 3, 3, 3, 3]
+          },
+          {
+            "name": "recovery-final",
+            "oracle": "PASS",
+            "history": [3, 3, 3, 3, 3]
+          }
+        ],
+        "failedSqlTrace": []
+      },
+      {
+        "workers": 4,
+        "errors": [
+          {
+            "user": "stage3c-5",
+            "retry": 200,
+            "at": 84390.9966,
+            "error": "Error: Receiving transaction did not settle; reload under conflicting locks before retry"
+          }
+        ],
+        "controlErrors": [],
+        "maxAllocations": 3,
+        "resources": {
+          "maxSockets": 2,
+          "overlap": false,
+          "liveOwned": 0,
+          "activeSlots": 0,
+          "rssBytes": 303357952,
+          "maxPgSockets": 2,
+          "livePgSockets": 0
+        },
+        "boundaries": [
+          {
+            "name": "initial-fresh",
+            "oracle": "PASS",
+            "history": [0, 0, 0, 0, 0]
+          },
+          {
+            "name": "history-1-wave",
+            "oracle": "PASS",
+            "history": [1, 1, 0, 1, 0]
+          },
+          {
+            "name": "history-1-wave",
+            "oracle": "PASS",
+            "history": [1, 1, 1, 1, 1]
+          },
+          {
+            "name": "recent-metadata",
+            "oracle": "PASS",
+            "history": [1, 1, 1, 1, 1]
+          },
+          {
+            "name": "history-2-wave",
+            "oracle": "PASS",
+            "history": [1, 2, 1, 2, 1]
+          },
+          {
+            "name": "history-2-wave",
+            "oracle": "PASS",
+            "history": [2, 2, 1, 2, 2]
+          },
+          {
+            "name": "history-2-wave",
+            "oracle": "PASS",
+            "history": [2, 2, 2, 2, 2]
+          },
+          {
+            "name": "initial-history-two",
+            "oracle": "PASS",
+            "history": [2, 2, 2, 2, 2]
+          },
+          {
+            "name": "failure-finally",
+            "oracle": "PASS",
+            "history": [2, 2, 2, 2, 2]
+          }
+        ],
+        "failedSqlTrace": [
+          {
+            "id": 30,
+            "user": "stage3c-5",
+            "kind": "history",
+            "admission": 82377.9839,
+            "schedulerWaitMs": 109.26170000000275,
+            "eligibleWaitMs": 0,
+            "deadline": 86377.9839,
+            "events": [
+              {
+                "phase": "postgres.lease.request",
+                "at": 82378.0405,
+                "detail": {
+                  "ordinal": 1,
+                  "deadline": 84377.9839
+                }
+              },
+              {
+                "phase": "postgres.socket-created",
+                "at": 82379.4859,
+                "detail": {
+                  "id": 118
+                }
+              },
+              {
+                "phase": "postgres.tcp-connected",
+                "at": 82380.8214,
+                "detail": {
+                  "id": 118
+                }
+              },
+              {
+                "phase": "postgres.lease.admitted-work-start",
+                "at": 82401.2152,
+                "detail": {
+                  "ordinal": 1
+                }
+              },
+              {
+                "phase": "postgres.lease.lock-request",
+                "at": 82401.2302
+              },
+              {
+                "phase": "postgres.lease.lock-acquired",
+                "at": 82402.8658
+              },
+              {
+                "phase": "postgres.lease.validated",
+                "at": 82402.8739
+              },
+              {
+                "phase": "postgres.lease.work-end",
+                "at": 82402.8837,
+                "detail": {
+                  "ordinal": 1
+                }
+              },
+              {
+                "phase": "postgres.native-close",
+                "at": 82405.9017,
+                "detail": {
+                  "id": 118
+                }
+              },
+              {
+                "phase": "postgres.lease.settled-slot-released",
+                "at": 82406.0398,
+                "detail": {
+                  "ordinal": 1
+                }
+              },
+              {
+                "phase": "postgres.recovery.request",
+                "at": 82406.1023,
+                "detail": {
+                  "ordinal": 2,
+                  "deadline": 84377.9839
+                }
+              },
+              {
+                "phase": "postgres.socket-created",
+                "at": 82406.8789,
+                "detail": {
+                  "id": 120
+                }
+              },
+              {
+                "phase": "postgres.tcp-connected",
+                "at": 82409.029,
+                "detail": {
+                  "id": 120
+                }
+              },
+              {
+                "phase": "postgres.recovery.admitted-work-start",
+                "at": 82469.5908,
+                "detail": {
+                  "ordinal": 2
+                }
+              },
+              {
+                "phase": "postgres.recovery.work-end",
+                "at": 82515.3335,
+                "detail": {
+                  "ordinal": 2
+                }
+              },
+              {
+                "phase": "postgres.native-close",
+                "at": 82518.7364,
+                "detail": {
+                  "id": 120
+                }
+              },
+              {
+                "phase": "postgres.recovery.settled-slot-released",
+                "at": 82518.9714,
+                "detail": {
+                  "ordinal": 2
+                }
+              },
+              {
+                "phase": "postgres.persistence.request",
+                "at": 82684.6481,
+                "detail": {
+                  "ordinal": 3,
+                  "deadline": 84377.9839
+                }
+              },
+              {
+                "phase": "postgres.socket-created",
+                "at": 83723.0025,
+                "detail": {
+                  "id": 125
+                }
+              },
+              {
+                "phase": "postgres.tcp-connected",
+                "at": 83724.6502,
+                "detail": {
+                  "id": 125
+                }
+              },
+              {
+                "phase": "postgres.persistence.admitted-work-start",
+                "at": 83746.3326,
+                "detail": {
+                  "ordinal": 3
+                }
+              },
+              {
+                "phase": "postgres.persistence.work-end",
+                "at": 84378.3816,
+                "detail": {
+                  "ordinal": 3
+                }
+              },
+              {
+                "phase": "postgres.native-close",
+                "at": 84379.4974,
+                "detail": {
+                  "id": 125
+                }
+              },
+              {
+                "phase": "postgres.persistence.error",
+                "at": 84390.9401,
+                "detail": {
+                  "ordinal": 3,
+                  "error": "Error: Receiving transaction did not settle; reload under conflicting locks before retry"
+                }
+              },
+              {
+                "phase": "postgres.persistence.settled-slot-released",
+                "at": 84390.9489,
+                "detail": {
+                  "ordinal": 3
+                }
+              }
+            ],
+            "transactions": 3,
+            "finished": true
+          }
+        ]
+      }
+    ]
+  },
+  "r15": {
+    "originalCurrent": 37,
+    "acceptedBaseline": 37,
+    "correctedThreeFileSelection": 81,
+    "finalFullRun": {
+      "passed": 37
+    }
+  },
+  "composeCommitLoss": {
+    "result": "PASS",
+    "owner": {
+      "owner": "aa0f9a4b-0795-47dd-9dd1-716b4b8430de",
+      "generation": "4",
+      "live": true
+    },
+    "source": {
+      "message_id": "abdecf41-5847-4418-88dc-91ca4af4d45a",
+      "mailbox_id": "ff97dc88-fab9-4aec-a278-97c120ba79f6"
+    },
+    "durableDemand": {
+      "status": "pending",
+      "updated_at": "2026-10-16 13:19:19.081836+00"
+    },
+    "committingBackend": {
+      "pid": 2273,
+      "query": "commit"
+    },
+    "lockedRecovery": {
+      "pid": 2274,
+      "query": "select maildock_receiving_attempt_recover($1::uuid,$2::bigint,$3::uuid,$4,$5::uuid) as recovery",
+      "blockers": [2233]
+    },
+    "dropped": [
+      {
+        "pid": 2273,
+        "tag": "COMMIT",
+        "at": 1792156759802
+      },
+      {
+        "pid": 2273,
+        "tag": "ReadyForQuery",
+        "at": 1792156759802
+      }
+    ],
+    "committedState": {
+      "revision": "50",
+      "fresh_through": "1024",
+      "history_before": "1"
+    },
+    "audit": [
+      {
+        "revision": "50",
+        "attempt": {
+          "id": "6193b7ef-3bd5-45d7-a451-d42ecb9fef2b",
+          "uid": "2",
+          "kind": "content",
+          "path": "INBOX",
+          "actor": "aa0f9a4b-0795-47dd-9dd1-716b4b8430de",
+          "epoch": "7",
+          "phase": "succeeded",
+          "reads": "1",
+          "account": "e10d0af7-e20b-4320-9c02-53a071316bde",
+          "mailbox": "ff97dc88-fab9-4aec-a278-97c120ba79f6",
+          "lifecycle": "1",
+          "generation": "4",
+          "claimRevision": "49",
+          "configuration": "1",
+          "previousAttempt": null
+        }
+      }
+    ],
+    "after": {
+      "status": "ready",
+      "receiving_attempt": {
+        "id": "6193b7ef-3bd5-45d7-a451-d42ecb9fef2b",
+        "uid": "2",
+        "kind": "content",
+        "path": "INBOX",
+        "actor": "aa0f9a4b-0795-47dd-9dd1-716b4b8430de",
+        "epoch": "7",
+        "phase": "succeeded",
+        "reads": "1",
+        "account": "e10d0af7-e20b-4320-9c02-53a071316bde",
+        "mailbox": "ff97dc88-fab9-4aec-a278-97c120ba79f6",
+        "lifecycle": "1",
+        "generation": "4",
+        "claimRevision": "49",
+        "configuration": "1",
+        "previousAttempt": null
+      }
+    },
+    "literalBytesAfterCommit": 4181972,
+    "literalBytesDuringRecovery": 4181972,
+    "restart": "PASS",
+    "ingress": "PASS"
+  },
+  "rawEvidenceDirectory": "C:\\Users\\mateu\\AppData\\Local\\Temp/maildock-r16-completion/",
+  "fullRepositoryBeforeFinalCidCorrection": {
+    "files": 131,
+    "total": 2027,
+    "passed": 2025,
+    "failed": 2,
+    "unselectedOrPending": 0,
+    "sha256": "672a8b5f56bf677907f007435e7f0854039a966c1a5882224cf0960d9ee21497",
+    "failures": [
+      {
+        "file": "D:/Projects/JS/Maildock/tests/receiving-scheduler.integration.test.ts",
+        "name": "isolated shared receiving scheduler backs off one hung account independently while healthy accounts commit",
+        "messages": [
+          "AssertionError: expected 82055.2542 to be less than 81903.4174\n    at D:/Projects/JS/Maildock/tests/receiving-scheduler.integration.test.ts:1175:33\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at file:///D:/Projects/JS/Maildock/node_modules/.pnpm/vitest@5.0.1_@types+node@24_39934ec575a5f0b60ee37536bdb266e1/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+        ]
+      },
+      {
+        "file": "D:/Projects/JS/Maildock/tests/security/authorization.integration.test.ts",
+        "name": "Phase 2H direct API + real owner session + PostgreSQL/blob attacks duplicate normalized CID, SVG and spoofed PNG fail without accidentally preparing unrelated parts",
+        "messages": [
+          "Error: Failed query: insert into \"message_contents\" (\"message_id\", \"status\", \"plain_text\", \"search_text\", \"sanitized_html\", \"remote_content_blocked\", \"policy_version\", \"error\", \"fetched_at\", \"created_at\", \"updated_at\", \"source_mailbox_id\", \"source_uid_validity\", \"source_uid\", \"receiving_attempt\", \"source_configuration_binding\") values ($1, $2, $3, default, $4, $5, $6, default, default, default, default, default, default, default, default, default)\nparams: 65c70af6-66d2-4a1b-b30c-a452edd60c6c,ready,Fallback,<img data-maildock-cid=\"dup@example.test\"><img data-maildock-cid=\"svg\"><img data-maildock-cid=\"spoof\"><img><img data-maildock-cid=\"\u0000bad\">,false,email-html-v2\n    at PostgresJsPreparedQuery.queryWithCache (file:///D:/Projects/JS/Maildock/node_modules/.pnpm/drizzle-orm@0.45.3_kysely@0_28a14a45201a2d5864ba0c23f902e5ea/node_modules/drizzle-orm/pg-core/session.js:41:15)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at seed (D:/Projects/JS/Maildock/tests/security/authorization.integration.test.ts:473:5)\n    at D:/Projects/JS/Maildock/tests/security/authorization.integration.test.ts:821:15\n    at file:///D:/Projects/JS/Maildock/node_modules/.pnpm/vitest@5.0.1_@types+node@24_39934ec575a5f0b60ee37536bdb266e1/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+        ]
+      }
+    ],
+    "elapsedSeconds": 1642.01
+  },
+  "finalSourceHtmlSecurity": {
+    "files": 6,
+    "total": 123,
+    "passed": 123,
+    "failed": 0,
+    "unselectedOrPending": 0
+  },
+  "finalSourceRenderMime": {
+    "files": 3,
+    "total": 48,
+    "passed": 48,
+    "failed": 0,
+    "unselectedOrPending": 0
+  },
+  "schedulerBoundedComparison": {
+    "acceptedR15": {
+      "files": 1,
+      "total": 31,
+      "passed": 1,
+      "failed": 0,
+      "unselectedOrPending": 30
+    },
+    "currentR16": {
+      "files": 1,
+      "total": 31,
+      "passed": 1,
+      "failed": 0,
+      "unselectedOrPending": 30
+    },
+    "assertionsAndDeadlinesUnchanged": true
+  },
+  "finalQuality": {
+    "applicationAndWorkerTypecheck": "PASS",
+    "lint": "PASS",
+    "repositoryPrettier": {
+      "result": "FAIL",
+      "warnings": 75,
+      "outsideChangedFiles": 73
+    },
+    "lastDockerImage": "sha256:a7d1b6ffe5279f54c579260eb3709332f71e4e795d3f29bfa5520e90fa3431d0",
+    "dockerBuildStartupIngress": "PASS"
+  },
+  "finalSourceChangesAfterCompleteSuite": [
+    "Reject decoded NUL in CID resource identifiers",
+    "Strengthen persisted CID safety controls and add three invalid-NUL/valid-sibling cases"
+  ]
+}
