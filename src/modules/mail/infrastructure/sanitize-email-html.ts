@@ -1,6 +1,8 @@
 import DOMPurify from "dompurify";
 import { JSDOM } from "jsdom";
 import postcss from "postcss";
+import { assertEmailHtmlResourceBudget } from "./email-html-resource-budget";
+import { searchBodyTextFromElement } from "./search-body-text";
 
 export const EMAIL_HTML_POLICY = "email-html-v2";
 const forbiddenTags = [
@@ -150,16 +152,19 @@ function safeCss(input: string, inline: boolean): string {
 }
 
 /** Stored HTML is inert. Sanitization and privacy filtering are separate steps.
- * Parse without resource loading -> DOMPurify -> restrictive CSS/attribute
- * rewriting -> DOMPurify again. Only generated resource attributes may be
- * activated by renderEmailDocument; stored HTML is never directly rendered.
+ * Parse without resource loading -> DOMPurify in place -> restrictive
+ * CSS/attribute rewriting. Only generated resource attributes may be activated
+ * by renderEmailDocument; stored HTML is never directly rendered.
  */
 export function sanitizeEmailHtml(input: string): {
   html: string;
   remoteContentBlocked: boolean;
+  searchText: string;
 } {
-  const window = new JSDOM("").window;
+  assertEmailHtmlResourceBudget(input);
+  const dom = new JSDOM(input);
   try {
+    const window = dom.window;
     const purifier = DOMPurify(window);
     const config = {
       USE_PROFILES: { html: true },
@@ -184,9 +189,8 @@ export function sanitizeEmailHtml(input: string): {
       ALLOWED_URI_REGEXP:
         /^(?:(?:https?|mailto|cid):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     };
-    const raw = new JSDOM(input);
     let remoteContentBlocked = false;
-    const rawDocument = raw.window.document;
+    const rawDocument = window.document;
     // Removed markup is still a blocked resource for the privacy notice.
     for (const el of rawDocument.querySelectorAll("*")) {
       for (const attr of [...el.attributes]) {
@@ -230,18 +234,15 @@ export function sanitizeEmailHtml(input: string): {
         "style",
         `${legacyColors};${wrapper.getAttribute("style") ?? ""}`,
       );
-    wrapper.innerHTML = rawDocument.body.innerHTML;
-    const sourceHtml =
-      [...rawDocument.head.querySelectorAll("style")]
-        .map((s) => s.outerHTML)
-        .join("") +
-      (wrapper.attributes.length ? wrapper.outerHTML : wrapper.innerHTML);
-    raw.window.close();
-    const fragment = purifier.sanitize(sourceHtml, {
-      ...config,
-      RETURN_DOM_FRAGMENT: true,
-    });
-    for (const element of fragment.querySelectorAll("*")) {
+    // Move the parsed nodes into one presentation wrapper instead of serializing
+    // and reparsing the full body. DOMPurify mutates this already parsed tree.
+    for (const style of [...rawDocument.head.querySelectorAll("style")])
+      wrapper.append(style);
+    while (rawDocument.body.firstChild)
+      wrapper.append(rawDocument.body.firstChild);
+    rawDocument.body.append(wrapper);
+    purifier.sanitize(wrapper, { ...config, IN_PLACE: true });
+    const transformElement = (element: Element) => {
       const source =
         element.tagName === "IMG" ? element.getAttribute("src") : null;
       for (const attribute of [...element.attributes]) {
@@ -269,27 +270,25 @@ export function sanitizeEmailHtml(input: string): {
           remoteContentBlocked = true;
         } else if (cid) element.setAttribute("data-maildock-cid", cid);
       }
-    }
-    const container = window.document.createElement("div");
-    container.append(fragment);
-    // Only our two generated inert attributes survive the final sanitizer.
-    const html = purifier.sanitize(container.innerHTML, {
-      ...config,
-      ADD_ATTR: ["data-maildock-remote", "data-maildock-cid"],
-      ADD_URI_SAFE_ATTR: ["data-maildock-remote", "data-maildock-cid"],
-    });
-    const usability = new JSDOM(html);
-    usability.window.document
-      .querySelectorAll("style")
-      .forEach((s) => s.remove());
+    };
+    transformElement(wrapper);
+    for (const element of wrapper.querySelectorAll("*"))
+      transformElement(element);
+    const html = wrapper.attributes.length
+      ? wrapper.outerHTML
+      : wrapper.innerHTML;
+    const searchText = searchBodyTextFromElement(null, wrapper);
     const usable =
-      !!usability.window.document.body.textContent?.trim() ||
-      !!usability.window.document.querySelector(
+      searchText !== "" ||
+      wrapper.querySelector(
         "img[data-maildock-cid],img[data-maildock-remote]",
-      );
-    usability.window.close();
-    return { html: usable ? html : "", remoteContentBlocked };
+      ) !== null;
+    return {
+      html: usable ? html : "",
+      remoteContentBlocked,
+      searchText,
+    };
   } finally {
-    window.close();
+    dom.window.close();
   }
 }

@@ -4,13 +4,14 @@ This disposable fixture exercises the built application image with the normal
 `container-entrypoint.mjs`, web server and compiled worker. It never connects to a
 real mail provider. The producer imports the same compiled application services
 used by HTTP handlers; it does not invoke a legacy receiving executor. This is
-service-level functional coverage, not an authenticated browser walkthrough.
+service-level functional coverage plus authenticated HTTPS API render-route coverage;
+it does not automate a browser UI.
 
 Use a new Compose project and new volumes. Generate `POSTGRES_PASSWORD`,
 `AUTH_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` outside the checkout; set
 `APP_ORIGIN=https://localhost:31416`. Do not use an existing installation or its
-environment file. The `setup` phase provisions a synthetic verified MFA fixture;
-it does not claim to test real authenticator enrollment.
+environment file. The `setup` phase creates a TOTP secret through BetterAuth,
+verifies a time-based code, and establishes the authenticated fixture session.
 
 Build the base `docker-compose.yml` app normally. Add a temporary override:
 
@@ -48,7 +49,7 @@ Run each phase as a separate one-shot producer in that project:
 docker compose <env/project/base/override arguments> run --rm --no-deps -e NODE_OPTIONS= --entrypoint node app /r16-experiments/receiving-production/smoke.mjs PHASE
 ```
 
-Sequence: `setup`, `receive`, `reader`, `attachment`, `commands`, `outgoing`,
+Sequence: `setup`, `receive`, `reader`, `html-repeat`, `attachment`, `commands`, `outgoing`,
 `diagnostics`, `dense`, `uncertain`; restart only `app`, then `restart`.
 For shutdown during an active download: `pause-attachment`, restart only `app`,
 then `retry-attachment`. This verifies visible graceful cancellation and an

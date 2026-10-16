@@ -50,10 +50,14 @@ let html = Buffer.from(
     "<p>R16 HTML body text.</p>".repeat(87_380) +
     '</div><img src="https://remote.invalid/image"><img src="cid:r16-inline">',
 );
+const smallHtml = Buffer.from(
+  '<div><p>Ordinary R16 newsletter.</p><img src="https://remote.invalid/image"><img src="cid:r16-inline"></div>',
+);
 const binaryBytes = 100 * 1024 * 1024;
 const hash = (b) => createHash("sha256").update(b).digest("hex");
 const messageSize = (uid, message) =>
-  message.mime?.length ?? (uid === 1 ? binaryBytes + html.length + 2048 : 200);
+  message.mime?.length ??
+  (uid === 1 || uid === 101 ? binaryBytes + html.length + 2048 : 200);
 function account(name) {
   if (!accounts.has(name))
     accounts.set(
@@ -80,7 +84,14 @@ function account(name) {
 const textPart = (type, size) =>
   `("TEXT" "${type}" ("CHARSET" "UTF-8") NIL NIL "8BIT" ${size} 1 NIL NIL NIL NIL)`;
 function structure(uid, message) {
-  if (message.mime || uid !== 1) return textPart("PLAIN", plain.length);
+  if (message.mime) return textPart("PLAIN", plain.length);
+  if (uid === 2)
+    return (
+      `((${textPart("PLAIN", plain.length)}${textPart("HTML", smallHtml.length)} "ALTERNATIVE" ("BOUNDARY" "alt") NIL NIL NIL)` +
+      `("APPLICATION" "OCTET-STREAM" ("NAME" "large.bin") NIL NIL "BINARY" ${binaryBytes} NIL ("ATTACHMENT" ("FILENAME" "large.bin")) NIL NIL)` +
+      `("IMAGE" "PNG" ("NAME" "inline.png") "<r16-inline>" NIL "BINARY" ${png.length} NIL ("INLINE" ("FILENAME" "inline.png")) NIL NIL) "MIXED" ("BOUNDARY" "mixed") NIL NIL NIL)`
+    );
+  if (uid !== 1 && uid !== 101) return textPart("PLAIN", plain.length);
   return (
     `((${textPart("PLAIN", plain.length)}${textPart("HTML", html.length)} "ALTERNATIVE" ("BOUNDARY" "alt") NIL NIL NIL)` +
     `("APPLICATION" "OCTET-STREAM" ("NAME" "large.bin") NIL NIL "BINARY" ${binaryBytes} NIL ("ATTACHMENT" ("FILENAME" "large.bin")) NIL NIL)` +
@@ -92,7 +103,8 @@ function part(uid, name, message) {
     return { type: "text/plain", bytes: message.mime };
   if (["TEXT", "1", "1.1"].includes(name))
     return { type: "text/plain", bytes: plain };
-  if (name === "1.2") return { type: "text/html", bytes: html };
+  if (name === "1.2")
+    return { type: "text/html", bytes: uid === 2 ? smallHtml : html };
   if (name === "2")
     return { type: "application/octet-stream", size: binaryBytes };
   if (name === "3") return { type: "image/png", bytes: png };

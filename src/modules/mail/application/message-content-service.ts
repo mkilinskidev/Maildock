@@ -30,7 +30,6 @@ import {
   sanitizeEmailHtml,
 } from "../infrastructure/sanitize-email-html";
 import type { ContentScheduler } from "./content-scheduler";
-import { searchBodyText } from "../infrastructure/search-body-text";
 
 export class MessagePlacementNotFoundError extends Error {
   constructor() {
@@ -259,20 +258,22 @@ export class MessageContentService {
         maxPartBytes: this.config.maxMessageTextPartBytes,
       });
       let html: string | null = null;
+      let searchText = result.plainText?.trim() ? result.plainText : "";
       let blocked = false;
       if (result.html !== null) {
         try {
           const sanitized = sanitizeEmailHtml(result.html);
           html = sanitized.html || null;
           blocked = sanitized.remoteContentBlocked;
+          if (!result.plainText?.trim()) searchText = sanitized.searchText;
         } catch {
-          if (result.plainText === null)
+          if (!result.plainText?.trim())
             throw new MessageContentUnavailableError(
               "Message HTML could not be sanitized.",
             );
         }
       }
-      if (html === null && result.plainText === null)
+      if (html === null && !result.plainText?.trim())
         throw new MessageContentUnavailableError(
           "No display text part is available.",
         );
@@ -288,7 +289,7 @@ export class MessageContentService {
         .set({
           status: "ready",
           plainText: result.plainText,
-          searchText: searchBodyText(result.plainText, html),
+          searchText,
           sanitizedHtml: html,
           remoteContentBlocked: blocked,
           policyVersion: EMAIL_HTML_POLICY,

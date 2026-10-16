@@ -39,6 +39,27 @@ export function inlineRasterType(bytes: Uint8Array, declaredType: string) {
 export const EMAIL_BASE_CSS =
   "html{color-scheme:light;background:#fff;color:#20242b}body{font:15px/1.55 Arial,sans-serif;margin:16px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%!important}body>table{width:100%!important}td,th{overflow-wrap:anywhere}pre{white-space:pre-wrap}a{overflow-wrap:anywhere}";
 
+export type PreparedEmailDocument = Readonly<{
+  document: Document;
+  cidReferences: ReadonlySet<string>;
+  close: () => void;
+}>;
+
+export function prepareEmailDocument(html: string): PreparedEmailDocument {
+  const dom = new JSDOM(html);
+  const document = dom.window.document;
+  const cidReferences = new Set(
+    [...document.querySelectorAll("img[data-maildock-cid]")].map((img) =>
+      img.getAttribute("data-maildock-cid")!,
+    ),
+  );
+  return Object.freeze({
+    document,
+    cidReferences,
+    close: () => dom.window.close(),
+  });
+}
+
 /** Input must be produced by email-html-v2. Mutations only set validated links
  * and validated raster data URLs on existing IMG nodes. No HTML/CSS is inserted.
  * The CSP precedes all sender markup and remains restrictive under permission.
@@ -48,9 +69,22 @@ export function renderEmailDocument(
   allowRemote: boolean,
   cidImages: ReadonlyMap<string, string> = new Map(),
 ) {
-  const dom = new JSDOM(html);
+  const prepared = prepareEmailDocument(html);
   try {
-    const document = dom.window.document;
+    return renderPreparedEmailDocument(prepared, allowRemote, cidImages);
+  } finally {
+    prepared.close();
+  }
+}
+
+/** Render a previously parsed sanitized body without constructing a second DOM. */
+export function renderPreparedEmailDocument(
+  prepared: PreparedEmailDocument,
+  allowRemote: boolean,
+  cidImages: ReadonlyMap<string, string> = new Map(),
+) {
+  const document = prepared.document;
+  {
     for (const img of document.querySelectorAll("img")) {
       img.removeAttribute("src");
       const remote = remoteImageUrl(
@@ -79,7 +113,5 @@ export function renderEmailDocument(
     }
     const csp = `default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; connect-src 'none'; img-src data:${allowRemote ? " https: http:" : ""}; media-src 'none'; font-src 'none'; form-action 'none'; base-uri 'none'; style-src 'unsafe-inline'`;
     return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style>${EMAIL_BASE_CSS}</style>${[...document.head.querySelectorAll("style")].map((s) => s.outerHTML).join("")}</head><body>${document.body.innerHTML}</body></html>`;
-  } finally {
-    dom.window.close();
   }
 }

@@ -1,6 +1,5 @@
 import { visibleAttachment, visibleContent } from "./active-identity";
 import { and, eq } from "drizzle-orm";
-import { JSDOM } from "jsdom";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   messageAttachments,
@@ -18,7 +17,8 @@ import {
   sanitizeEmailHtml,
 } from "../infrastructure/sanitize-email-html";
 import {
-  renderEmailDocument,
+  prepareEmailDocument,
+  renderPreparedEmailDocument,
   SAFE_INLINE_IMAGE_TYPES,
 } from "../infrastructure/render-email-document";
 
@@ -64,72 +64,71 @@ export class EmailRenderingService {
       stored?.policyVersion === EMAIL_HTML_POLICY
         ? detail.content.sanitizedHtml
         : sanitizeEmailHtml(detail.content.sanitizedHtml).html;
-    const dom = new JSDOM(html);
-    const references = new Set(
-      [...dom.window.document.querySelectorAll("img[data-maildock-cid]")].map(
-        (img) => img.getAttribute("data-maildock-cid")!,
-      ),
-    );
-    dom.window.close();
-    const candidates = references.size
-      ? await this.db
-          .select()
-          .from(messageAttachments)
-          .where(
-            and(
-              eq(messageAttachments.messageId, messageId),
-              visibleAttachment(),
-            ),
-          )
-      : [];
-    const images = new Map<string, string>();
-    let pending = false,
-      inlineFailures = 0;
-    for (const cid of references) {
-      const matches = candidates.filter(
-        (a) => a.contentId && normalizeContentId(a.contentId) === cid,
-      );
-      const part = matches.length === 1 ? matches[0] : null;
-      if (
-        !part ||
-        (!SAFE_INLINE_IMAGE_TYPES.has(part.contentType) &&
-          part.contentType !== "application/octet-stream")
-      ) {
-        inlineFailures++;
-        continue;
-      }
-      if (part.status === "not_fetched") {
-        try {
-          await this.attachments.request(part.id);
+    const prepared = prepareEmailDocument(html);
+    try {
+      const references = prepared.cidReferences;
+      const candidates = references.size
+        ? await this.db
+            .select()
+            .from(messageAttachments)
+            .where(
+              and(
+                eq(messageAttachments.messageId, messageId),
+                visibleAttachment(),
+              ),
+            )
+        : [];
+      const images = new Map<string, string>();
+      let pending = false,
+        inlineFailures = 0;
+      for (const cid of references) {
+        const matches = candidates.filter(
+          (a) => a.contentId && normalizeContentId(a.contentId) === cid,
+        );
+        const part = matches.length === 1 ? matches[0] : null;
+        if (
+          !part ||
+          (!SAFE_INLINE_IMAGE_TYPES.has(part.contentType) &&
+            part.contentType !== "application/octet-stream")
+        ) {
+          inlineFailures++;
+          continue;
+        }
+        if (part.status === "not_fetched") {
+          try {
+            await this.attachments.request(part.id);
+            pending = true;
+          } catch {
+            inlineFailures++;
+          }
+        } else if (part.status === "pending" || part.status === "fetching")
           pending = true;
-        } catch {
-          inlineFailures++;
-        }
-      } else if (part.status === "pending" || part.status === "fetching")
-        pending = true;
-      else if (part.status === "ready") {
-        try {
-          const resource = await this.attachments.inlineResource(
-            messageId,
-            part.id,
-            cid,
-          );
-          images.set(
-            cid,
-            `data:${resource.type};base64,${resource.bytes.toString("base64")}`,
-          );
-        } catch {
-          inlineFailures++;
-        }
-      } else inlineFailures++;
+        else if (part.status === "ready") {
+          try {
+            const resource = await this.attachments.inlineResource(
+              messageId,
+              part.id,
+              cid,
+            );
+            images.set(
+              cid,
+              `data:${resource.type};base64,${resource.bytes.toString("base64")}`,
+            );
+          } catch {
+            inlineFailures++;
+          }
+        } else inlineFailures++;
+      }
+      return {
+        document: renderPreparedEmailDocument(prepared, allow, images),
+        blocked: detail.content.remoteContentBlocked && !allow,
+        trusted,
+        sender,
+        pending,
+        inlineFailures,
+      };
+    } finally {
+      prepared.close();
     }
-    return {
-      document: renderEmailDocument(html, allow, images),
-      blocked: detail.content.remoteContentBlocked && !allow,
-      trusted,
-      sender,
-      pending,
-      inlineFailures,
-    };
   }
 }

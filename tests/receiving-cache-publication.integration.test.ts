@@ -750,6 +750,37 @@ describe("R04-B fenced cache publication", () => {
       )[0],
     ).toEqual(sharedBefore);
   });
+  it("keeps an independently validated plain part when HTML exceeds the structural budget", async () => {
+    const attempt = await publication.claim(
+      owner,
+      source,
+      "content",
+      message,
+      budget(),
+    );
+    source = next();
+    await publication.contentResult(
+      owner,
+      source,
+      message,
+      attempt.id,
+      {
+        ...content(),
+        plainText: "Retained plain part",
+        html: `<div>${"<p>repeated</p>".repeat(24_001)}</div>`,
+      },
+      budget(),
+    );
+    source = next();
+    const [cache] =
+      await reader`select status,plain_text,sanitized_html,search_text from message_contents where message_id=${message}`;
+    expect(cache).toMatchObject({
+      status: "ready",
+      plain_text: "Retained plain part",
+      sanitized_html: null,
+      search_text: "Retained plain part",
+    });
+  });
   for (const invalid of [
     "complete",
     "taggedOk",

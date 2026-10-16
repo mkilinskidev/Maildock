@@ -4,10 +4,14 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { getConfig } from "/app/dist-worker/shared/infrastructure/config/config.js";
 import { createWorkerDatabase } from "/app/dist-worker/shared/infrastructure/database/database-worker.js";
 import { initializeOwner } from "/app/dist-worker/modules/auth/application/instance-auth.js";
+import { startInitialMfa } from "/app/dist-worker/modules/auth/application/initial-mfa.js";
+import { createAuth } from "/app/dist-worker/modules/auth/infrastructure/auth-factory.js";
+import { challengeHeaders } from "/app/dist-worker/modules/auth/infrastructure/mfa-cookies.js";
 import { AesGcmSecretEncryption } from "/app/dist-worker/shared/infrastructure/crypto/aes-gcm-secret-encryption.js";
 import { AccountsService } from "/app/dist-worker/modules/accounts/application/accounts-service.js";
 import { PgBossMailboxDiscoveryScheduler } from "/app/dist-worker/modules/mail/infrastructure/mailbox-discovery-jobs.js";
@@ -25,6 +29,10 @@ import { MailboxService } from "/app/dist-worker/modules/mail/application/mailbo
 import { ReceivingDiagnosticClient } from "/app/dist-worker/modules/mail/infrastructure/receiving-diagnostic-rpc.js";
 import { ImapSmtpMailProvider } from "/app/dist-worker/modules/accounts/infrastructure/imap-smtp-mail-provider.js";
 
+const { symmetricDecrypt } = await import(
+  createRequire("/app/package.json").resolve("better-auth/crypto")
+);
+
 const config = getConfig(),
   database = createWorkerDatabase(config),
   db = database.db,
@@ -34,6 +42,7 @@ const state = await readFile(statePath, "utf8")
   .then(JSON.parse)
   .catch(() => ({}));
 const phase = process.argv[2];
+const measurements = {};
 const watchdog = setTimeout(
   () => {
     console.error(`R16 ${phase} absolute fixture deadline`);
@@ -56,6 +65,36 @@ async function peer(update) {
     update ? { method: "POST", body: JSON.stringify(update) } : {},
   );
   return result.json();
+}
+const responseCookies = (response) =>
+  response.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
+async function ownerLogin(auth) {
+  return auth.api.signInUsername({
+    headers: new Headers({ Origin: config.appOrigin }),
+    body: {
+      username: "r16-owner",
+      password: "R16 isolated fixture password",
+    },
+    asResponse: true,
+  });
+}
+async function renderThroughWeb(accountId, mailboxId, messageId) {
+  return fetch(
+    `https://localhost:3443/api/accounts/${accountId}/mailboxes/${mailboxId}/messages/${messageId}/render`,
+    {
+      method: "POST",
+      headers: {
+        host: new URL(config.appOrigin).host,
+        origin: config.appOrigin,
+        cookie: state.ownerCookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ loadImages: false, trustSender: false }),
+    },
+  );
 }
 const storage = new LocalBlobStorage(config.attachmentsPath);
 const content = new MessageContentService(db);
@@ -102,11 +141,53 @@ try {
       password: "R16 isolated fixture password",
       bootstrapSecret: proof,
     });
-    const owner = (await sql`select owner_user_id from instance_state`)[0]
+    const auth = createAuth(config, db);
+    const initialLogin = await ownerLogin(auth);
+    assert.equal(initialLogin.status, 200);
+    const initialCookie = responseCookies(initialLogin);
+    const initialHeaders = new Headers({
+      cookie: initialCookie,
+      Origin: config.appOrigin,
+    });
+    await startInitialMfa(db, config, initialHeaders, {
+      bootstrapSecret: proof,
+      password: "R16 isolated fixture password",
+    });
+    const factorRow = (await sql`select secret from two_factor`)[0];
+    const factorSecret = await symmetricDecrypt({
+      key: (await auth.$context).secretConfig,
+      data: factorRow.secret,
+    });
+    const ownerId = (await sql`select owner_user_id from instance_state`)[0]
       .owner_user_id;
-    await sql`insert into two_factor(id,user_id,secret,backup_codes,verified) values(${randomUUID()},${owner},'synthetic-fixture','synthetic-fixture',true)`;
-    await sql`update "user" set two_factor_enabled=true where id=${owner}`;
+    await sql`update two_factor set verified=true where user_id=${ownerId}`;
+    await sql`update "user" set two_factor_enabled=true where id=${ownerId}`;
+    await sql`delete from "session" where user_id=${ownerId}`;
     await sql`update instance_state set bootstrap_secret_digest=null,bootstrap_expires_at=null`;
+    const challenge = await ownerLogin(auth);
+    assert.equal(challenge.status, 200);
+    const challengeCookie = responseCookies(challenge);
+    const suppliedChallengeHeaders = new Headers({
+      cookie: challengeCookie,
+      Origin: config.appOrigin,
+    });
+    const loginCode = (
+      await auth.api.generateTOTP({
+        body: { secret: factorSecret },
+      })
+    ).code;
+    const verifiedLogin = await auth.api.verifyTOTP({
+      headers: await challengeHeaders(auth, suppliedChallengeHeaders),
+      body: { code: loginCode },
+      asResponse: true,
+    });
+    if (!verifiedLogin.ok) {
+      const failure = await verifiedLogin.json().catch(() => ({}));
+      throw new Error(
+        `Synthetic MFA verification failed (${verifiedLogin.status}; ${failure.code ?? "unknown"}).`,
+      );
+    }
+    state.ownerCookie = responseCookies(verifiedLogin);
     await peer({ largeHtml: true });
     discovery = new PgBossMailboxDiscoveryScheduler(config);
     const accounts = new AccountsService(
@@ -305,7 +386,10 @@ try {
           (
             await sql`select count(*) from receiving_mailboxes s join mailboxes b on b.id=s.mailbox_id where b.remote_path='INBOX' and s.history_before=1`
           )[0].count,
-        ) === 2,
+        ) === 2 &&
+        (
+          await sql`select count(*) from mail_accounts where mailbox_discovery_status='success'`
+        )[0].count === "2",
       90_000,
     );
     assert.equal(
@@ -339,6 +423,7 @@ try {
     assert.ok(list.items.length > 0);
   } else if (phase === "reader") {
     const s = state.source;
+    const htmlStarted = performance.now();
     await content.request(state.maildock, s.mailbox_id, s.message_id);
     await until(async () => {
       const detail = await content.detail(
@@ -350,17 +435,23 @@ try {
         throw new Error(`R16 content rejected: ${detail.content.error}`);
       return detail.content.status === "ready";
     });
+    measurements.pathologicalHtmlRequestToReadyMs =
+      performance.now() - htmlStarted;
     const detail = await content.detail(
       state.maildock,
       s.mailbox_id,
       s.message_id,
     );
     assert.equal(detail.content.plainText, "Hello R16\n");
-    assert.ok(detail.content.sanitizedHtml.length > 2_000_000);
-    assert.equal(detail.content.remoteContentBlocked, true);
-    assert.ok(
-      !detail.content.sanitizedHtml.includes('src="https://remote.invalid'),
+    assert.equal(detail.content.sanitizedHtml, null);
+    assert.equal(detail.content.remoteContentBlocked, false);
+    const rejectedRoute = await renderThroughWeb(
+      state.maildock,
+      s.mailbox_id,
+      s.message_id,
     );
+    assert.equal(rejectedRoute.status, 200);
+    assert.equal((await rejectedRoute.json()).document, null);
     const parts =
       await sql`select id,filename from message_attachments where message_id=${s.message_id}`;
     state.large = parts.find((p) => p.filename === "large.bin").id;
@@ -372,21 +463,98 @@ try {
           await sql`select status from message_attachments where id=${state.inline}`
         )[0].status === "ready",
     );
+    const normal = await source(2);
+    await content.request(state.maildock, normal.mailbox_id, normal.message_id);
+    await until(
+      async () =>
+        (
+          await content.detail(
+            state.maildock,
+            normal.mailbox_id,
+            normal.message_id,
+          )
+        ).content.status === "ready",
+    );
+    const normalDetail = await content.detail(
+      state.maildock,
+      normal.mailbox_id,
+      normal.message_id,
+    );
+    assert.ok(
+      normalDetail.content.sanitizedHtml?.includes("Ordinary R16 newsletter."),
+    );
+    assert.equal(normalDetail.content.remoteContentBlocked, true);
+    const normalParts =
+      await sql`select id,filename from message_attachments where message_id=${normal.message_id}`;
+    const normalInline = normalParts.find((p) => p.filename === "inline.png");
+    assert.ok(normalInline);
+    await attachments.request(normalInline.id);
+    await until(
+      async () =>
+        (
+          await sql`select status from message_attachments where id=${normalInline.id}`
+        )[0].status === "ready",
+    );
     const rendered = await new EmailRenderingService(
       db,
       content,
       attachments,
-    ).render(state.maildock, s.mailbox_id, s.message_id, {
+    ).render(state.maildock, normal.mailbox_id, normal.message_id, {
       loadImages: false,
       trustSender: false,
     });
     assert.ok(rendered.document);
     assert.equal(rendered.inlineFailures, 0);
     assert.equal(rendered.blocked, true);
+    const actualRoute = await renderThroughWeb(
+      state.maildock,
+      normal.mailbox_id,
+      normal.message_id,
+    );
+    assert.equal(actualRoute.status, 200);
+    const routeResult = await actualRoute.json();
+    assert.ok(routeResult.document?.includes("Ordinary R16 newsletter."));
+    assert.equal(routeResult.blocked, true);
     const count = (await peer()).literalBytes;
-    await content.request(state.maildock, s.mailbox_id, s.message_id);
-    await attachments.request(state.inline);
+    await content.request(state.maildock, normal.mailbox_id, normal.message_id);
+    await attachments.request(normalInline.id);
     assert.equal((await peer()).literalBytes, count);
+  } else if (phase === "html-repeat") {
+    const repeated = await source(101);
+    const before = (await peer()).literalBytes;
+    const started = performance.now();
+    await content.request(
+      state.maildock,
+      repeated.mailbox_id,
+      repeated.message_id,
+    );
+    await until(async () => {
+      const detail = await content.detail(
+        state.maildock,
+        repeated.mailbox_id,
+        repeated.message_id,
+      );
+      if (detail.content.status === "failed")
+        throw new Error(`R16 repeated HTML rejected: ${detail.content.error}`);
+      return detail.content.status === "ready";
+    });
+    const detail = await content.detail(
+      state.maildock,
+      repeated.mailbox_id,
+      repeated.message_id,
+    );
+    assert.equal(detail.content.plainText, "Hello R16\n");
+    assert.equal(detail.content.sanitizedHtml, null);
+    measurements.repeatedPathologicalHtmlRequestToReadyMs =
+      performance.now() - started;
+    const after = (await peer()).literalBytes;
+    assert.ok(after > before);
+    await content.request(
+      state.maildock,
+      repeated.mailbox_id,
+      repeated.message_id,
+    );
+    assert.equal((await peer()).literalBytes, after);
   } else if (phase === "attachment") {
     await attachments.request(state.large);
     await until(
@@ -690,6 +858,7 @@ try {
       phase,
       result: "PASS",
       ms: performance.now() - started,
+      measurements,
       peer: await peer(),
     }),
   );

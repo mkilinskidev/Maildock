@@ -204,13 +204,13 @@ loopback benchmark inspectors. Producer containers are excluded. Sampling is
 bounded and may miss the true peak; CPU percentages can exceed 100% across cores.
 The dedicated exception debugger was detached for accepted performance runs.
 
-| Workload                            | Actual app container                     | Actual worker                                                                                 | PostgreSQL                                         |
-| ----------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Before business readiness           | ~443 MiB; 0.22% CPU sample               | RSS 377.2 MB, heap ~64 MB                                                                     | ~83 MiB; 0.13% sample                              |
-| Dense sampled 1,024-message history | 463.6–477.8 MiB; 0.38–35.21% CPU samples | RSS 416.3–419.7 MB; heap 77.5–146.8 MB; external <=7.57 MB; buffers <=3.46 MB                 | 133.3–161.1 MiB; 0.25–84.34% CPU                   |
-| Large HTML receiving/sanitization   | 474 MiB–1.763 GiB; 6.21–202.61% CPU      | RSS up to 1,786,990,592 bytes; heap 1,517,793,536; external <=17,617,369; buffers <=5,957,944 | 101.7–146.1 MiB; 2.40–15.00% CPU                   |
-| 100 MiB attachment retry/stream     | 436.5–462.4 MiB; 0.58–67.73% CPU         | RSS 393.0–414.4 MB; heap <=85.1 MB; external <=8.50 MB; buffers <=4.38 MB                     | 136.5–139.9 MiB; 1.25–55.39% CPU                   |
-| Final quiet samples, four accounts  | 554.5–555 MiB; 0.09–0.22% CPU            | Recorded per-process snapshots in evidence                                                    | 133.6–137.3 MiB; 0.08–10.86% CPU (periodic sweeps) |
+| Workload                            | Actual app container                                  | Actual worker                                                                       | PostgreSQL                                         |
+| ----------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Before business readiness           | ~443 MiB; 0.22% CPU sample                            | RSS 377.2 MB, heap ~64 MB                                                           | ~83 MiB; 0.13% sample                              |
+| Dense sampled 1,024-message history | 463.6–477.8 MiB; 0.38–35.21% CPU samples              | RSS 416.3–419.7 MB; heap 77.5–146.8 MB; external <=7.57 MB; buffers <=3.46 MB       | 133.3–161.1 MiB; 0.25–84.34% CPU                   |
+| Large HTML receiving/sanitization   | Baseline 1.763 GiB; corrected run cgroup peak 729 MiB | Baseline RSS 1,786,990,592 bytes / heap 1,517,793,536; corrected worker HWM 442 MiB | See corrected run below                            |
+| 100 MiB attachment retry/stream     | 436.5–462.4 MiB; 0.58–67.73% CPU                      | RSS 393.0–414.4 MB; heap <=85.1 MB; external <=8.50 MB; buffers <=4.38 MB           | 136.5–139.9 MiB; 1.25–55.39% CPU                   |
+| Final quiet samples, four accounts  | 554.5–555 MiB; 0.09–0.22% CPU                         | Recorded per-process snapshots in evidence                                          | 133.6–137.3 MiB; 0.08–10.86% CPU (periodic sweeps) |
 
 The HTML fixture has 87,380 repeated paragraph elements. Its DOM/sanitizer heap
 amplification is a material modest-host risk even below the 5 MiB R11 content
@@ -235,6 +235,59 @@ uses small immutable MIME snapshots; existing size/deadline fault regressions
 provide bounded large-MIME coverage, not a successful 25 MiB provider throughput
 guarantee. R15's 15-second finite page cadence implies multi-page quiet-change
 latency; the observed 100.54 s sweep is recorded rather than described as instant.
+
+## R16 HTML memory/CPU remediation completion (2026-10-16)
+
+The actual production worker was sampled against the original fixture before
+changing the sanitizer. The HTML is a shallow `<div>` containing 87,380 repeated
+`<p>R16 HTML body text.</p>` nodes plus two image references (2,271,961 UTF-8
+bytes). V8's sampling heap profiler attributed about 649.5 MiB of allocations to
+the request, about 630.1 MiB beneath `sanitizeEmailHtml`; the sampled CPU profile
+contained 11.5% garbage-collection samples over 33.8 seconds of capture. The
+allocation tree implicated jsdom/parse5/DOMPurify tree construction, CSS wrappers,
+and repeated serialization/reparsing. This is measured evidence for this fixture,
+not an estimate extrapolated from source complexity.
+
+The fix adds a quote-aware structural scanner before DOM construction (input,
+element, attribute, nesting, CSS, and style-block budgets), sanitizes one parsed
+tree in place, and shares that tree for search text and reader CID/render work.
+If the guard rejects HTML but a non-empty plain-text alternative exists, receiving
+publishes the message as ready with `sanitized_html = NULL` and keeps the plain
+text/search text. Without a usable fallback, the structural exception follows the
+existing terminal display-content-limit path instead of being retried as a remote
+read failure. The exact 87,380-node input is under the existing 5 MiB input cap,
+so the element budget safely rejects it before jsdom allocation. Ordinary HTML,
+malformed markup, and a near-5-MiB single text node remain supported.
+
+Verification used the production Docker image and disposable TLS IMAP/PostgreSQL
+fixture, with inspector disabled for the corrected smoke. BetterAuth TOTP
+verification established the fixture session; the actual HTTPS authenticated
+render API route returned the normal newsletter while remote images stayed
+blocked. `reader` passed in 33.81 s including startup/cache-path setup, ordinary
+CID fetch and authenticated route. A second distinct UID containing the same
+large HTML passed `html-repeat` in 5.59 s and retained only plain text; another
+request hit the content cache without another IMAP literal. Across the smoke the
+peer recorded 2,272,609 literal bytes and no IMAP mutations. These are receive
+workflow durations, not isolated sanitizer CPU timings.
+
+After both pathological messages had been processed, the app cgroup's recorded
+peak was 764,227,584 bytes (729 MiB), and current usage was 549,253,120 bytes
+(524 MiB). Worker RSS was 408,420 KiB, process high-water RSS 452,356 KiB (442
+MiB), and it held 24 file descriptors. This is a peak reduction of about 60%
+against the earlier 1.763 GiB container observation for the same pathological
+HTML scenario. The after figure includes the full app, web server, worker,
+database client pools, and fixture startup; do not interpret it as sanitizer-only
+memory. The prior heap profile estimated allocated objects, not simultaneously
+live heap, and should not be compared numerically to process RSS.
+
+Regression coverage now includes the exact 87,380-node fixture, structural-limit
+boundaries, deep nesting/attributes, malformed and entity text, ordinary large
+newsletters, near-5-MiB HTML, plain-text fallback publication, repeated receive,
+and real authenticated route rendering. The applicable focused selection passed
+102 tests across six files; app and worker TypeScript checks passed. The complete
+suite result and unresolved Stage 3C W2/W4 acceptance status below remain
+unchanged. In particular, the corrected HTML evidence does not make the overall
+R16 release green.
 
 ## Final verification and decision
 
@@ -319,23 +372,23 @@ Two accounts reached three historical pages and three remained at two. This is
 not a passing W2/W4 benchmark; no scenario deadline or zero-error assertion was
 relaxed to turn it green. All original/intermediate/final JSON evidence is saved.
 
-| Gate                           | Decision | Evidence / outstanding limit                                                                                                     |
-| ------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 1: historical SQL prerequisite | PASS     | Exact original 128-UID fixture preserved; profiled 648.32 ms; 281/281 prerequisite regressions                                   |
-| 2: production cutover          | PASS     | Normal process registration, conversion-only legacy hints, single elected owner and takeover                                     |
-| 3: Docker deployment           | PASS     | Actual production build, migrations, web/worker startup, saved credentials, verified TLS health and API denial                   |
-| 4: functional smoke            | PARTIAL  | Controlled deployed workflows pass; Compose-level PostgreSQL reply loss is not exercised                                         |
-| 5: operational resources       | PARTIAL  | Actual worker/container measurements recorded; authenticated web-route rendering memory remains unmeasured; large HTML heap risk |
-| 6: final regression/release    | PARTIAL  | Full-run failures retained; six reproduced on R15; inconsistent R15 timing and incomplete W2/W4 benchmark remain                 |
+| Gate                           | Decision | Evidence / outstanding limit                                                                                              |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1: historical SQL prerequisite | PASS     | Exact original 128-UID fixture preserved; profiled 648.32 ms; 281/281 prerequisite regressions                            |
+| 2: production cutover          | PASS     | Normal process registration, conversion-only legacy hints, single elected owner and takeover                              |
+| 3: Docker deployment           | PASS     | Actual production build, migrations, web/worker startup, saved credentials, verified TLS health and API denial            |
+| 4: functional smoke            | PARTIAL  | Controlled deployed workflows pass; Compose-level PostgreSQL reply loss is not exercised                                  |
+| 5: operational resources       | PARTIAL  | Corrected pathological HTML is bounded and authenticated route passes; wider W2/W4 resource acceptance remains incomplete |
+| 6: final regression/release    | PARTIAL  | Full-run failures retained; six reproduced on R15; inconsistent R15 timing and incomplete W2/W4 benchmark remain          |
 
 The result remains **PARTIAL**: production cutover and controlled Docker workflows
 are implemented and verified, but R15 is not consistently green in the final
-regression runs. Actual web-route memory under authenticated large-HTML rendering
-and COMMIT-ack loss inside Compose itself are additional validation gaps (service
-rendering and real PostgreSQL relay regressions are available). The large HTML
-heap cost also prevents a blanket claim of suitability for every modest host.
-No data loss, duplicate receiving owner, unsafe mutation replay or broken existing
-SMTP delivery was observed; those would require a BLOCKED decision instead.
+regression runs, Stage 3C W2/W4 acceptance is incomplete, and Compose-level
+COMMIT-ack loss is still unexercised. The pathological HTML peak is now bounded
+for the tested fixture and the authenticated render route passes; this does not
+establish a universal hardware requirement for arbitrary email content. No data
+loss, duplicate receiving owner, unsafe mutation replay or broken existing SMTP
+delivery was observed; those would require a BLOCKED decision instead.
 
 ## Remaining boundaries
 

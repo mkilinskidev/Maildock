@@ -87,19 +87,32 @@ export class ReceivingPublication {
       capturedSource = { ...source, state: { ...source.state } },
       capturedOptions = { ...options };
     // Content-only parsing is outside SQL and need not load in STORE/election processes.
-    const [{ EMAIL_HTML_POLICY, sanitizeEmailHtml }, { searchBodyText }] =
-      await Promise.all([
-        import("../infrastructure/sanitize-email-html"),
-        import("../infrastructure/search-body-text"),
-      ]);
-    const sanitized = html === null ? null : sanitizeEmailHtml(html);
+    const [
+      { EMAIL_HTML_POLICY, sanitizeEmailHtml },
+      { EmailHtmlResourceLimitError },
+    ] = await Promise.all([
+      import("../infrastructure/sanitize-email-html"),
+      import("../infrastructure/email-html-resource-budget"),
+    ]);
+    let sanitized = null;
+    if (html !== null) {
+      try {
+        sanitized = sanitizeEmailHtml(html);
+      } catch (error) {
+        if (
+          !(error instanceof EmailHtmlResourceLimitError) ||
+          !captured.plainText?.trim()
+        )
+          throw error;
+      }
+    }
     const completed = encode({
       ...captured,
       displayBytes,
-      searchText: searchBodyText(
-        captured.plainText as string | null,
-        sanitized?.html ?? null,
-      ),
+      searchText:
+        captured.plainText?.trim() || sanitized === null
+          ? ((captured.plainText as string | null) ?? "")
+          : sanitized.searchText,
       sanitizedHtml: sanitized?.html ?? null,
       remoteContentBlocked: sanitized?.remoteContentBlocked ?? false,
       policyVersion: EMAIL_HTML_POLICY,
