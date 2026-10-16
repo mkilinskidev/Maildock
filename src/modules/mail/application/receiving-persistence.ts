@@ -64,6 +64,31 @@ export class ReceivingPersistence {
     private readonly executor: Pick<ReceivingExecutor, "transaction">,
   ) {}
 
+  settleEmptyObservation(
+    owner: ReceivingOwner,
+    mailbox: string,
+    expected: ReceivingState,
+    identity: ReceivingAccountIdentity,
+    generation: bigint,
+    pollMs: number,
+    options: Parameters<ReceivingExecutor["transaction"]>[1],
+  ) {
+    owner = { ...owner };
+    identity = { ...identity };
+    expected = { ...expected };
+    const captured = JSON.stringify(
+      Object.fromEntries(
+        Object.entries(expected).map(([key, value]) => [key, String(value)]),
+      ),
+    );
+    return this.executor.transaction(async (db) => {
+      await db.execute(sql`select maildock_receiving_observation_due(${owner.actor}::uuid,${owner.generation}::bigint,
+        ${mailbox}::uuid,${identity.account}::uuid,${identity.configuration}::bigint,${identity.lifecycle}::bigint,
+        ${captured}::jsonb,${generation}::bigint,${pollMs}::integer)`);
+      return expected;
+    }, options);
+  }
+
   bootstrap(
     owner: ReceivingOwner,
     mailbox: string,
@@ -116,6 +141,7 @@ export class ReceivingPersistence {
     mutation: ReceivingMutation,
     options: Parameters<ReceivingExecutor["transaction"]>[1],
     identity?: ReceivingAccountIdentity,
+    settlement?: Readonly<{ generation: bigint; pollMs: number }>,
   ) {
     if (!["fresh", "history", "repair", "epoch"].includes(mutation.kind))
       throw new Error("Unsupported receiving mutation kind");
@@ -140,6 +166,7 @@ export class ReceivingPersistence {
     // Capture bounded evidence before the first await; caller-owned arrays cannot
     // be changed underneath the already-validated frontier calculation.
     mutation = structuredClone(mutation);
+    settlement = settlement ? { ...settlement } : undefined;
     expected = { ...expected };
     owner = { ...owner };
     identity = identity ? { ...identity } : undefined;
@@ -242,15 +269,24 @@ export class ReceivingPersistence {
           (mutation.wrap && mutation.known.length !== 0)
         )
           throw new Error("Repair is not the complete next durable page");
-        for (const uid of mutation.known)
-          if (!mutation.present.includes(uid))
-            await db.execute(
-              sql`delete from mailbox_messages where mailbox_id=${mailbox}::uuid and configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid) and uid_validity=${expected.epoch}::bigint and uid=${uid}::bigint`,
-            );
-        for (const flag of mutation.flags)
-          await db.execute(
-            sql`update mailbox_messages set flags=ARRAY(select jsonb_array_elements_text(${JSON.stringify([...flag.flags])}::jsonb)),modseq=${flag.modseq ?? null}::bigint where mailbox_id=${mailbox}::uuid and configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid) and uid_validity=${expected.epoch}::bigint and uid=${flag.uid}::bigint and (${flag.modseq ?? null}::bigint is null or modseq is null or modseq<=${flag.modseq ?? null}::bigint)`,
-          );
+        const absent = mutation.known.filter(
+          (uid) => !mutation.present.includes(uid),
+        );
+        if (absent.length && identity)
+          await db.execute(sql`select maildock_receiving_membership_references(${mailbox}::uuid,${expected.revision}::bigint,
+            ${expected.epoch}::bigint,${identity.configuration}::bigint,${JSON.stringify(absent.map(String))}::jsonb)`);
+        if (absent.length)
+          await db.execute(sql`delete from mailbox_messages where mailbox_id=${mailbox}::uuid
+          and configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid)
+          and uid_validity=${expected.epoch}::bigint and uid=any(ARRAY(select jsonb_array_elements_text(${JSON.stringify(absent.map(String))}::jsonb))::bigint[])`);
+        if (mutation.flags.length)
+          await db.execute(sql`update mailbox_messages p set flags=f.flags,modseq=f.modseq
+          from jsonb_to_recordset(${JSON.stringify(mutation.flags)}::jsonb) as f(uid bigint,flags text[],modseq bigint)
+          where p.mailbox_id=${mailbox}::uuid and p.configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=${mailbox}::uuid)
+            and p.uid_validity=${expected.epoch}::bigint and p.uid=f.uid
+            and ((${settlement === undefined} and f.modseq is null) or p.modseq is null or (f.modseq is not null and p.modseq<=f.modseq))
+            and (${settlement === undefined} or not exists(select from message_commands c where c.mailbox_id=p.mailbox_id and c.source_uid=p.uid and c.source_uid_validity=p.uid_validity
+              and c.source_configuration_binding=p.configuration_binding and c.status in ('pending','executing') and c.action in ('mark_read','mark_unread','flag','unflag')))`);
       } else {
         // One bounded exact-set lookup replaces 128 serial round trips. claim
         // already holds the conflicting mailbox lock; identities are unique.
@@ -285,6 +321,19 @@ export class ReceivingPersistence {
       await db.execute(
         sql`update receiving_mailboxes set epoch=${next.epoch}::bigint,revision=${next.revision}::bigint,fresh_through=${next.freshThrough}::bigint,history_before=${next.historyBefore}::bigint,reconcile_after=${next.reconcileAfter}::bigint,configuration_binding=coalesce(${mutation.kind === "epoch" ? (identity?.configuration ?? null) : null}::bigint,configuration_binding) where mailbox_id=${mailbox}::uuid`,
       );
+      // Only a completed current observation represents this generation. Never
+      // clear account-wide topology/business demand or secondary mailbox demand.
+      if (settlement) {
+        if (
+          mutation.kind !== "repair" ||
+          !Number.isSafeInteger(settlement.pollMs) ||
+          settlement.pollMs < 1 ||
+          settlement.pollMs > 2_147_483_647
+        )
+          throw new Error("Invalid receiving demand settlement");
+        await db.execute(sql`update mailboxes set receiving_due_at=clock_timestamp()+${settlement.pollMs}*interval '1 millisecond'
+          where id=${mailbox}::uuid and receiving_request_generation=${settlement.generation}::bigint`);
+      }
       return next;
     }, options);
   }

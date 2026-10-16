@@ -12,6 +12,10 @@ export type WindowPeerOptions = {
   onCommand?: (peer: Peer, command: Command) => boolean | void;
   uids?: number[];
   uidNext?: number;
+  flags?: string[];
+  modseq?: number;
+  capabilities?: string;
+  qresync?: boolean;
   epoch?: number;
   search?: "absent" | "duplicate" | "invalid" | "esearch" | "hung" | "no";
   fetch?:
@@ -55,6 +59,13 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
       `ENVELOPE (NIL "Fixture ${uid}" NIL NIL NIL NIL NIL NIL NIL "<stage2-${uid}@example.test>") ` +
       `BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 10 1) ` +
       `BODY[HEADER.FIELDS (REFERENCES)] {${header.length}}\r\n`;
+    if (options.flags)
+      prefix = prefix.replace(
+        "FLAGS (\\Seen)",
+        `FLAGS (${options.flags.join(" ")})`,
+      );
+    if (options.modseq)
+      prefix = prefix.replace("FLAGS (", `MODSEQ (${options.modseq}) FLAGS (`);
     if (options.attachment)
       prefix = prefix.replace(
         '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 10 1)',
@@ -98,6 +109,11 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
   const peer = await fixture(
     (p, cmd) => {
       if (options.onCommand?.(p, cmd)) return true;
+      if (cmd.command.startsWith("ENABLE")) {
+        p.send(`* ENABLED ${cmd.command.slice(7)}\r\n`, cmd);
+        p.ok(cmd);
+        return true;
+      }
       if (
         cmd.command.startsWith("LOGIN") ||
         cmd.command.startsWith("AUTHENTICATE")
@@ -119,7 +135,10 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
           `* ${uids.length} EXISTS\r\n* FLAGS (\\Seen)\r\n* OK [UIDVALIDITY ${options.epoch ?? 7}] Epoch\r\n` +
             (options.select === "missing-next"
               ? ""
-              : `* OK [UIDNEXT ${options.uidNext ?? 257}] Next\r\n`),
+              : `* OK [UIDNEXT ${options.uidNext ?? 257}] Next\r\n`) +
+            (options.modseq
+              ? `* OK [HIGHESTMODSEQ ${options.modseq}] Modseq\r\n`
+              : ""),
           cmd,
         );
         p.ok(cmd, "OK [READ-ONLY] Selected");
@@ -139,13 +158,15 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
                 ? [0]
                 : options.boundedMailbox
                   ? uids.filter((uid) => {
-                      const range = /UID SEARCH UID (\d+):(\d+)/.exec(
+                      const range = /UID SEARCH UID ([\d:,]+)/.exec(
                         cmd.command,
                       );
                       return (
                         range &&
-                        uid >= Number(range[1]) &&
-                        uid <= Number(range[2])
+                        range[1].split(",").some((part) => {
+                          const [low, high = low] = part.split(":").map(Number);
+                          return uid >= low && uid <= high;
+                        })
                       );
                     })
                   : uids;
@@ -215,7 +236,7 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
     },
     {},
     options.greeting,
-    "IMAP4rev1 IDLE AUTH=XOAUTH2 SASL-IR",
+    options.capabilities ?? "IMAP4rev1 IDLE AUTH=XOAUTH2 SASL-IR",
   );
   const observed: ImapFlow[] = [];
   const Client = options.cjs
@@ -226,7 +247,11 @@ export async function metadataPeer(options: WindowPeerOptions = {}) {
       ).ImapFlow
     : ImapFlow;
   const createClient = (opts: ImapFlowOptions) => {
-    const client = new Client({ ...opts, tls: { rejectUnauthorized: false } });
+    const client = new Client({
+      ...opts,
+      qresync: options.qresync ?? opts.qresync,
+      tls: { rejectUnauthorized: false },
+    });
     observed.push(client);
     return client;
   };

@@ -82,14 +82,14 @@ describe("isolated shared receiving scheduler", () => {
     // Fixture-only atomic publication oracle, independently read through reader.
     await reader.unsafe(`
       CREATE TABLE stage3b_audit (mailbox uuid, epoch bigint, old_epoch bigint,
-        revision bigint, old_f bigint, new_f bigint, old_e bigint, new_e bigint, uids bigint[]);
+        revision bigint, old_f bigint, new_f bigint, old_e bigint, new_e bigint, uids bigint[], old_r bigint, new_r bigint);
       CREATE FUNCTION stage3b_audit_progress() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
         INSERT INTO stage3b_audit SELECT NEW.mailbox_id, NEW.epoch, OLD.epoch, NEW.revision,
           OLD.fresh_through, NEW.fresh_through, OLD.history_before, NEW.history_before,
           ARRAY(SELECT uid FROM mailbox_messages WHERE mailbox_id=NEW.mailbox_id
             AND uid_validity=NEW.epoch AND ((uid>OLD.fresh_through AND uid<=NEW.fresh_through)
-              OR (uid>=NEW.history_before AND uid<OLD.history_before)) ORDER BY uid);
+              OR (uid>=NEW.history_before AND uid<OLD.history_before)) ORDER BY uid), OLD.reconcile_after, NEW.reconcile_after;
         RETURN NEW;
       END $$;
       CREATE TRIGGER stage3b_audit AFTER UPDATE ON receiving_mailboxes
@@ -297,6 +297,7 @@ describe("isolated shared receiving scheduler", () => {
     let f = 1024n,
       e = 1025n,
       revision = 0n;
+    let r = 0n;
     for (const row of audit) {
       expect(BigInt(row.epoch)).toBe(7n);
       expect(BigInt(row.old_epoch)).toBe(7n);
@@ -305,6 +306,34 @@ describe("isolated shared receiving scheduler", () => {
       expect(BigInt(row.old_e)).toBe(e);
       const nextF = BigInt(row.new_f),
         nextE = BigInt(row.new_e);
+      expect(BigInt(row.old_r)).toBe(r);
+      const nextR = BigInt(row.new_r);
+      if (nextF === f && nextE === e) {
+        // R15 adds an exact repair publication. The original F/E checks below
+        // still apply to every actual fresh/history interval.
+        const page = a.script
+          .uids!.filter(
+            (uid) =>
+              ((uid <= 1024 && BigInt(uid) >= e) ||
+                (uid >= 1025 && BigInt(uid) <= f)) &&
+              BigInt(uid) > r,
+          )
+          .sort((x, y) => x - y)
+          .slice(0, 128);
+        expect(nextR).toBe(page.length ? BigInt(page.at(-1)!) : 0n);
+        expect(row.uids).toEqual([]);
+        if (page.length)
+          expect(
+            a.peer.commands.some(
+              (c) =>
+                c.command === `UID SEARCH UID ${page.join(",")}` &&
+                c.taggedMs !== null,
+            ),
+          ).toBe(true);
+        r = nextR;
+        continue;
+      }
+      expect(nextR).toBe(r);
       const fresh = nextF > f;
       if (fresh) {
         expect(nextF - f).toBeLessThanOrEqual(128n);
@@ -341,6 +370,7 @@ describe("isolated shared receiving scheduler", () => {
     expect(BigInt(saved.fresh_through)).toBe(f);
     expect(BigInt(saved.history_before)).toBe(e);
     expect(BigInt(saved.revision)).toBe(revision);
+    expect(BigInt(saved.reconcile_after)).toBe(r);
     const rows = await placements(a);
     const expected = a.script
       .uids!.filter(

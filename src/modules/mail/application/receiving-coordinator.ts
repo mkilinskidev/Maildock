@@ -87,6 +87,7 @@ export async function runOneReceivingTurn(
     {
       ...config,
       connection,
+      pollMs: receivingTiming(config.timing).pollMs,
       options: { kind, deadline, signal, assertCurrent },
     },
     (options) => {

@@ -76,7 +76,9 @@ const receivingEligibility = sql`
   or exists(select from message_contents c join messages msg on msg.id=c.message_id
     where msg.account_id=a.id and c.status in ('pending','fetching'))
   or exists(select from message_attachments c join messages msg on msg.id=c.message_id
-    where msg.account_id=a.id and c.status in ('pending','fetching'))`;
+    where msg.account_id=a.id and c.status in ('pending','fetching'))
+  or exists(select from outgoing_messages o where o.account_id=a.id and o.status='sent'
+    and o.sent_copy_policy='maildock' and (o.sent_copy_status in ('pending','saving','uncertain') or o.sent_copy_sync_pending))`;
 
 /** Isolated repair driver; Stage 4C owns its eventual startup/timer lifecycle. */
 export class ReceivingDueRepair {

@@ -32,6 +32,7 @@ type Pending = {
 };
 type AccountConfig = Omit<ReceivingCoordinatorConfig, "executor">;
 type Account = {
+  retired?: boolean;
   config: ReceivingCoordinatorConfig;
   timing: ReturnType<typeof receivingTiming>;
   active: boolean;
@@ -177,6 +178,48 @@ export class ReceivingScheduler {
     this.wake?.();
   }
 
+  /** Refresh only captured membership, preserving healthy fairness/backoff state.
+   * Retired active allocations keep C until their original work has settled. */
+  reconcileAccounts(configs: readonly AccountConfig[]): void {
+    if (
+      configs.length > this.config.tuning.maxAccounts ||
+      new Set(configs.map((c) => c.account)).size !== configs.length
+    )
+      throw new Error("Receiving candidate capacity exceeded");
+    for (const current of this.accounts) {
+      const next = configs.find((c) => c.account === current.config.account);
+      current.retired =
+        !next ||
+        next.mailbox !== current.config.mailbox ||
+        next.configurationVersion !== current.config.configurationVersion ||
+        next.receivingLifecycleVersion !==
+          current.config.receivingLifecycleVersion;
+    }
+    for (let i = this.accounts.length - 1; i >= 0; i--)
+      if (this.accounts[i].retired && !this.accounts[i].active)
+        this.accounts.splice(i, 1);
+    for (const config of configs) {
+      if (this.accounts.some((a) => a.config.account === config.account))
+        continue;
+      const timing = receivingTiming(config.timing);
+      this.accounts.push({
+        config: {
+          ...config,
+          connection: structuredClone(config.connection),
+          executor: this.config.executor,
+        },
+        timing,
+        active: false,
+        freshDue: performance.now(),
+        retryAt: 0,
+        retryMs: timing.retryMs,
+        initialFreshGranted: false,
+        wakeGeneration: 0,
+      });
+    }
+    this.wake?.();
+  }
+
   /** Typed bounded memory admission, never a second executing route. */
   submit(operation: ReceivingOperation): Promise<ReceivingOperationResult> {
     try {
@@ -284,6 +327,7 @@ export class ReceivingScheduler {
   private select(now: number) {
     const available = this.accounts.filter(
       (a) =>
+        !a.retired &&
         !a.active &&
         !this.activeIdentities.has(a.config.account) &&
         a.retryAt <= now,
@@ -505,7 +549,10 @@ export class ReceivingScheduler {
     const next = Math.min(
       ...this.accounts
         .filter(
-          (a) => !a.active && !this.activeIdentities.has(a.config.account),
+          (a) =>
+            !a.retired &&
+            !a.active &&
+            !this.activeIdentities.has(a.config.account),
         )
         .map((a) => Math.max(a.retryAt, a.freshDue)),
     );
@@ -544,7 +591,10 @@ export class ReceivingScheduler {
         }
         // Cancellation/deadline may remove a queued unit during renewal.
         // Never splice another request or revive the removed selection.
-        if (selection.pending && !this.pending.includes(selection.pending))
+        if (
+          selection.account?.retired ||
+          (selection.pending && !this.pending.includes(selection.pending))
+        )
           continue;
         this.admit(selection);
       }

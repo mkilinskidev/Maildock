@@ -35,7 +35,7 @@ type Candidate = Readonly<{
 type Account = Omit<
   ReceivingCoordinatorConfig,
   "executor" | "owner" | "authority"
->;
+> & { durableInboxDue?: boolean };
 type SchedulerInput = ConstructorParameters<typeof ReceivingScheduler>[0];
 
 /** Unwired Stage 4B lifetime. One shared selector per elected generation.
@@ -62,6 +62,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   }[] = [];
   private controlActive = false;
   private flagSelection?: Promise<void>;
+  private flagCursor?: { at: string; id: string };
   private readonly selectedFlags = new Set<string>();
   private attachmentSelection?: Promise<void>;
   private readonly selectedAttachments = new Set<string>();
@@ -270,67 +271,11 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.armExpiry(started);
       this.assertCurrent();
       const owner = this.owner;
-      const accounts = await this.control(async (db) => {
-        await this.validate(db, owner);
-        const max = this.config.maxAccounts ?? 128;
-        const rows = await db.execute(sql`
-          select a.id as account, a.configuration_version, a.receiving_lifecycle_version, m.id as mailbox,
-            (a.receiving_due_at<=clock_timestamp() or m.receiving_due_at<=clock_timestamp()
-              or s.mailbox_id is null) as due,
-            coalesce(s.history_before>1,false) as history_pending
-          from mail_accounts a left join mailboxes m on m.account_id=a.id and m.remote_path='INBOX'
-          left join receiving_mailboxes s on s.mailbox_id=m.id
-          where a.enabled and (m.id is null or (m.selectable and m.lifecycle_status='active'))
-          order by a.id limit ${max + 1}`);
-        if (rows.length > max)
-          throw new Error("Receiving candidate capacity exceeded");
-        const result: Account[] = [];
-        for (const row of rows) {
-          this.assertCurrent();
-          const candidate = {
-            account: row.account as string,
-            mailbox: (row.mailbox as string | null) ?? randomUUID(),
-            bootstrap: row.mailbox === null,
-            due: row.due === true,
-            historyPending: row.history_pending === true,
-          };
-          const account = await this.config.loadAccount(db, candidate);
-          if (
-            account.account !== candidate.account ||
-            account.mailbox !== candidate.mailbox
-          )
-            throw new Error("Receiving candidate identity mismatch");
-          const version = BigInt(row.configuration_version as string);
-          result.push({
-            ...account,
-            bootstrap: candidate.bootstrap,
-            configurationVersion: version,
-            receivingLifecycleVersion: BigInt(
-              row.receiving_lifecycle_version as string,
-            ),
-          });
-        }
-        return result;
-      }, this.budget());
+      const accounts = await this.loadMembership();
       this.assertCurrent();
       this.scheduler = new ReceivingScheduler({
         ...this.config,
-        accounts: accounts.map((account) => ({
-          ...account,
-          owner,
-          authority: {
-            assertCurrent: this.assertCurrent,
-            renew: async (db, current) => {
-              await this.validate(db, current);
-              await this.validateConfiguration(
-                db,
-                account.account,
-                account.configurationVersion!,
-                account.bootstrap ? undefined : account.mailbox,
-              );
-            },
-          },
-        })),
+        accounts: accounts.map((account) => this.bindAccount(account)),
         beforeAdmission: () => this.renew(),
         controlHeadroom: true,
         operations: {
@@ -362,6 +307,95 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       this.lose();
       throw error; // Uncertain acquisition expires; never blindly reacquire.
     }
+  }
+
+  private membershipRefresh?: Promise<void>;
+
+  private bindAccount(account: Account) {
+    return {
+      ...account,
+      owner: this.owner!,
+      authority: {
+        assertCurrent: this.assertCurrent,
+        renew: async (db: ReceivingDatabase, current: ReceivingOwner) => {
+          await this.validate(db, current);
+          const lifecycle = await this.validateConfiguration(
+            db,
+            account.account,
+            account.configurationVersion!,
+            account.bootstrap ? undefined : account.mailbox,
+          );
+          if (lifecycle !== account.receivingLifecycleVersion)
+            throw new Error("Receiving captured lifecycle changed");
+        },
+      },
+    };
+  }
+
+  private loadMembership(): Promise<Account[]> {
+    const owner = this.owner!;
+    return this.control(async (db) => {
+      await this.validate(db, owner);
+      const max = this.config.maxAccounts ?? 128;
+      const rows = await db.execute(sql`
+          select a.id as account, a.configuration_version, a.receiving_lifecycle_version, m.id as mailbox,
+            (m.receiving_due_at<=clock_timestamp() or s.mailbox_id is null) as inbox_due,
+            (a.receiving_due_at<=clock_timestamp() or m.receiving_due_at<=clock_timestamp()
+              or s.mailbox_id is null) as due,
+            coalesce(s.history_before>1,false) as history_pending
+          from mail_accounts a left join mailboxes m on m.account_id=a.id and m.remote_path='INBOX'
+          left join receiving_mailboxes s on s.mailbox_id=m.id
+          where a.enabled and (m.id is null or (m.selectable and m.lifecycle_status='active'))
+          order by a.id limit ${max + 1}`);
+      if (rows.length > max)
+        throw new Error("Receiving candidate capacity exceeded");
+      const result: Account[] = [];
+      for (const row of rows) {
+        this.assertCurrent();
+        const candidate = {
+          account: row.account as string,
+          mailbox: (row.mailbox as string | null) ?? randomUUID(),
+          bootstrap: row.mailbox === null,
+          due: row.due === true,
+          historyPending: row.history_pending === true,
+        };
+        const account = await this.config.loadAccount(db, candidate);
+        if (
+          account.account !== candidate.account ||
+          account.mailbox !== candidate.mailbox
+        )
+          throw new Error("Receiving candidate identity mismatch");
+        const version = BigInt(row.configuration_version as string);
+        result.push({
+          ...account,
+          bootstrap: candidate.bootstrap,
+          configurationVersion: version,
+          durableInboxDue: row.inbox_due === true,
+          receivingLifecycleVersion: BigInt(
+            row.receiving_lifecycle_version as string,
+          ),
+        });
+      }
+      return result;
+    }, this.budget());
+  }
+
+  /** Existing elected heartbeat/wake opportunity; bounded DB-only reconstruction. */
+  refreshMembership(): Promise<void> {
+    if (this.membershipRefresh) return this.membershipRefresh;
+    if (this.phase !== "owner") return Promise.resolve();
+    this.membershipRefresh = (async () => {
+      const accounts = await this.loadMembership();
+      this.assertCurrent();
+      this.scheduler?.reconcileAccounts(
+        accounts.map((account) => this.bindAccount(account)),
+      );
+      for (const account of accounts)
+        if (account.durableInboxDue) this.scheduler?.notify(account.account);
+    })().finally(() => {
+      this.membershipRefresh = undefined;
+    });
+    return this.membershipRefresh;
   }
 
   private async validateConfiguration(
@@ -527,6 +561,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         void this.renew().then((live) => {
           if (live) {
             this.scheduleHeartbeat();
+            void this.refreshMembership().catch(() => this.lose());
             void this.dispatchFlagCommands().catch(() => undefined);
             void this.dispatchContentRequests().catch(() => undefined);
             void this.dispatchAttachmentRequests().catch(() => undefined);
@@ -543,6 +578,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   async notify(accountId: string): Promise<void> {
     if (this.phase !== "owner") return; // Follower ACK leaves DB demand intact.
     if (await this.renew()) {
+      await this.refreshMembership();
       this.scheduler?.notify(accountId);
       await this.dispatchFlagCommands();
       await this.dispatchContentRequests();
@@ -573,11 +609,16 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       const rows = await this.control(async (db) => {
         await this.validate(db, this.owner!);
         return db.execute(sql`
-          select c.id,c.account_id,c.mailbox_id,c.status,c.source_configuration_binding,a.receiving_lifecycle_version
-          from message_commands c join mail_accounts a on a.id=c.account_id
-          join mailboxes b on b.id=c.mailbox_id join receiving_mailboxes s on s.mailbox_id=b.id
-          where a.enabled and a.removal_requested_at is null and b.selectable and b.lifecycle_status='active'
-            and c.action in ('mark_read','mark_unread','flag','unflag')
+          with candidates as materialized (
+            select id,created_at,account_id,mailbox_id,status,action,message_id,source_configuration_binding,
+              source_uid_validity,source_uid,source_path,receiving_attempt
+            from message_commands
+            where action in ('mark_read','mark_unread','flag','unflag') and status in ('pending','executing','failed')
+              and (${this.flagCursor?.at ?? null}::timestamptz is null or (created_at,id)>(${this.flagCursor?.at ?? null}::timestamptz,${this.flagCursor?.id ?? null}::uuid))
+            order by created_at,id limit 32
+          )
+          select c.id,c.created_at::text as cursor_at,c.account_id,c.mailbox_id,c.status,c.source_configuration_binding,a.receiving_lifecycle_version
+            ,(a.enabled and a.removal_requested_at is null and b.selectable and b.lifecycle_status='active'
             and (c.status='pending' or (c.status in ('executing','failed')
               and c.receiving_attempt->>'phase' in ('claimed','uncertain_remote_execution')
               and coalesce((c.receiving_attempt->>'observations')::integer,0)<3))
@@ -585,12 +626,19 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             and c.source_configuration_binding=s.configuration_binding
             and c.source_uid_validity=s.epoch and c.source_path=b.remote_path
             and maildock_receiving_active_source(c.account_id,c.mailbox_id,c.message_id,
-              c.source_uid_validity,c.source_uid,c.source_configuration_binding)
-          order by c.created_at,c.id limit 32`);
+              c.source_uid_validity,c.source_uid,c.source_configuration_binding)) as eligible
+          from candidates c join mail_accounts a on a.id=c.account_id
+          left join mailboxes b on b.id=c.mailbox_id left join receiving_mailboxes s on s.mailbox_id=b.id
+          order by c.created_at,c.id`);
       });
       this.assertCurrent();
+      const last = rows.at(-1);
+      this.flagCursor = last
+        ? { at: String(last.cursor_at), id: String(last.id) }
+        : undefined;
       const accounts = new Set<string>();
       for (const row of rows) {
+        if (row.eligible !== true) continue;
         const id = String(row.id),
           account = String(row.account_id);
         if (accounts.has(account) || this.selectedFlags.has(id)) continue;
@@ -1124,6 +1172,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     this.lose();
     await this.election?.catch(() => undefined);
     await this.renewal;
+    await this.membershipRefresh?.catch(() => undefined);
     await this.flagSelection?.catch(() => undefined);
     await this.contentSelection?.catch(() => undefined);
     await this.attachmentSelection?.catch(() => undefined);

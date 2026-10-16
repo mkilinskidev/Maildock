@@ -365,6 +365,13 @@
       "when": 1792190000000,
       "tag": "0051_receiving_move_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0052_receiving_demand_settlement",
+      "breakpoints": true
     }
   ]
 }

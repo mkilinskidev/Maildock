@@ -616,7 +616,7 @@ describe("Stage 4B elected receiving ownership, isolated processes/PostgreSQL", 
     expect((await snapshot(a.mailbox)).events).toHaveLength(1);
   });
 
-  it("missing and duplicate wakes preserve due and unique authoritative facts/events", async () => {
+  it("missing and duplicate wakes retain unique facts while live pages settle due", async () => {
     const a = await account();
     const script: WindowPeerOptions = { uids: [], uidNext: 1 };
     const p = await peer(script);
@@ -634,7 +634,19 @@ describe("Stage 4B elected receiving ownership, isolated processes/PostgreSQL", 
       Array.from({ length: 4 }, () => c.command("notify", a.id)),
     );
     await until(() => c.events.filter((e) => e.event === "turn").length >= 3);
-    expect(await snapshot(a.mailbox)).toEqual(committed);
+    const observed = await snapshot(a.mailbox);
+    // Only R15 scheduling/repair state may change after the same metadata result.
+    // All canonical identities, F/E and unique arrival events remain identical.
+    expect(observed).toEqual({
+      ...committed,
+      revision: observed.revision,
+      reconcile_after: observed.reconcile_after,
+      due: false,
+    });
+    expect(BigInt(observed.revision)).toBeGreaterThan(
+      BigInt(committed.revision),
+    );
+    expect(["0", "1"]).toContain(observed.reconcile_after);
     expect(committed).toMatchObject({
       revision: "1",
       uids: ["1"],

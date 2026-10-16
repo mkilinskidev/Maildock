@@ -24,6 +24,7 @@ export async function receiveInboxTurn(
     bootstrap?: boolean;
     configurationVersion?: bigint;
     receivingLifecycleVersion?: bigint;
+    pollMs?: number;
     options: MetadataWindowOptions & { kind: "fresh" | "history" };
   }>,
   createClient?: Parameters<typeof fetchInboxMetadataWindow>[3],
@@ -66,6 +67,8 @@ export async function receiveInboxTurn(
       ...options,
       allowIdentityTransition: true,
       selectOnly: rebind || recovered.missing,
+      reconcileKnown:
+        options.kind === "fresh" ? recovered.reconcileKnown : undefined,
     },
     createClient,
   );
@@ -109,20 +112,49 @@ export async function receiveInboxTurn(
     return { state, count: 0, moreFresh: true, identityTransition: true };
   }
   guard();
-  const state = window.evidence
-    ? await persistence.persist(
-        owner,
-        mailbox,
-        expected,
-        {
-          kind: options.kind,
-          evidence: window.evidence,
-          metadata: window.metadata,
-        },
-        dbOptions(),
-        identity,
-      )
-    : expected;
+  const state =
+    window.reconciliation?.known.length === 0 && expected.reconcileAfter === 0n
+      ? await persistence.settleEmptyObservation(
+          owner,
+          mailbox,
+          expected,
+          identity,
+          recovered.demandGeneration!,
+          input.pollMs ?? 15_000,
+          dbOptions(),
+        )
+      : window.reconciliation
+        ? await persistence.persist(
+            owner,
+            mailbox,
+            expected,
+            {
+              kind: "repair",
+              complete: true,
+              epoch: window.epoch,
+              ...window.reconciliation,
+            },
+            dbOptions(),
+            identity,
+            {
+              generation: recovered.demandGeneration!,
+              pollMs: input.pollMs ?? 15_000,
+            },
+          )
+        : window.evidence
+          ? await persistence.persist(
+              owner,
+              mailbox,
+              expected,
+              {
+                kind: options.kind,
+                evidence: window.evidence,
+                metadata: window.metadata,
+              },
+              dbOptions(),
+              identity,
+            )
+          : expected;
   return {
     state,
     count: window.metadata.length,

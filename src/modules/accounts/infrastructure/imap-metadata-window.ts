@@ -28,6 +28,10 @@ export type MetadataWindowOptions = Readonly<{
   /** Owned turn may publish a completed SELECT transition before another FETCH. */
   allowIdentityTransition?: boolean;
   selectOnly?: boolean;
+  /** Exact next durable placement page. Only used when fresh coverage is current. */
+  reconcileKnown?: readonly bigint[];
+  /** Caller may reduce the metadata unit within the fixed 128-identity ceiling. */
+  windowSize?: number;
 }>;
 
 export class MetadataWindowError extends Error {}
@@ -176,6 +180,30 @@ export async function fetchInboxMetadataWindow(
 ) {
   expected = expected ? { ...expected } : null;
   options = { ...options };
+  const windowSize = options.windowSize ?? METADATA_WINDOW_LIMITS.identities;
+  if (
+    !Number.isSafeInteger(windowSize) ||
+    windowSize < 1 ||
+    windowSize > METADATA_WINDOW_LIMITS.identities
+  )
+    throw new MetadataWindowError("Invalid metadata window size");
+  const known = options.reconcileKnown
+    ? [...options.reconcileKnown].map(Number)
+    : undefined;
+  if (
+    known &&
+    (known.length > 128 ||
+      known.some(
+        (uid, i) =>
+          !Number.isSafeInteger(uid) ||
+          uid < 1 ||
+          uid > 0xffffffff ||
+          (i > 0 && uid <= known[i - 1]),
+      ))
+  )
+    throw new MetadataWindowError("Invalid reconciliation page");
+  let reconciling = false;
+  let negotiatedModseq = false;
   if (
     !Number.isFinite(options.deadline) ||
     options.deadline - performance.now() > METADATA_WINDOW_LIMITS.operationMs
@@ -256,8 +284,7 @@ export async function fetchInboxMetadataWindow(
       for (const item of response.attributes ?? []) {
         const uid = numeric(atom(item)?.value);
         if (
-          uid < low ||
-          uid > high ||
+          (reconciling ? !known!.includes(uid) : uid < low || uid > high) ||
           searched.has(uid) ||
           searched.size >= METADATA_WINDOW_LIMITS.identities
         )
@@ -353,6 +380,8 @@ export async function fetchInboxMetadataWindow(
     )
       throw new MetadataWindowError("Incomplete raw metadata");
     envelope(fields.get("ENVELOPE"));
+    if (negotiatedModseq && !fields.has("MODSEQ"))
+      throw new MetadataWindowError("Missing negotiated FETCH MODSEQ");
     structure(fields.get("BODYSTRUCTURE"));
     zeroNumber(fields.get("RFC822.SIZE"));
     if (typeof atom(fields.get("INTERNALDATE"))?.value !== "string")
@@ -425,6 +454,10 @@ export async function fetchInboxMetadataWindow(
     if (client.mailbox.exists > selectedNext - 1)
       throw new MetadataWindowError("SELECT count exceeds UIDNEXT space");
     const epoch = BigInt(selectedEpoch);
+    negotiatedModseq =
+      client.enabled.has("CONDSTORE") &&
+      !client.mailbox.noModseq &&
+      !!client.mailbox.highestModseq;
     if (
       options.selectOnly ||
       (options.allowIdentityTransition && expected && expected.epoch !== epoch)
@@ -452,18 +485,31 @@ export async function fetchInboxMetadataWindow(
     let evidence: IntervalEvidence | null = null;
     if (options.kind === "fresh" && expected) {
       low = Number(expected.freshThrough + 1n);
-      high = Math.min(
-        selectedNext - 1,
-        low + METADATA_WINDOW_LIMITS.identities - 1,
-      );
+      high = Math.min(selectedNext - 1, low + windowSize - 1);
     } else if (options.kind !== "fresh") {
       high = Number(historyBefore - 1n);
-      low = Math.max(1, high - METADATA_WINDOW_LIMITS.identities + 1);
+      low = Math.max(1, high - windowSize + 1);
     }
-    if (low >= 1 && high >= low) {
+    reconciling =
+      options.kind === "fresh" && !!expected && !!known && high < low;
+    if (reconciling && known!.length === 0)
+      return {
+        epoch,
+        uidNext: BigInt(selectedNext),
+        evidence: null,
+        metadata,
+        bytes,
+        reconciliation: {
+          known: known!.map(BigInt),
+          present: [],
+          flags: [],
+          wrap: true,
+        },
+      };
+    if ((low >= 1 && high >= low) || reconciling) {
       phase = "search";
       const result = await client.search(
-        { uid: `${low}:${high}` },
+        { uid: reconciling ? known!.join(",") : `${low}:${high}` },
         { uid: true },
       );
       guard();
@@ -483,6 +529,11 @@ export async function fetchInboxMetadataWindow(
           {
             uid: true,
             flags: true,
+            ...(client.enabled.has("CONDSTORE") &&
+            !client.mailbox.noModseq &&
+            client.mailbox.highestModseq
+              ? { modseq: true as const }
+              : {}),
             envelope: true,
             internalDate: true,
             size: true,
@@ -507,7 +558,11 @@ export async function fetchInboxMetadataWindow(
               "Incomplete normalized metadata identity",
             );
           seen.add(row.uid);
-          metadata.push(normalizeMessage(row));
+          metadata.push(
+            normalizeMessage(
+              negotiatedModseq ? row : { ...row, modseq: undefined },
+            ),
+          );
         }
         guard();
         if (
@@ -519,14 +574,15 @@ export async function fetchInboxMetadataWindow(
             "FETCH incomplete; missing UIDs remain unresolved",
           );
       }
-      evidence = {
-        complete: true,
-        epoch,
-        low: BigInt(low),
-        high: BigInt(high),
-        searched: [...searched].map(BigInt),
-        confirmedAbsent: [],
-      };
+      if (!reconciling)
+        evidence = {
+          complete: true,
+          epoch,
+          low: BigInt(low),
+          high: BigInt(high),
+          searched: [...searched].map(BigInt),
+          confirmedAbsent: [],
+        };
     }
     guard();
     if (!client.mailbox || client.mailbox.uidValidity !== epoch)
@@ -536,7 +592,25 @@ export async function fetchInboxMetadataWindow(
       METADATA_WINDOW_LIMITS.aggregateBytes
     )
       throw new MetadataWindowError("Normalized metadata budget exceeded");
-    return { epoch, uidNext: BigInt(selectedNext), evidence, metadata, bytes };
+    return {
+      epoch,
+      uidNext: BigInt(selectedNext),
+      evidence,
+      metadata,
+      bytes,
+      reconciliation: reconciling
+        ? {
+            known: known!.map(BigInt),
+            present: [...searched].map(BigInt),
+            flags: metadata.map((row) => ({
+              uid: row.uid,
+              flags: row.flags,
+              modseq: row.modseq,
+            })),
+            wrap: false,
+          }
+        : undefined,
+    };
   } catch (error) {
     abort(error);
     throw failure;

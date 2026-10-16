@@ -53,7 +53,7 @@ export async function recoverInboxIdentity(
       lifecycle: BigInt(a.receiving_lifecycle_version as string),
     };
     const [folder] = await db.execute(
-      sql`select id,selectable,lifecycle_status from mailboxes where account_id=${account}::uuid and remote_path='INBOX' for update`,
+      sql`select id,selectable,lifecycle_status,receiving_request_generation from mailboxes where account_id=${account}::uuid and remote_path='INBOX' for update`,
     );
     if (!folder) {
       if (!bootstrap) throw new Error("Receiving INBOX missing");
@@ -81,12 +81,20 @@ export async function recoverInboxIdentity(
           reconcileAfter: BigInt(s.reconcile_after as string),
         }
       : null;
+    const page =
+      s && BigInt(s.configuration_binding as string) === identity.configuration
+        ? await db.execute(sql`select uid from mailbox_messages where mailbox_id=${mailbox}::uuid
+          and uid_validity=${state!.epoch}::bigint and configuration_binding=${identity.configuration}::bigint
+          and uid>${state!.reconcileAfter}::bigint order by uid limit 128`)
+        : [];
     return {
       mailbox,
       identity,
       state,
       binding: s ? BigInt(s.configuration_binding as string) : null,
       missing: false,
+      demandGeneration: BigInt(folder.receiving_request_generation as string),
+      reconcileKnown: page.map((row) => BigInt(row.uid as string)),
     };
   }, options);
 }
