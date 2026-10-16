@@ -69,6 +69,12 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   private contentSelection?: Promise<void>;
   private readonly selectedContent = new Set<string>();
   private contentCursor?: { at: string; id: string };
+  private repairSelection?: Promise<void>;
+  private repairCursor = new Map<string, { at: string; id: string }>();
+  private readonly selectedRepairs = new Set<string>();
+  private moveSelection?: Promise<void>;
+  private readonly selectedMoves = new Set<string>();
+  private moveCursor?: { at: string; id: string };
   private sentSelection?: Promise<void>;
   private readonly selectedSent = new Set<string>();
   private sentCursor?: { at: string; id: string };
@@ -349,6 +355,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       void this.dispatchContentRequests().catch(() => undefined);
       void this.dispatchAttachmentRequests().catch(() => undefined);
       void this.dispatchSentCopies().catch(() => undefined);
+      void this.dispatchMoveCommands().catch(() => undefined);
+      void this.dispatchRepairs().catch(() => undefined);
       return true;
     } catch (error) {
       this.lose();
@@ -417,6 +425,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       },
     );
     if (
+      operation.kind === "repair" ||
       !this.config.resolveOperationConnection ||
       operation.diagnosticConnection
     )
@@ -522,6 +531,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             void this.dispatchContentRequests().catch(() => undefined);
             void this.dispatchAttachmentRequests().catch(() => undefined);
             void this.dispatchSentCopies().catch(() => undefined);
+            void this.dispatchMoveCommands().catch(() => undefined);
+            void this.dispatchRepairs().catch(() => undefined);
           }
         });
       },
@@ -537,6 +548,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       await this.dispatchContentRequests();
       await this.dispatchAttachmentRequests();
       await this.dispatchSentCopies();
+      await this.dispatchMoveCommands();
+      await this.dispatchRepairs();
     }
   }
 
@@ -608,6 +621,237 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     return this.flagSelection;
   }
 
+  /** At most four indexed pages, one terminal intent repair per account/pass. */
+  dispatchRepairs(): Promise<void> {
+    if (this.repairSelection) return this.repairSelection;
+    const handler = this.config.operationHandlers?.repair;
+    if (
+      this.phase !== "owner" ||
+      !handler ||
+      typeof handler === "function" ||
+      !("repair" in handler)
+    )
+      return Promise.resolve();
+    this.repairSelection = (async () => {
+      const accounts = new Set<string>();
+      for (const kind of [
+        "command",
+        "content",
+        "attachment",
+        "sent",
+      ] as const) {
+        const rows = await this.control(async (db) => {
+          await this.validate(db, this.owner!);
+          const cursor = this.repairCursor.get(kind);
+          const relation = sql.identifier(
+            kind === "command"
+              ? "message_commands"
+              : kind === "content"
+                ? "message_contents"
+                : kind === "attachment"
+                  ? "message_attachments"
+                  : "outgoing_messages",
+          );
+          const key = sql.identifier(kind === "content" ? "message_id" : "id");
+          const where =
+            kind === "sent"
+              ? sql`r.status='sent' and r.sent_copy_policy='maildock' and r.sent_copy_status in ('saving','uncertain')`
+              : kind === "command"
+                ? sql`r.status in ('pending','executing','failed') and r.source_configuration_binding is not null and (r.status<>'failed' or r.receiving_attempt->>'phase' in ('claimed','uncertain_remote_execution'))`
+                : sql`r.status in ('pending','fetching') and r.source_configuration_binding is not null`;
+          const after = cursor
+            ? sql`and (r.updated_at,r.${key})>(${cursor.at}::timestamptz,${cursor.id}::uuid)`
+            : sql``;
+          const account =
+            kind === "command" || kind === "sent"
+              ? sql`c.account_id`
+              : sql`m.account_id`;
+          const messageJoin =
+            kind === "command" || kind === "sent"
+              ? sql``
+              : sql`left join messages m on m.id=c.message_id`;
+          const fields =
+            kind === "sent"
+              ? sql`r.id,r.account_id,r.updated_at,r.receiving_attempt,r.sent_copy_mailbox_id,r.sent_copy_path`
+              : kind === "command"
+                ? sql`r.id,r.account_id,r.updated_at,r.receiving_attempt,r.mailbox_id,r.message_id,r.source_uid_validity,r.source_uid,r.source_configuration_binding,r.source_path,r.destination_mailbox_id,r.destination_path,r.action`
+                : sql`r.${key} as id,r.updated_at,r.receiving_attempt,r.message_id,r.source_mailbox_id,r.source_uid_validity,r.source_uid,r.source_configuration_binding`;
+          const exhausted =
+            kind === "content" || kind === "attachment"
+              ? sql`coalesce((c.receiving_attempt->>'reads')::integer,0)>=3`
+              : sql`coalesce((c.receiving_attempt->>'observations')::integer,0)>=3`;
+          const sourceObsolete = sql`c.source_configuration_binding is distinct from a.configuration_version or not maildock_receiving_active_source(a.id,${kind === "command" ? sql`c.mailbox_id` : sql`c.source_mailbox_id`},c.message_id,c.source_uid_validity,c.source_uid,c.source_configuration_binding)`;
+          const obsolete =
+            kind === "sent"
+              ? sql`c.receiving_attempt->>'configuration' is distinct from a.configuration_version::text
+              or c.receiving_attempt->'sentRole' is distinct from (select to_jsonb(role_row) from mailbox_roles role_row where role_row.account_id=a.id and role_row.role='sent')
+              or not exists(select from mailboxes b join receiving_mailboxes s on s.mailbox_id=b.id where b.id=c.sent_copy_mailbox_id and b.account_id=a.id and b.selectable and b.lifecycle_status='active' and b.remote_path=c.sent_copy_path and s.configuration_binding=a.configuration_version and s.epoch::text=c.receiving_attempt->'scopes'->0->'state'->>'epoch')`
+              : kind === "command"
+                ? sql`${sourceObsolete} or c.source_path is distinct from (select remote_path from mailboxes where id=c.mailbox_id)
+              or (c.action in ('archive','trash') and (
+                not maildock_receiving_move_destination(a.id,c.action,c.destination_mailbox_id,c.destination_path)
+                or (c.receiving_attempt is not null and c.receiving_attempt->'role' is distinct from (select to_jsonb(role_row) from mailbox_roles role_row where role_row.account_id=a.id and role_row.role=c.action))
+                or exists(select from jsonb_array_elements(c.receiving_attempt->'scopes') x left join receiving_mailboxes s on s.mailbox_id=(x->>'mailbox')::uuid where s.epoch::text is distinct from x->'state'->>'epoch' or s.configuration_binding is distinct from a.configuration_version)))`
+                : sql`${sourceObsolete} or (c.receiving_attempt is not null and c.receiving_attempt->>'path' is distinct from (select remote_path from mailboxes where id=c.source_mailbox_id))`;
+          return db.execute(sql`with candidates as materialized (
+            select ${fields},r.${key} as repair_id from ${relation} r where ${where}
+              and coalesce(r.receiving_attempt->>'phase','')<>'repair_terminal' ${after} order by r.updated_at,r.${key} limit 32
+          ) select c.repair_id,c.updated_at::text as cursor_at,a.id as account_id,a.configuration_version,a.receiving_lifecycle_version,
+            (a.enabled and a.removal_requested_at is null and (${exhausted} or ${obsolete})) as eligible
+            from candidates c ${messageJoin} join mail_accounts a on a.id=${account} order by c.updated_at,c.repair_id`);
+        });
+        this.assertCurrent();
+        const last = rows.at(-1);
+        if (last)
+          this.repairCursor.set(kind, {
+            at: String(last.cursor_at),
+            id: String(last.repair_id),
+          });
+        else this.repairCursor.delete(kind);
+        for (const row of rows) {
+          const account = String(row.account_id),
+            id = String(row.repair_id),
+            key = kind + id;
+          if (
+            !row.eligible ||
+            accounts.has(account) ||
+            this.selectedRepairs.has(key)
+          )
+            continue;
+          accounts.add(account);
+          this.selectedRepairs.add(key);
+          void this.submit({
+            kind: "repair",
+            repairKind: kind,
+            pendingId: id,
+            requestId: randomUUID(),
+            deadline: performance.now() + 10_000,
+            identity: {
+              account,
+              configurationVersion: BigInt(row.configuration_version as string),
+              receivingLifecycleVersion: BigInt(
+                row.receiving_lifecycle_version as string,
+              ),
+            },
+          })
+            .catch(() => undefined)
+            .finally(() => this.selectedRepairs.delete(key));
+        }
+      }
+    })().finally(() => {
+      this.repairSelection = undefined;
+    });
+    return this.repairSelection;
+  }
+
+  /** Frozen R02 MOVE intents; keyset pagination includes ineligible identities. */
+  dispatchMoveCommands(): Promise<void> {
+    if (this.moveSelection) return this.moveSelection;
+    const handler = this.config.operationHandlers?.move;
+    if (
+      this.phase !== "owner" ||
+      !this.config.loadOperationConnection ||
+      !handler ||
+      typeof handler === "function" ||
+      !("move" in handler)
+    )
+      return Promise.resolve();
+    this.moveSelection = (async () => {
+      const rows = await this.control(async (db) => {
+        await this.validate(db, this.owner!);
+        const after = this.moveCursor
+          ? sql`and (c.updated_at,c.id)>(${this.moveCursor.at}::timestamptz,${this.moveCursor.id}::uuid)`
+          : sql``;
+        return db.execute(sql`with candidates as materialized (
+          select c.id,c.updated_at,c.account_id,c.mailbox_id,c.destination_mailbox_id,c.destination_path,c.action,c.receiving_attempt,c.status,c.source_configuration_binding
+          from message_commands c where c.action in ('archive','trash') and c.status in ('pending','executing','failed')
+            and c.source_configuration_binding is not null and (c.status='pending' or (c.receiving_attempt->>'phase' in ('claimed','uncertain_remote_execution') and coalesce((c.receiving_attempt->>'observations')::integer,0)<3))
+            ${after} order by c.updated_at,c.id limit 32
+        ) select c.*,c.updated_at::text as cursor_at,a.configuration_version,a.receiving_lifecycle_version,
+          (a.enabled and a.removal_requested_at is null) as account_active,
+          b.selectable,b.lifecycle_status,b.remote_path,s.epoch,s.configuration_binding,r.mailbox_id as mapped_destination,
+          maildock_receiving_move_destination(c.account_id,c.action,c.destination_mailbox_id,c.destination_path) as destination_available
+          from candidates c join mail_accounts a on a.id=c.account_id
+          left join mailboxes b on b.id=c.destination_mailbox_id and b.account_id=c.account_id
+          left join receiving_mailboxes s on s.mailbox_id=b.id
+          left join mailbox_roles r on r.account_id=c.account_id and r.role=c.action order by c.updated_at,c.id`);
+      });
+      this.assertCurrent();
+      const last = rows.at(-1);
+      this.moveCursor = last
+        ? { at: String(last.cursor_at), id: String(last.id) }
+        : undefined;
+      const accounts = new Set<string>();
+      for (const row of rows) {
+        const id = String(row.id),
+          account = String(row.account_id);
+        if (
+          !row.account_active ||
+          accounts.has(account) ||
+          this.selectedMoves.has(id)
+        )
+          continue;
+        accounts.add(account);
+        this.selectedMoves.add(id);
+        const available =
+          row.destination_available &&
+          row.selectable &&
+          row.lifecycle_status === "active" &&
+          row.remote_path === row.destination_path &&
+          row.mapped_destination === row.destination_mailbox_id;
+        const current =
+          row.configuration_version === row.source_configuration_binding;
+        const selected =
+          row.epoch && row.configuration_binding === row.configuration_version;
+        const marker = row.receiving_attempt as Record<string, unknown> | null;
+        const obsolete = !available || !current;
+        const operation = obsolete
+          ? {
+              kind: "repair" as const,
+              pendingId: id,
+              repairKind: "command" as const,
+            }
+          : !selected && !marker
+            ? {
+                kind: "select" as const,
+                role: row.action as "archive" | "trash",
+              }
+            : marker
+              ? {
+                  kind: "exact-lookup" as const,
+                  pendingId: id,
+                  lookup: "move" as const,
+                }
+              : { kind: "move" as const, pendingId: id };
+        void this.submit({
+          ...operation,
+          requestId: randomUUID(),
+          deadline: performance.now() + 10_000,
+          identity: {
+            account,
+            mailbox:
+              operation.kind === "repair"
+                ? undefined
+                : String(
+                    operation.kind === "select"
+                      ? row.destination_mailbox_id
+                      : row.mailbox_id,
+                  ),
+            configurationVersion: BigInt(row.configuration_version as string),
+            receivingLifecycleVersion: BigInt(
+              row.receiving_lifecycle_version as string,
+            ),
+          },
+        })
+          .catch(() => undefined)
+          .finally(() => this.selectedMoves.delete(id));
+      }
+    })().finally(() => {
+      this.moveSelection = undefined;
+    });
+    return this.moveSelection;
+  }
+
   /** Existing outgoing intent, selected in bounded pages. No queue or timer.
    * Unenrolled Sent destinations first use R07 SELECT; never inventory history. */
   dispatchSentCopies(): Promise<void> {
@@ -633,6 +877,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           from outgoing_messages o where o.status='sent' and o.sent_copy_policy='maildock'
             and (o.sent_copy_status in ('pending','saving','uncertain') or (o.sent_copy_status='saved' and o.sent_copy_sync_pending))
             and coalesce((o.receiving_attempt->>'observations')::integer,0)<3
+            and coalesce(o.receiving_attempt->>'phase','')<>'repair_terminal'
           ${after} order by o.updated_at,o.id limit 32
         ) select o.*,o.updated_at::text as cursor_at,a.configuration_version,a.receiving_lifecycle_version,
           (a.enabled and a.removal_requested_at is null) as account_active,
@@ -883,6 +1128,8 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     await this.contentSelection?.catch(() => undefined);
     await this.attachmentSelection?.catch(() => undefined);
     await this.sentSelection?.catch(() => undefined);
+    await this.moveSelection?.catch(() => undefined);
+    await this.repairSelection?.catch(() => undefined);
     await this.retirement;
     // Release only AFTER socket/SQL retirement. Unknown server COMMIT still
     // conflicts with this UPDATE lock; failure leaves lease expiry as fallback.

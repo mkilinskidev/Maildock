@@ -1,3 +1,5 @@
+import { sql } from "drizzle-orm";
+import { prepareReceivingMove } from "./receiving-move";
 import { prepareReceivingAttachment } from "./receiving-attachment";
 import { prepareReceivingSentCopy } from "./receiving-sent-copy";
 import type { BlobStorage } from "../../../shared/application/blob-storage";
@@ -99,13 +101,19 @@ export type ReceivingIdentity =
   | Readonly<{ ephemeral: string }>;
 type Unit =
   | Readonly<{
-      kind: "repair" | "bootstrap" | "list" | "diagnostic";
+      kind: "bootstrap" | "list" | "diagnostic";
+    }>
+  | Readonly<{ kind: "repair" }>
+  | Readonly<{
+      kind: "repair";
+      pendingId: string;
+      repairKind: "command" | "content" | "attachment" | "sent";
     }>
   | Readonly<{ kind: "select"; role?: DestinationRole }>
   | Readonly<{
       kind: "store" | "move" | "exact-lookup";
       pendingId: string;
-      lookup?: "sent-copy";
+      lookup?: "sent-copy" | "move";
     }>
   | Readonly<{
       kind: "content-slice" | "attachment-slice";
@@ -196,11 +204,13 @@ type ReceivingOperationBody = (
 ) => Promise<ReceivingOperationResult>;
 export type ReceivingOperationHandler =
   | ReceivingOperationBody
+  | Readonly<{ repair: true }>
   | Readonly<{ topology: "list" | "select" }>
-  | Readonly<{ flags: true }>
+  | Readonly<{ flags: true; move?: true }>
+  | Readonly<{ move: true; flags?: true; sentCopy?: BlobStorage }>
   | Readonly<{ content: true }>
   | Readonly<{ attachment: BlobStorage }>
-  | Readonly<{ sentCopy: BlobStorage; flags?: true }>
+  | Readonly<{ sentCopy: BlobStorage; flags?: true; move?: true }>
   | Readonly<{
       /** Trusted composition only. This phase has no client or arbitrary SQL port. */
       preNetwork: (
@@ -340,16 +350,26 @@ export async function runReceivingOperation(
   handler: NonNullable<ReceivingOperationHandlers[ReceivingOperationKind]>,
   lifetime: AbortSignal,
 ) {
+  const moveOperation =
+    typeof handler !== "function" &&
+    "move" in handler &&
+    (operation.kind === "move" ||
+      (operation.kind === "exact-lookup" && operation.lookup === "move"));
+  let move: Awaited<ReturnType<typeof prepareReceivingMove>> | undefined;
   const sentStorage =
     typeof handler !== "function" &&
     "sentCopy" in handler &&
     (operation.kind === "append" ||
       (operation.kind === "exact-lookup" &&
-        (operation.lookup === "sent-copy" || !("flags" in handler))))
+        (operation.lookup === "sent-copy" ||
+          (!("flags" in handler) && !moveOperation))))
       ? handler.sentCopy
       : undefined;
   const flagOperation =
-    !sentStorage && typeof handler !== "function" && "flags" in handler;
+    !moveOperation &&
+    !sentStorage &&
+    typeof handler !== "function" &&
+    "flags" in handler;
   let sent: Awaited<ReturnType<typeof prepareReceivingSentCopy>> | undefined;
   const contentOperation =
     typeof handler !== "function" && "content" in handler;
@@ -778,6 +798,11 @@ export async function runReceivingOperation(
             if (connected) throw new Error("Owned socket cannot reconnect");
             connected = true;
           }
+          if (property === "messageMove") {
+            if (!move || operation.kind !== "move")
+              throw Error("MOVE requires R14 authority");
+            move.authorize(args[0], args[1], args[2]);
+          }
           if (property === "append") {
             if (operation.kind !== "append")
               throw new Error("APPEND requires typed append admission");
@@ -792,6 +817,7 @@ export async function runReceivingOperation(
           }
           if (
             property !== "append" &&
+            property !== "messageMove" &&
             [
               "messageMove",
               "messageFlagsAdd",
@@ -882,8 +908,8 @@ export async function runReceivingOperation(
     },
   }) as OwnedReceivingClient;
   const rejectDiagnostic = (entry: unknown) => {
-    if (flags || content || attachment || sent) {
-      (flags ?? content ?? attachment ?? sent)!.collector.reject();
+    if (flags || content || attachment || sent || move) {
+      (flags ?? content ?? attachment ?? sent ?? move)!.collector.reject();
       void retireSocket();
     } else {
       topologyFailure ??= new Error("IMAP diagnostic rejected topology", {
@@ -898,6 +924,67 @@ export async function runReceivingOperation(
     guard();
     capturedLifecycle = connection.receivingLifecycleVersion;
     phase = "PRE_NETWORK_CLAIM";
+    if (
+      operation.kind === "repair" &&
+      typeof handler !== "function" &&
+      "repair" in handler
+    ) {
+      if (
+        !("pendingId" in operation) ||
+        !("repairKind" in operation) ||
+        !operation.pendingId ||
+        !operation.repairKind ||
+        !("account" in operation.identity) ||
+        capturedLifecycle === undefined
+      )
+        throw Error("Invalid bounded repair admission");
+      const identity = operation.identity;
+      await boundary.executor.transaction(
+        async (db) => {
+          await db.execute(
+            sql`select maildock_receiving_repair_intent(${owner.actor}::uuid,${owner.generation}::bigint,${identity.account}::uuid,${identity.configurationVersion}::bigint,${capturedLifecycle}::bigint,${operation.repairKind},${operation.pendingId}::uuid)`,
+          );
+        },
+        {
+          deadline: Math.min(operation.deadline, performance.now() + 2000),
+          signal,
+        },
+      );
+      return;
+    }
+    if (moveOperation) {
+      move = await prepareReceivingMove({
+        operation: { ...operation, signal },
+        owner,
+        lifecycle: capturedLifecycle,
+        assertCurrent: guard,
+        executor: {
+          transaction: (work, budget) => {
+            guard();
+            if (
+              sqlWork.size ||
+              (phase !== "PRE_NETWORK_CLAIM" &&
+                phase !== "CLAIM_SETTLED" &&
+                phase !== "NETWORK_RETIRED") ||
+              (client && !socketSettled)
+            )
+              throw new Error("MOVE SQL phase fenced");
+            const pending = boundary.executor.transaction(work, budget);
+            sqlWork.add(pending);
+            void pending
+              .finally(() => sqlWork.delete(pending))
+              .catch(() => undefined);
+            return pending;
+          },
+        },
+      });
+      handler = move.execute;
+      connection = await boundary.validate({ ...operation, signal });
+      guard();
+      if (connection.receivingLifecycleVersion !== capturedLifecycle)
+        throw new Error("MOVE lifecycle changed after claim");
+      await move.revalidate();
+    }
     if (sentStorage) {
       sent = await prepareReceivingSentCopy({
         operation: { ...operation, signal },
@@ -1008,7 +1095,8 @@ export async function runReceivingOperation(
         flagOperation ||
         contentOperation ||
         attachmentOperation ||
-        sent
+        sent ||
+        move
           ? {
               debug() {},
               info() {},
@@ -1035,32 +1123,37 @@ export async function runReceivingOperation(
         : contentOperation || attachmentOperation || sent
           ? 64 * 1024
           : undefined,
-      receivingResponse: topology
+      receivingResponse: move
         ? (response, request) => {
             guard();
-            return topology!.collector.observe(response, request);
+            return move!.collector.observe(response, request);
           }
-        : flags
+        : topology
           ? (response, request) => {
               guard();
-              return flags!.collector.observe(response, request);
+              return topology!.collector.observe(response, request);
             }
-          : content
+          : flags
             ? (response, request) => {
                 guard();
-                return content!.collector.observe(response, request);
+                return flags!.collector.observe(response, request);
               }
-            : attachment
+            : content
               ? (response, request) => {
                   guard();
-                  return attachment!.collector.observe(response, request);
+                  return content!.collector.observe(response, request);
                 }
-              : sent
+              : attachment
                 ? (response, request) => {
                     guard();
-                    return sent!.collector.observe(response, request);
+                    return attachment!.collector.observe(response, request);
                   }
-                : undefined,
+                : sent
+                  ? (response, request) => {
+                      guard();
+                      return sent!.collector.observe(response, request);
+                    }
+                  : undefined,
       receivingBytes: (() => {
         let bytes = 0;
         return (count: number) => {
@@ -1082,12 +1175,13 @@ export async function runReceivingOperation(
       })(),
     });
     flags?.bind(client);
+    move?.bind(client);
 
     client.on("error", (error) => {
       if (topologyKind) topologyFailure ??= error;
       // Prepared intents may settle a matching failure after actual retirement.
       // Existing admission-only handlers retain R03's error cancellation.
-      if (typeof handler === "function" && !sent) cancellation.abort();
+      if (typeof handler === "function" && !sent && !move) cancellation.abort();
       else void retireSocket();
     });
     guard();
@@ -1318,6 +1412,10 @@ export async function runReceivingOperation(
       } as const);
     }
   } catch (error) {
+    if (move && !signal.aborted) {
+      await retireSocket();
+      await move.fail();
+    }
     if (sent && !signal.aborted) {
       await retireSocket();
       await sent.fail();

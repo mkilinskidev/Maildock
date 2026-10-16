@@ -1305,6 +1305,16 @@ export const messageCommands = pgTable(
       table.accountId,
       table.createdAt,
     ),
+    index("message_commands_receiving_move_idx")
+      .on(table.updatedAt, table.id)
+      .where(
+        sql`${table.action} in ('archive','trash') and ${table.status} in ('pending','executing','failed') and ${table.sourceConfigurationBinding} is not null`,
+      ),
+    index("message_commands_receiving_repair_idx")
+      .on(table.updatedAt, table.id)
+      .where(
+        sql`${table.status} in ('pending','executing','failed') and ${table.sourceConfigurationBinding} is not null`,
+      ),
     index("message_commands_flag_work_idx")
       .on(table.accountId, table.createdAt, table.id)
       .where(

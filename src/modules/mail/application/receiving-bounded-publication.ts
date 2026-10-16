@@ -110,6 +110,7 @@ export class ReceivingBoundedPublication {
       sourceRemoved: boolean;
       flags: readonly string[];
       modseq: bigint | null;
+      accepted?: true;
     }>,
     options: Options,
   ) {
