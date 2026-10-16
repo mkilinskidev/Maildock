@@ -97,7 +97,7 @@ export class FailureDiagnostics {
       admission: a.at,
       schedulerWaitMs: a.waitMs,
       eligibleWaitMs: Math.max(0, a.at - (this.eligible.get(user) ?? a.at)),
-      deadline: a.at + 4000,
+      deadline: a.at + (a.kind === "history" ? 2000 : 4000),
       events: [],
       transactions: 0,
       finished: false,
@@ -145,6 +145,31 @@ export class FailureDiagnostics {
   }
   resources() {
     return { maxPgSockets: this.maxPgSockets, livePgSockets: this.pgSockets };
+  }
+
+  control<T>(work: () => Promise<T>): Promise<T> {
+    const at = performance.now();
+    const trace: Trace = {
+      id: this.traces.length + 1,
+      user: "coordinator",
+      kind: "control",
+      admission: at,
+      schedulerWaitMs: 0,
+      eligibleWaitMs: 0,
+      deadline: at + 2000,
+      events: [],
+      transactions: 0,
+      finished: false,
+    };
+    this.traces.push(trace);
+    return this.context.run(trace, async () => {
+      try {
+        return await work();
+      } finally {
+        this.event(trace, "control.settled");
+        trace.finished = true;
+      }
+    });
   }
 
   imapOptions(user: string, options: ImapFlowOptions): ImapFlowOptions {
@@ -204,7 +229,13 @@ export class FailureDiagnostics {
         if (!trace || trace.finished) return super.transaction(work, options);
         const ordinal = ++trace.transactions;
         const phase =
-          ordinal === 1 ? "lease" : ordinal === 2 ? "recovery" : "persistence";
+          trace.kind === "control"
+            ? "control"
+            : ordinal === 1
+              ? "lease"
+              : ordinal === 2
+                ? "recovery"
+                : "persistence";
         event(trace, `postgres.${phase}.request`, {
           ordinal,
           deadline: options.deadline,
@@ -215,7 +246,28 @@ export class FailureDiagnostics {
               ordinal,
             });
             try {
-              return await work(db);
+              let query = 0;
+              const measured = {
+                ...db,
+                execute: async (
+                  ...args: Parameters<ReceivingDatabase["execute"]>
+                ) => {
+                  const id = ++query;
+                  event(trace, `postgres.${phase}.query-start`, {
+                    ordinal,
+                    query: id,
+                  });
+                  try {
+                    return await db.execute(...args);
+                  } finally {
+                    event(trace, `postgres.${phase}.query-end`, {
+                      ordinal,
+                      query: id,
+                    });
+                  }
+                },
+              } as unknown as ReceivingDatabase;
+              return await work(measured);
             } finally {
               event(trace, `postgres.${phase}.work-end`, {
                 ordinal,

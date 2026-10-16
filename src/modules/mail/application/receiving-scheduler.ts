@@ -60,6 +60,8 @@ export class ReceivingScheduler {
   private readonly accounts: Account[];
   private readonly config;
   private readonly limit: number;
+  private readonly historyLimit: number;
+  private activeHistory = 0;
   private readonly cancellation = new AbortController();
   private readonly active = new Set<Promise<void>>();
   private lifetime?: Promise<void>;
@@ -119,15 +121,21 @@ export class ReceivingScheduler {
     if (identities.size !== input.accounts.length)
       throw new Error("Duplicate receiving account");
     // Each active turn can request at most one DB transaction at a time.
-    // Stage 1 permits D executing plus D queued transactions. Conservatively
-    // Elected/typed admission caps data at 2D-1 and serializes one control
-    // admission separately. The original metadata-only harness has no control
-    // request and retains its accepted 2D profile. Neither reserves a runner.
+    // D executing plus D queued permits 2D-1 data admissions and one serialized
+    // control request. This reserves aggregate headroom, not a running lane.
     this.limit = Math.min(
       this.config.tuning.workers,
       2 * input.executor.capacity -
         ((input.controlHeadroom ?? !!input.operations) ? 1 : 0),
     );
+    // History has only two seconds INCLUDING network and SQL queue time.
+    // While it runs, bound data to D so a third publication cannot consume
+    // that lifetime waiting behind two others. Keep excess work in selection,
+    // before its deadline begins; current/user-only rotation retains 2D-1.
+    this.historyLimit =
+      (input.controlHeadroom ?? !!input.operations)
+        ? Math.min(this.limit, input.executor.capacity)
+        : this.limit;
     this.accounts = input.accounts.map((config) => {
       const timing = receivingTiming(config.timing);
       return {
@@ -380,6 +388,7 @@ export class ReceivingScheduler {
       !this.protectedActive &&
       protectedCandidates.length
     ) {
+      if (this.active.size >= this.historyLimit) return;
       const oldestHistorySince = Math.min(
         ...protectedCandidates.map((a) => a.historySince!),
       );
@@ -408,12 +417,14 @@ export class ReceivingScheduler {
         kind: "fresh" as const,
         protectedHistory: false,
       };
-    if (history.length)
+    if (history.length) {
+      if (this.active.size >= this.historyLimit) return;
       return {
         account: this.rotate(history, "history")!,
         kind: "history" as const,
         protectedHistory: false,
       };
+    }
   }
 
   private admit(
@@ -424,6 +435,7 @@ export class ReceivingScheduler {
       return;
     }
     const { account, kind, protectedHistory } = selection;
+    if (kind === "history") this.activeHistory++;
     this.lastUser = false;
     const wakeGeneration = account.wakeGeneration;
     const at = performance.now();
@@ -494,6 +506,7 @@ export class ReceivingScheduler {
           this.diagnostic(() => account.config.onError?.(error, retry));
         }
       } finally {
+        if (kind === "history") this.activeHistory--;
         if (protectedHistory) this.protectedActive = false;
         this.wake?.();
       }
@@ -544,6 +557,10 @@ export class ReceivingScheduler {
     );
   }
 
+  private get dataLimit() {
+    return this.activeHistory ? this.historyLimit : this.limit;
+  }
+
   private async wait() {
     const now = performance.now();
     const next = Math.min(
@@ -565,7 +582,7 @@ export class ReceivingScheduler {
       };
       this.wake = done;
       // If all slots are held, only settlement can make admission possible.
-      if (this.active.size < this.limit && Number.isFinite(next))
+      if (this.active.size < this.dataLimit && Number.isFinite(next))
         timer = setTimeout(done, Math.max(1, next - now));
       if (this.cancellation.signal.aborted) done();
     });
@@ -575,7 +592,7 @@ export class ReceivingScheduler {
     while (!this.cancellation.signal.aborted) {
       while (
         !this.cancellation.signal.aborted &&
-        this.active.size < this.limit
+        this.active.size < this.dataLimit
       ) {
         const selection = this.select(performance.now());
         if (!selection) break;

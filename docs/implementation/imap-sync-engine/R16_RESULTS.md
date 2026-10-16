@@ -712,3 +712,274 @@ ownership violation or unresolved HTML resource-exhaustion defect was demonstrat
 after the targeted correction. Passing W2, HTML and actual Compose fault recovery
 do not substitute for W4 acceptance. Any final regression failures below remain
 additional explicit release risks. Stop at R16.
+
+## Final R16 closure — SQL executor contention and release verification
+
+2026-10-16. Continued from accepted `82da4c22935c5335fc0f95b3de9d173566716aa8`
+on `feature/imap-sync-r16-production-cutover`. All earlier R16 results, including
+the failed W4 run and its incomplete acceptance, remain historical evidence above.
+
+### 1. Root cause: queue capacity was mistaken for available history lifetime
+
+The preserved failed run identifies both borrowers ahead of `stage3c-5`; this
+is no longer only a hypothesis inferred from one delayed socket:
+
+| W4 history borrower | SQL socket created (ms)                   | Publication callback (ms)                 | Local scope released (ms) |
+| ------------------- | ----------------------------------------- | ----------------------------------------- | ------------------------- |
+| stage3c-3           | 82,506.9144                               | 82,538.2695–83,627.0273                   | 83,730.3487               |
+| stage3c-4           | 82,630.7833                               | 82,690.1242–83,646.8479                   | 83,720.2811               |
+| stage3c-5           | requested 82,684.6481; socket 83,723.0025 | 83,746.3326–84,378.3816, deadline failure | 84,390.9489               |
+
+The third operation waited **1,038.3544 ms**. Both D=2 slots belonged to actual
+other-account history publications during that interval. Its owner validation
+took only **1.6436 ms**, source recovery callback **45.7427 ms**, and recovery
+retirement to publication request **165.6767 ms**. The first two callbacks lasted
+**1,088.7578 / 956.7237 ms**, followed by **103.3214 / 73.4332 ms** through
+COMMIT and local resource retirement. A waiting SQL borrower cannot use that
+capacity until retirement finishes. No IMAP socket was retained into publication.
+
+History's absolute deadline is established by `ReceivingScheduler.admit` at
+`admission + min(operationMs, historyTurnMs)`, **2,000 ms** here. It does not
+start at SQL acquisition. The failed admission was 82,377.9839 and deadline
+84,377.9839; only **631.6513 ms** remained when its SQL callback began. Stage 1
+correctly cancelled the expired scope and retained uncertain-result recovery.
+The old diagnostic trace's top-level four-second history deadline was a reporting
+error; the transaction deadline and actual scheduler had always been two seconds.
+
+W2 cannot admit a third data operation. W4 could admit `min(W,2D-1)=3` data
+operations, each legally owning one executing/queued SQL request. That is a valid
+aggregate resource bound with protected control headroom, but it is insufficient
+admission policy for this two-second history lifetime. The bottleneck combines
+production admission and the service time of the existing 128-UID publication.
+It is not an extra pool, an unaccounted fixture executor, owner-validation latency,
+or evidence of a Stage 1 authority defect.
+
+One bounded pre-change W4 diagnostic completed all original conditions, but still
+recorded **733.0343 ms** request-to-socket delay and history callbacks up to
+**899.7203 ms**. PostgreSQL samples during that long queue show two active
+metadata INSERT streams without blocking PIDs. Separate samples show renewal's
+exclusive coordinator lock waiting for data's compatible SHARE lock. These are
+distinct phenomena. R15 adds legitimate live observation publications/revisions;
+the exact R oracle and all original workload targets remain unchanged.
+
+### 2. Minimal correction and its tradeoff
+
+The existing scheduler retains its normal `min(W,2D-1)` admission limit. In the
+elected/typed composition, history is selected only when fewer than D data
+operations are active, and while any history operation remains active further
+data admission is bounded by D. Excess work waits in the existing selector
+**before its own lifetime starts**. History capacity is checked before advancing
+the rotation cursor. There is no extra queue, SQL executor, process or service.
+
+This is deliberately conservative: SQL demand is bounded over a history turn's
+whole network/publication/retirement lifetime rather than predicting its future
+SQL start. W4 can still allocate three current/user data turns when history is
+absent; acceptance observed that actual maximum. With history active, W4/D2
+allows two data turns. W1, W2/D2 and D1 limits are unchanged. The original
+standalone no-control scheduler fixture retains its accepted profile.
+
+Protected history selection, fresh-first startup, current/user rotation, account
+C=1, one coalesced control admission, D executing/D queued limits, fencing,
+deferred COMMIT checks, cancellation and retirement remain on the same paths.
+The history allocation is held until its original work settles, including on
+cancellation; its finally block releases the history count. No transaction,
+operation or scenario deadline was increased. No historical publication, HTML,
+remote mutation, SMTP or credential behavior was redesigned.
+
+### 3. Stage 3C acceptance and measurement boundaries
+
+One complete final-source run completed in **114,919.1432 ms**, including fixture
+preparation and cleanup, with the original five accounts, fresh requirements,
+three history pages per account, fixed phase deadlines, restart, failure isolation,
+F/E/R and placement oracles. Both W2 and W4 **PASS**. All 18 boundaries per run
+passed; final history counts were `[3,3,3,3,3]`. Restart and recovery passed.
+Only the intentionally unavailable account produced expected AUTHENTICATE errors;
+there were **zero unexpected operation errors** and no control errors.
+
+| Measurement (ms unless noted)                                | W2                           | W4                             |
+| ------------------------------------------------------------ | ---------------------------- | ------------------------------ |
+| History SQL request-to-socket p50 / p95 / max                | 2.03 / 13.48 / 14.76         | 1.68 / 12.71 / 13.52           |
+| All SQL request-to-socket p50 / p95 / max, including control | 2.70 / 15.43 / 74.77         | 2.23 / 33.69 / 309.94          |
+| Publication callback p50 / p95 / max                         | 59.72 / 689.61 / 792.60      | 66.30 / 794.72 / 978.53        |
+| History whole lifetime p50 / p95 / max                       | 867.30 / 993.31 / 1,099.17   | 917.94 / 1,105.10 / 1,118.88   |
+| Owner validation callback maximum                            | 28.28                        | 9.36                           |
+| Source recovery callback maximum, including lock waits       | 44.42                        | 324.29                         |
+| SQL work-end through COMMIT and retirement maximum           | 93.69                        | 136.33                         |
+| IMAP local retirement maximum                                | 0.82                         | 1.14                           |
+| Fresh visibility p50 / p95 / max                             | 703.37 / 4,565.22 / 5,566.17 | 1,981.91 / 5,972.36 / 6,113.72 |
+| Maximum data allocations / IMAP sockets / SQL scopes         | 2 / 2 / 2                    | 3 / 3 / 2                      |
+| Sampled maximum SQL waiters                                  | 0                            | 1                              |
+| Per-account overlap                                          | false                        | false                          |
+| Final active data / IMAP / PostgreSQL sockets                | 0 / 0 / 0                    | 0 / 0 / 0                      |
+
+Request-to-socket is an **upper bound on executor queue wait**, including client
+construction and event-loop scheduling; it is not labelled pure server execution.
+Callback duration includes PostgreSQL work, query round trips and application
+metadata processing, excluding queue/setup and COMMIT/retirement. A bounded 20-ms
+PostgreSQL sampler records state, wait type, blocking PIDs, normalized query and
+executor executing/waiting counts. `pg_stat_statements` in the disposable fixture
+separately records server statement calls and execution durations. Server durations
+include lock wait; the sampled lock evidence identifies blocking queries but is
+not an exact per-transaction lock-time decomposition. Raw events retain connection
+setup, protocol replies, source validation and actual remote retirement ordering.
+These measurements do not claim a provider-independent latency guarantee.
+
+The independent server sampler observed transaction elapsed times at COMMIT up
+to **790.725 ms (W2)** and **1,134.679 ms (W4)**. These are sampled server-side
+elapsed observations, not an assertion that a 20-ms sampler sees every exact
+transaction end. Client scope lifetimes and the complete event stream are also
+retained in the evidence, separately from callback and statement durations.
+
+Server-side examples from the complete acceptance run (1,940 INSERTs of each
+kind per W profile) separate actual statement work from executor queue time:
+message INSERT mean/max **1.924/23.652 ms (W2), 2.307/27.366 ms (W4)**;
+placement INSERT mean/max **0.449/3.667 ms (W2), 0.393/4.066 ms (W4)**.
+Renewal server execution, including its separately observed coordinator lock
+wait, reached **747.207 ms (W2), 415.582 ms (W4)**. Individual cheap statements
+do not make a 128-UID transaction instantaneous. The raw samples also preserve
+the separate arrival-notification sequence-row contention during fresh work.
+
+The versioned [closure evidence](../../../experiments/receiving-production/r16-closure-evidence.json)
+contains the original three overlapping scopes, separate before/after metrics
+and hashes for compressed raw diagnostic/acceptance traces. The pre-change
+diagnostic PASS is not substituted for the earlier failed W4 run.
+
+Instrumentation is confined to the existing benchmark and its diagnostic adapter.
+It now attributes renewal/control scopes separately, records awaited execute calls
+and reports the correct history deadline. It does not change the benchmark's
+workload, acceptance assertions or production SQL resources.
+
+### 4. Deterministic regression and complete repository suite
+
+`tests/receiving-sql-contention.test.ts` uses the real selector with a controlled
+turn boundary and fake monotonic time. With two history publications held, the
+original code admits a third and fails the two-active assertion (**1/1 FAIL**).
+After correction it admits two, waits outside the third lifetime for 1,100 ms,
+then starts that turn with its original full 2,000-ms budget after retirement.
+Stop cancels both remaining turns and drains all allocations (**1/1 PASS**).
+This isolates the admission defect deterministically; the real SQL/socket/progress
+coverage is supplied separately by Stage 3C and repository integration tests.
+
+The single complete final-source repository run selected **132 files / 2,031
+cases**: **2,029 passed, two failed, zero skipped/pending**, in **1,485.72 s**.
+Command: `pnpm test --maxWorkers=1 --no-file-parallelism` with default and JSON
+reporters. The count adds the three final CID controls and this admission
+regression to the earlier 2,027-case pre-CID full run. The earlier interrupted
+pre-correction run is not a completed result and contributes no combined counts.
+
+The full run passed the previously troublesome healthy-versus-hung ordering case,
+all sustained W1/W2/W4 visibility/history cases, actual worker lifecycle, SQL
+authority/COMMIT-loss controls, admission **20/20**, HTML authorization **21/21**,
+SMTP/outgoing **47/47** and the new contention regression. Its two failures remain
+explicit:
+
+1. R15 restart/takeover (`receiving-demand-settlement.integration.test.ts:451`):
+   the **first** owner's five-second `reconcile_after === "1"` barrier expired,
+   before `first.stop()`, flag mutation, lost wake or second-owner creation.
+   This run therefore does not demonstrate a failed takeover or dropped wake;
+   it does fail the mandatory first quiet-observation requirement. R15 was 36/37.
+2. Scheduler health gate (`receiving-scheduler.integration.test.ts:1215`):
+   the final zero-error assertion received one `ReceivingUnresolvedError` at
+   **72,959.4291 ms**, phase **commit**, retry **100 ms**. The preceding gate,
+   frontier, eventual history and retirement assertions passed. This fixture has
+   a fixed **1,000-ms** history lifetime; its original deadline was not changed.
+   Scheduler was 30/31.
+
+Both failing fixtures use **W1/D1**, for which the old and new effective data
+limits are identically one; their test files are byte-identical to accepted HEAD.
+This is evidence against a changed admission decision causing these failures,
+not sufficient evidence to label every failure harmless or erase it. Exactly one
+bounded two-file comparison per accepted/current tree is recorded separately.
+No assertion, timeout, fixture barrier or applicable test was changed or skipped.
+
+The bounded comparison ran both entire unchanged files, serially, once per tree:
+
+| Source                     | R15   | Scheduler | Total |
+| -------------------------- | ----- | --------- | ----- |
+| Accepted `82da4c2` archive | 37/37 | 29/31     | 66/68 |
+| Corrected current source   | 37/37 | 31/31     | 68/68 |
+
+Accepted source instead failed sustained-W4's observer-based age/rotation
+assertion for two candidate identities and the known healthy-versus-hung ordering
+assertion. For the latter, first healthy completion was **67,807.6173 ms** versus
+bad-account timeout **67,773.7517 ms**, **33.8656 ms later**. The preceding healthy
+error/frontier and bad-account retry assertions passed. This is a strict ordering
+failure, not observed absence of healthy progress. Current source passed that
+case both in the complete run and in the comparison. No special additional rerun
+campaign followed the comparison.
+
+The mismatched failures establish variability, not a conclusive explanation of
+the complete run's R15 barrier and health-gate COMMIT failure, nor resolution of
+accepted source's observer-order assertion. The separate 68/68 is **not** combined
+with 2,029 passes to manufacture a green full suite. These remain explicit
+release-validation limitations, rather than suppressed baseline exceptions.
+
+### 5. Final build, quality and deployment
+
+Application/worker typecheck, repository lint and changed-code Prettier passed.
+Changed/new supported-file Prettier, documentation formatting and working/staged
+`git diff --check` passed. Repository-wide `pnpm format:check` retains **75
+warnings, all outside this commit's changed/new files** (including historical
+outputs, ignored local runtime evidence, the existing capability contract and
+diagnostic RPC source). No unrelated files were reformatted.
+
+Production `docker compose ... build` passed for the normal application and
+PostgreSQL images. Application image:
+`sha256:519a2dfa525cd0875e4e8af066f5abf9866cf00793cc1b5628dd00cf351cf3c8`.
+Fresh disposable project `maildock-r16-closure` used the unchanged base Compose,
+normal entrypoint, **54 real migrations**, new isolated volumes and generated
+secrets outside the checkout. The existing fixture peer was added only through
+an external test override. App/PostgreSQL became healthy. `setup`, `receive`
+(**2,048 placements, two complete INBOX histories**), verified-TLS `ingress`
+(live/ready **200**, unauthenticated accounts **401**), `reader` and `outgoing`
+passed through the actual built web/worker and ordinary application services.
+
+The optional outgoing smoke was initially invoked without its documented reader
+prerequisite. It failed `pending != ready` while preparing quoted resources,
+before creating SMTP work. The unchanged reader phase then passed, followed by
+one outgoing run: **two SMTP deliveries, one Maildock-policy APPEND**, matching
+SMTP/APPEND MIME digest and no server-policy duplicate APPEND. The preliminary
+fixture-order failure is retained; no assertion or production source was changed
+to hide it. Reader also exercised the authenticated actual render route.
+
+Independent PostgreSQL inspection observed live elected owner
+`391096dc-4072-46c3-bc85-dcd815875825`, generation **1**. Normal defaults remain
+W2/C1/D2. Controlled `compose stop app` completed in **677.2082 ms**; logs show
+`worker.shutdown` with **SIGTERM**, followed by `jobs.stopped`, without runtime
+errors. The app container's observed exit code was **143** after SIGTERM, not a
+claimed zero exit. Independent post-stop SQL showed the same owner tombstone,
+`live=false` and **zero receiving SQL backends**. The still-running fixture showed
+**zero active IMAP sockets**, peak two and per-account peak one. `down
+--remove-orphans` removed the disposable containers/network; isolated volumes and
+local evidence were preserved.
+
+Composition inspection and the complete actual-process test confirm one receiving
+worker, the existing owner-routed operation registry and independent SMTP/outgoing
+registration. No competing legacy receiving executor, extra production queue,
+worker or service was introduced. Environment/session/setup secrets remain only
+in ignored logs or external disposable evidence; none appear in the committed
+source, report or compressed benchmark evidence. Final evidence directory:
+`C:/Users/mateu/AppData/Local/Temp/maildock-r16-final-closure`; complete-run and
+paired JSON reports are in its parent TEMP directory, with hashes/counts retained
+in the versioned closure evidence.
+
+### 6. Final decision and remaining limits
+
+| Final closure gate  | Result  | Evidence/remaining condition                                                                          |
+| ------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| W4 diagnosis        | PASS    | Both actual blocking publications identified; queue, SQL work and retirement separated                |
+| Minimal correction  | PASS    | Existing selector delays excess history admission; deterministic original FAIL/current PASS           |
+| Stage 3C W2/W4      | PASS    | Original complete workload, three pages/account, restart, failure isolation and all oracles           |
+| Complete regression | PARTIAL | 2,029/2,031; first-observation barrier and health-gate COMMIT failures remain inconclusive            |
+| Docker and quality  | PASS    | Built/healthy normal deployment, real receiving/SMTP, controlled retirement; changed-file checks pass |
+
+**Final decision: PARTIAL.** The demonstrated W4 admission contention is corrected
+and both complete benchmark profiles pass. The complete final-source suite still
+has two applicable failures; their causes have not been established conclusively
+by the single bounded comparison, and different accepted-source failures prevent
+calling them individually justified baseline-only exceptions. A passing focused
+68-case selection does not resolve that release gate. No data-loss, unsafe replay,
+ownership or resource-retirement defect was demonstrated in the completed checks;
+that is not a substitute for the outstanding regression investigation. There is
+no green complete-suite claim or additional rerun campaign. Stop at R16; no push,
+merge, pull request or R17 work was performed.

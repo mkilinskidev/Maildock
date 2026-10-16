@@ -72,6 +72,8 @@ let database: ReturnType<typeof createDatabase> | undefined;
 let captureFailure: (() => Promise<void>) | undefined;
 let diagnostic: FailureDiagnostics | undefined;
 let serverEvidence: (() => Promise<void>) | undefined;
+let sampling: Promise<void> | undefined;
+let sampleSql = true;
 const save = () =>
   writeFileSync(
     new URL(
@@ -145,6 +147,11 @@ async function smoke() {
     .start();
   containers.push(dovecot);
   const pg = await new GenericContainer("postgres:17.6-alpine")
+    .withCommand([
+      "postgres",
+      "-c",
+      "shared_preload_libraries=pg_stat_statements",
+    ])
     .withLabels({ "maildock.stage3c": "disposable" })
     .withEnvironment({
       POSTGRES_USER: "fixture",
@@ -190,6 +197,7 @@ async function smoke() {
     /unix_listener anvil-auth-penalty \{\s*mode = 0\s*\}/,
   );
   await migrate(database.db, { migrationsFolder: "db/migrations" });
+  await db`create extension pg_stat_statements`;
   evidence.versions = {
     dovecot: await command(dovecot, ["dovecot", "--version"]),
     postgres: (await db`select version()`)[0].version,
@@ -301,6 +309,24 @@ async function smoke() {
       control: [],
     };
     (evidence.runs as unknown[]).push(run);
+    const sqlSamples: unknown[] = [];
+    run.sqlSamples = sqlSamples;
+    await db`select pg_stat_statements_reset()`;
+    sampling = (async () => {
+      while (sampleSql) {
+        const rows = await db`select pid, state, wait_event_type, wait_event,
+          pg_blocking_pids(pid) as blockers, query,
+          extract(epoch from clock_timestamp()-xact_start)*1000 as transaction_ms
+          from pg_stat_activity where application_name='maildock-receiving-stage1'`;
+        if (rows.length)
+          sqlSamples.push({
+            at: performance.now(),
+            executor: executor?.snapshot,
+            rows,
+          });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    })();
     outcomes[`W${workers}`] = "PARTIAL: started";
     const admissions = run.admissions as {
       account: string;
@@ -618,47 +644,48 @@ async function smoke() {
         // admission; per-turn owner validation takes a compatible share lock.
         // A prototype FOR UPDATE renewal inside the two-second history turn
         // serialized unrelated accounts behind another result's owner lock.
-        beforeAdmission: async () => {
-          const at = performance.now();
-          try {
-            const live = await executor!.transaction(
-              async (tx) => {
-                const [row] = await tx.execute(
-                  sql`select maildock_receiving_renew(${actor}::uuid,${owner.generation}::bigint,60000) as live`,
-                );
-                return row.live === true;
-              },
-              { deadline: Math.min(deadline, performance.now() + 2000) },
-            );
-            (run.control as unknown[]).push({
-              at,
-              durationMs: performance.now() - at,
-              live,
-            });
-            if (!live)
+        beforeAdmission: () =>
+          diagnostic!.control(async () => {
+            const at = performance.now();
+            try {
+              const live = await executor!.transaction(
+                async (tx) => {
+                  const [row] = await tx.execute(
+                    sql`select maildock_receiving_renew(${actor}::uuid,${owner.generation}::bigint,60000) as live`,
+                  );
+                  return row.live === true;
+                },
+                { deadline: Math.min(deadline, performance.now() + 2000) },
+              );
+              (run.control as unknown[]).push({
+                at,
+                durationMs: performance.now() - at,
+                live,
+              });
+              if (!live)
+                errors.push({
+                  user: "coordinator",
+                  retry: 0,
+                  at,
+                  error: "Admission renewal fenced",
+                });
+              return live;
+            } catch (error) {
               errors.push({
                 user: "coordinator",
                 retry: 0,
                 at,
-                error: "Admission renewal fenced",
+                error: String(error),
               });
-            return live;
-          } catch (error) {
-            errors.push({
-              user: "coordinator",
-              retry: 0,
-              at,
-              error: String(error),
-            });
-            (run.control as unknown[]).push({
-              at,
-              durationMs: performance.now() - at,
-              error: String(error),
-            });
-            save();
-            throw error;
-          }
-        },
+              (run.control as unknown[]).push({
+                at,
+                durationMs: performance.now() - at,
+                error: String(error),
+              });
+              save();
+              throw error;
+            }
+          }),
         historyAllowed: () => history,
         onAdmission: (a) => {
           admissions.push(a);
@@ -1065,8 +1092,15 @@ async function smoke() {
     assert.equal(diagnostic!.resources().livePgSockets, 0);
     run.maxLatencyMs = Math.max(...injections.map((s) => s.latencyMs!));
     run.final = recovered;
+    run.sqlStatements =
+      await db`select query, calls, total_exec_time, min_exec_time,
+      max_exec_time, mean_exec_time, rows from pg_stat_statements
+      where query not like '%pg_stat_%' order by total_exec_time desc limit 80`;
     await executor.stop();
     executor = undefined;
+    sampleSql = false;
+    await sampling;
+    sampleSql = true;
     diagnostic!.restore();
     diagnostic = undefined;
     outcomes[`W${workers}`] = "PASS";
@@ -1125,6 +1159,8 @@ try {
     await executor?.stop();
   });
   await cleanup("reader-close", async () => {
+    sampleSql = false;
+    await sampling;
     await reader?.end({ timeout: 0 });
   });
   await cleanup("database-close", async () => {

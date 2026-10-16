@@ -1,0 +1,3328 @@
+{
+  "acceptedHead": "82da4c22935c5335fc0f95b3de9d173566716aa8",
+  "branch": "feature/imap-sync-r16-production-cutover",
+  "rootCause": "Three admitted history turns share D=2; the third fixed operation lifetime is spent waiting behind two actual publications and their retirement.",
+  "preservedOriginalFailure": {
+    "outcome": "FAIL: mandatory acceptance condition",
+    "traces": [
+      {
+        "id": 28,
+        "user": "stage3c-3",
+        "kind": "history",
+        "admission": 82280.664,
+        "schedulerWaitMs": 76.23510000000533,
+        "eligibleWaitMs": 0,
+        "deadline": 86280.664,
+        "events": [
+          {
+            "phase": "scheduler.admission",
+            "at": 82280.6894,
+            "detail": {
+              "active": 1
+            }
+          },
+          {
+            "phase": "execution.start",
+            "at": 82281.1844
+          },
+          {
+            "phase": "postgres.lease.request",
+            "at": 82281.193,
+            "detail": {
+              "ordinal": 1,
+              "deadline": 84280.664
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82295.0401,
+            "detail": {
+              "id": 114
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82298.1902,
+            "detail": {
+              "id": 114
+            }
+          },
+          {
+            "phase": "postgres.lease.admitted-work-start",
+            "at": 82313.0669,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.lease.lock-request",
+            "at": 82313.0833
+          },
+          {
+            "phase": "postgres.lease.lock-acquired",
+            "at": 82315.7088
+          },
+          {
+            "phase": "postgres.lease.validated",
+            "at": 82315.7526
+          },
+          {
+            "phase": "postgres.lease.work-end",
+            "at": 82315.7687,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 82319.8174,
+            "detail": {
+              "id": 114
+            }
+          },
+          {
+            "phase": "postgres.lease.settled-slot-released",
+            "at": 82319.9394,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.recovery.request",
+            "at": 82319.9972,
+            "detail": {
+              "ordinal": 2,
+              "deadline": 84280.664
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82324.16,
+            "detail": {
+              "id": 115
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82325.5218,
+            "detail": {
+              "id": 115
+            }
+          },
+          {
+            "phase": "postgres.recovery.admitted-work-start",
+            "at": 82342.5279,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "postgres.recovery.work-end",
+            "at": 82363.7278,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 82367.9995,
+            "detail": {
+              "id": 115
+            }
+          },
+          {
+            "phase": "postgres.recovery.settled-slot-released",
+            "at": 82368.2721,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "imap.connect-call",
+            "at": 82368.6546
+          },
+          {
+            "phase": "imap.socket-created",
+            "at": 82369.2331,
+            "detail": {
+              "id": 116
+            }
+          },
+          {
+            "phase": "imap.tcp-connected",
+            "at": 82371.7586,
+            "detail": {
+              "id": 116
+            }
+          },
+          {
+            "phase": "imap.tls-secure",
+            "at": 82389.5975,
+            "detail": {
+              "id": 116
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82391.0677,
+            "detail": {
+              "count": 103
+            }
+          },
+          {
+            "phase": "imap.greeting-or-unsolicited",
+            "at": 82391.2085,
+            "detail": {
+              "command": "OK"
+            }
+          },
+          {
+            "phase": "imap.ID.sent",
+            "at": 82391.4907,
+            "detail": {
+              "tag": "1"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82392.3539,
+            "detail": {
+              "count": 25
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82392.5015,
+            "detail": {
+              "count": 20
+            }
+          },
+          {
+            "phase": "imap.ID.reply",
+            "at": 82392.5217,
+            "detail": {
+              "status": "OK",
+              "tag": "1"
+            }
+          },
+          {
+            "phase": "imap.AUTHENTICATE.sent",
+            "at": 82392.599,
+            "detail": {
+              "tag": "2"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82393.5685,
+            "detail": {
+              "count": 4
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82404.6845,
+            "detail": {
+              "count": 452
+            }
+          },
+          {
+            "phase": "imap.AUTHENTICATE.reply",
+            "at": 82404.8247,
+            "detail": {
+              "status": "OK",
+              "tag": "2"
+            }
+          },
+          {
+            "phase": "imap.ID.sent",
+            "at": 82405.1786,
+            "detail": {
+              "tag": "3"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82406.3923,
+            "detail": {
+              "count": 66
+            }
+          },
+          {
+            "phase": "imap.ID.reply",
+            "at": 82406.4993,
+            "detail": {
+              "status": "OK",
+              "tag": "3"
+            }
+          },
+          {
+            "phase": "imap.NAMESPACE.sent",
+            "at": 82406.604,
+            "detail": {
+              "tag": "4"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82407.3215,
+            "detail": {
+              "count": 80
+            }
+          },
+          {
+            "phase": "imap.NAMESPACE.reply",
+            "at": 82407.3917,
+            "detail": {
+              "status": "OK",
+              "tag": "4"
+            }
+          },
+          {
+            "phase": "imap.ENABLE.sent",
+            "at": 82407.4465,
+            "detail": {
+              "tag": "5"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82408.5922,
+            "detail": {
+              "count": 57
+            }
+          },
+          {
+            "phase": "imap.ENABLE.reply",
+            "at": 82408.7133,
+            "detail": {
+              "status": "OK",
+              "tag": "5"
+            }
+          },
+          {
+            "phase": "imap.connect-complete",
+            "at": 82408.7569
+          },
+          {
+            "phase": "imap.LIST.sent",
+            "at": 82408.8836,
+            "detail": {
+              "tag": "6"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82409.8713,
+            "detail": {
+              "count": 78
+            }
+          },
+          {
+            "phase": "imap.LIST.reply",
+            "at": 82410.01,
+            "detail": {
+              "status": "OK",
+              "tag": "6"
+            }
+          },
+          {
+            "phase": "imap.LSUB.sent",
+            "at": 82410.1767,
+            "detail": {
+              "tag": "7"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82410.7846,
+            "detail": {
+              "count": 43
+            }
+          },
+          {
+            "phase": "imap.LSUB.reply",
+            "at": 82410.8422,
+            "detail": {
+              "status": "OK",
+              "tag": "7"
+            }
+          },
+          {
+            "phase": "imap.SELECT.sent",
+            "at": 82411.0319,
+            "detail": {
+              "tag": "8"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82414.6528,
+            "detail": {
+              "count": 368
+            }
+          },
+          {
+            "phase": "imap.SELECT.reply",
+            "at": 82415.7054,
+            "detail": {
+              "status": "OK",
+              "tag": "8"
+            }
+          },
+          {
+            "phase": "imap.UID SEARCH.sent",
+            "at": 82415.8481,
+            "detail": {
+              "tag": "9"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82417.3207,
+            "detail": {
+              "count": 567
+            }
+          },
+          {
+            "phase": "imap.UID SEARCH.reply",
+            "at": 82417.708,
+            "detail": {
+              "status": "OK",
+              "tag": "9"
+            }
+          },
+          {
+            "phase": "imap.UID FETCH.sent",
+            "at": 82417.9255,
+            "detail": {
+              "tag": "A"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82419.7324,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82421.0036,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82422.0861,
+            "detail": {
+              "count": 2118
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82423.2707,
+            "detail": {
+              "count": 118
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82423.906,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82425.3853,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82426.6836,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82427.9579,
+            "detail": {
+              "count": 1532
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82428.5716,
+            "detail": {
+              "count": 646
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82429.135,
+            "detail": {
+              "count": 2241
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82430.4192,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82431.3902,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82432.9417,
+            "detail": {
+              "count": 948
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82433.2865,
+            "detail": {
+              "count": 1237
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82434.2518,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82435.3656,
+            "detail": {
+              "count": 2346
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82436.8976,
+            "detail": {
+              "count": 2184
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82438.0148,
+            "detail": {
+              "count": 247
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82438.0403,
+            "detail": {
+              "count": 1937
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82439.2398,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82440.3664,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82441.5627,
+            "detail": {
+              "count": 1892
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82442.4002,
+            "detail": {
+              "count": 344
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82442.7231,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82443.8363,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82445.1453,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82446.2357,
+            "detail": {
+              "count": 1306
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82446.8398,
+            "detail": {
+              "count": 872
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82447.4673,
+            "detail": {
+              "count": 2241
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82448.1438,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82449.4044,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82450.3722,
+            "detail": {
+              "count": 722
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82450.6572,
+            "detail": {
+              "count": 1463
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82451.607,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82452.5109,
+            "detail": {
+              "count": 2236
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82453.5462,
+            "detail": {
+              "count": 2184
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82454.4542,
+            "detail": {
+              "count": 131
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82454.4726,
+            "detail": {
+              "count": 2047
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82455.427,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82456.4078,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82457.4186,
+            "detail": {
+              "count": 52
+            }
+          },
+          {
+            "phase": "imap.UID FETCH.reply",
+            "at": 82457.4421,
+            "detail": {
+              "status": "OK",
+              "tag": "A"
+            }
+          },
+          {
+            "phase": "imap.retirement-start",
+            "at": 82458.7077
+          },
+          {
+            "phase": "imap.native-close",
+            "at": 82459.3872,
+            "detail": {
+              "id": 116
+            }
+          },
+          {
+            "phase": "imap.retirement-end",
+            "at": 82459.3939
+          },
+          {
+            "phase": "postgres.persistence.request",
+            "at": 82462.3705,
+            "detail": {
+              "ordinal": 3,
+              "deadline": 84280.664
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82506.9144,
+            "detail": {
+              "id": 122
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82510.8677,
+            "detail": {
+              "id": 122
+            }
+          },
+          {
+            "phase": "postgres.persistence.admitted-work-start",
+            "at": 82538.2695,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "postgres.persistence.work-end",
+            "at": 83627.0273,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 83730.051,
+            "detail": {
+              "id": 122
+            }
+          },
+          {
+            "phase": "postgres.persistence.settled-slot-released",
+            "at": 83730.3487,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "scheduler.slot-released",
+            "at": 83730.3706,
+            "detail": {
+              "outcome": "success"
+            }
+          }
+        ],
+        "transactions": 3,
+        "finished": true
+      },
+      {
+        "id": 29,
+        "user": "stage3c-4",
+        "kind": "history",
+        "admission": 82327.7905,
+        "schedulerWaitMs": 79.53800000000047,
+        "eligibleWaitMs": 0,
+        "deadline": 86327.7905,
+        "events": [
+          {
+            "phase": "scheduler.admission",
+            "at": 82327.8081,
+            "detail": {
+              "active": 2
+            }
+          },
+          {
+            "phase": "execution.start",
+            "at": 82328.1241
+          },
+          {
+            "phase": "postgres.lease.request",
+            "at": 82328.1285,
+            "detail": {
+              "ordinal": 1,
+              "deadline": 84327.7905
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82369.2804,
+            "detail": {
+              "id": 117
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82372.0241,
+            "detail": {
+              "id": 117
+            }
+          },
+          {
+            "phase": "postgres.lease.admitted-work-start",
+            "at": 82388.3165,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.lease.lock-request",
+            "at": 82388.3334
+          },
+          {
+            "phase": "postgres.lease.lock-acquired",
+            "at": 82392.8297
+          },
+          {
+            "phase": "postgres.lease.validated",
+            "at": 82392.8372
+          },
+          {
+            "phase": "postgres.lease.work-end",
+            "at": 82392.8431,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 82395.8936,
+            "detail": {
+              "id": 117
+            }
+          },
+          {
+            "phase": "postgres.lease.settled-slot-released",
+            "at": 82396.0228,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.recovery.request",
+            "at": 82396.1259,
+            "detail": {
+              "ordinal": 2,
+              "deadline": 84327.7905
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82397.5916,
+            "detail": {
+              "id": 119
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82399.4317,
+            "detail": {
+              "id": 119
+            }
+          },
+          {
+            "phase": "postgres.recovery.admitted-work-start",
+            "at": 82419.5133,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "postgres.recovery.work-end",
+            "at": 82498.8736,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 82504.5474,
+            "detail": {
+              "id": 119
+            }
+          },
+          {
+            "phase": "postgres.recovery.settled-slot-released",
+            "at": 82504.8981,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "imap.connect-call",
+            "at": 82505.6838
+          },
+          {
+            "phase": "imap.socket-created",
+            "at": 82506.7719,
+            "detail": {
+              "id": 121
+            }
+          },
+          {
+            "phase": "imap.tcp-connected",
+            "at": 82510.7382,
+            "detail": {
+              "id": 121
+            }
+          },
+          {
+            "phase": "imap.tls-secure",
+            "at": 82532.9998,
+            "detail": {
+              "id": 121
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82534.7012,
+            "detail": {
+              "count": 103
+            }
+          },
+          {
+            "phase": "imap.greeting-or-unsolicited",
+            "at": 82534.8117,
+            "detail": {
+              "command": "OK"
+            }
+          },
+          {
+            "phase": "imap.ID.sent",
+            "at": 82535.1111,
+            "detail": {
+              "tag": "1"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82536.0012,
+            "detail": {
+              "count": 25
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82536.1864,
+            "detail": {
+              "count": 20
+            }
+          },
+          {
+            "phase": "imap.ID.reply",
+            "at": 82536.2195,
+            "detail": {
+              "status": "OK",
+              "tag": "1"
+            }
+          },
+          {
+            "phase": "imap.AUTHENTICATE.sent",
+            "at": 82536.3152,
+            "detail": {
+              "tag": "2"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82538.6858,
+            "detail": {
+              "count": 4
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82551.4025,
+            "detail": {
+              "count": 452
+            }
+          },
+          {
+            "phase": "imap.AUTHENTICATE.reply",
+            "at": 82551.6636,
+            "detail": {
+              "status": "OK",
+              "tag": "2"
+            }
+          },
+          {
+            "phase": "imap.ID.sent",
+            "at": 82552.1608,
+            "detail": {
+              "tag": "3"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82553.8023,
+            "detail": {
+              "count": 66
+            }
+          },
+          {
+            "phase": "imap.ID.reply",
+            "at": 82554.1272,
+            "detail": {
+              "status": "OK",
+              "tag": "3"
+            }
+          },
+          {
+            "phase": "imap.NAMESPACE.sent",
+            "at": 82554.299,
+            "detail": {
+              "tag": "4"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82555.3506,
+            "detail": {
+              "count": 80
+            }
+          },
+          {
+            "phase": "imap.NAMESPACE.reply",
+            "at": 82555.461,
+            "detail": {
+              "status": "OK",
+              "tag": "4"
+            }
+          },
+          {
+            "phase": "imap.ENABLE.sent",
+            "at": 82555.556,
+            "detail": {
+              "tag": "5"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82556.8431,
+            "detail": {
+              "count": 57
+            }
+          },
+          {
+            "phase": "imap.ENABLE.reply",
+            "at": 82556.9755,
+            "detail": {
+              "status": "OK",
+              "tag": "5"
+            }
+          },
+          {
+            "phase": "imap.connect-complete",
+            "at": 82557.0293
+          },
+          {
+            "phase": "imap.LIST.sent",
+            "at": 82557.1607,
+            "detail": {
+              "tag": "6"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82558.9229,
+            "detail": {
+              "count": 78
+            }
+          },
+          {
+            "phase": "imap.LIST.reply",
+            "at": 82559.1613,
+            "detail": {
+              "status": "OK",
+              "tag": "6"
+            }
+          },
+          {
+            "phase": "imap.LSUB.sent",
+            "at": 82559.254,
+            "detail": {
+              "tag": "7"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82560.7953,
+            "detail": {
+              "count": 43
+            }
+          },
+          {
+            "phase": "imap.LSUB.reply",
+            "at": 82560.8811,
+            "detail": {
+              "status": "OK",
+              "tag": "7"
+            }
+          },
+          {
+            "phase": "imap.SELECT.sent",
+            "at": 82561.0257,
+            "detail": {
+              "tag": "8"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82563.9834,
+            "detail": {
+              "count": 376
+            }
+          },
+          {
+            "phase": "imap.SELECT.reply",
+            "at": 82564.711,
+            "detail": {
+              "status": "OK",
+              "tag": "8"
+            }
+          },
+          {
+            "phase": "imap.UID SEARCH.sent",
+            "at": 82564.9867,
+            "detail": {
+              "tag": "9"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82566.4026,
+            "detail": {
+              "count": 567
+            }
+          },
+          {
+            "phase": "imap.UID SEARCH.reply",
+            "at": 82566.9534,
+            "detail": {
+              "status": "OK",
+              "tag": "9"
+            }
+          },
+          {
+            "phase": "imap.UID FETCH.sent",
+            "at": 82567.207,
+            "detail": {
+              "tag": "A"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82569.3044,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82571.6617,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82573.3439,
+            "detail": {
+              "count": 2110
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82575.4807,
+            "detail": {
+              "count": 126
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82575.9949,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82578.3768,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82580.5915,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82583.1003,
+            "detail": {
+              "count": 1524
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82584.052,
+            "detail": {
+              "count": 654
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82584.6627,
+            "detail": {
+              "count": 2241
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82585.9316,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82587.6487,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82589.3736,
+            "detail": {
+              "count": 940
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82589.7671,
+            "detail": {
+              "count": 1245
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82590.6137,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82592.0509,
+            "detail": {
+              "count": 2346
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82593.7269,
+            "detail": {
+              "count": 2184
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82595.4081,
+            "detail": {
+              "count": 239
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82595.443,
+            "detail": {
+              "count": 1945
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82596.6758,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82597.786,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82605.9745,
+            "detail": {
+              "count": 1884
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82606.82,
+            "detail": {
+              "count": 352
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82607.1854,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82608.49,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82609.6104,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82610.5847,
+            "detail": {
+              "count": 1298
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82611.1091,
+            "detail": {
+              "count": 880
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82611.6136,
+            "detail": {
+              "count": 2241
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82612.7712,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82613.8722,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82615.0978,
+            "detail": {
+              "count": 714
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82615.4942,
+            "detail": {
+              "count": 1471
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82616.4203,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82617.6799,
+            "detail": {
+              "count": 2236
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82618.7408,
+            "detail": {
+              "count": 2184
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82620.6028,
+            "detail": {
+              "count": 123
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82620.65,
+            "detail": {
+              "count": 2055
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82622.1502,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82623.5018,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82624.5342,
+            "detail": {
+              "count": 52
+            }
+          },
+          {
+            "phase": "imap.UID FETCH.reply",
+            "at": 82624.5619,
+            "detail": {
+              "status": "OK",
+              "tag": "A"
+            }
+          },
+          {
+            "phase": "imap.retirement-start",
+            "at": 82625.5737
+          },
+          {
+            "phase": "imap.native-close",
+            "at": 82626.1269,
+            "detail": {
+              "id": 121
+            }
+          },
+          {
+            "phase": "imap.retirement-end",
+            "at": 82626.1328
+          },
+          {
+            "phase": "postgres.persistence.request",
+            "at": 82629.3767,
+            "detail": {
+              "ordinal": 3,
+              "deadline": 84327.7905
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82630.7833,
+            "detail": {
+              "id": 124
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82632.8969,
+            "detail": {
+              "id": 124
+            }
+          },
+          {
+            "phase": "postgres.persistence.admitted-work-start",
+            "at": 82690.1242,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "postgres.persistence.work-end",
+            "at": 83646.8479,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 83720.1056,
+            "detail": {
+              "id": 124
+            }
+          },
+          {
+            "phase": "postgres.persistence.settled-slot-released",
+            "at": 83720.2811,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "scheduler.slot-released",
+            "at": 83720.5372,
+            "detail": {
+              "outcome": "success"
+            }
+          }
+        ],
+        "transactions": 3,
+        "finished": true
+      },
+      {
+        "id": 30,
+        "user": "stage3c-5",
+        "kind": "history",
+        "admission": 82377.9839,
+        "schedulerWaitMs": 109.26170000000275,
+        "eligibleWaitMs": 0,
+        "deadline": 86377.9839,
+        "events": [
+          {
+            "phase": "scheduler.admission",
+            "at": 82378.0058,
+            "detail": {
+              "active": 3
+            }
+          },
+          {
+            "phase": "execution.start",
+            "at": 82378.033
+          },
+          {
+            "phase": "postgres.lease.request",
+            "at": 82378.0405,
+            "detail": {
+              "ordinal": 1,
+              "deadline": 84377.9839
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82379.4859,
+            "detail": {
+              "id": 118
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82380.8214,
+            "detail": {
+              "id": 118
+            }
+          },
+          {
+            "phase": "postgres.lease.admitted-work-start",
+            "at": 82401.2152,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.lease.lock-request",
+            "at": 82401.2302
+          },
+          {
+            "phase": "postgres.lease.lock-acquired",
+            "at": 82402.8658
+          },
+          {
+            "phase": "postgres.lease.validated",
+            "at": 82402.8739
+          },
+          {
+            "phase": "postgres.lease.work-end",
+            "at": 82402.8837,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 82405.9017,
+            "detail": {
+              "id": 118
+            }
+          },
+          {
+            "phase": "postgres.lease.settled-slot-released",
+            "at": 82406.0398,
+            "detail": {
+              "ordinal": 1
+            }
+          },
+          {
+            "phase": "postgres.recovery.request",
+            "at": 82406.1023,
+            "detail": {
+              "ordinal": 2,
+              "deadline": 84377.9839
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 82406.8789,
+            "detail": {
+              "id": 120
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 82409.029,
+            "detail": {
+              "id": 120
+            }
+          },
+          {
+            "phase": "postgres.recovery.admitted-work-start",
+            "at": 82469.5908,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "postgres.recovery.work-end",
+            "at": 82515.3335,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 82518.7364,
+            "detail": {
+              "id": 120
+            }
+          },
+          {
+            "phase": "postgres.recovery.settled-slot-released",
+            "at": 82518.9714,
+            "detail": {
+              "ordinal": 2
+            }
+          },
+          {
+            "phase": "imap.connect-call",
+            "at": 82519.2956
+          },
+          {
+            "phase": "imap.socket-created",
+            "at": 82520.3999,
+            "detail": {
+              "id": 123
+            }
+          },
+          {
+            "phase": "imap.tcp-connected",
+            "at": 82523.8825,
+            "detail": {
+              "id": 123
+            }
+          },
+          {
+            "phase": "imap.tls-secure",
+            "at": 82549.6706,
+            "detail": {
+              "id": 123
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82552.7344,
+            "detail": {
+              "count": 103
+            }
+          },
+          {
+            "phase": "imap.greeting-or-unsolicited",
+            "at": 82552.8633,
+            "detail": {
+              "command": "OK"
+            }
+          },
+          {
+            "phase": "imap.ID.sent",
+            "at": 82553.2599,
+            "detail": {
+              "tag": "1"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82554.8491,
+            "detail": {
+              "count": 25
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82554.99,
+            "detail": {
+              "count": 20
+            }
+          },
+          {
+            "phase": "imap.ID.reply",
+            "at": 82555.0219,
+            "detail": {
+              "status": "OK",
+              "tag": "1"
+            }
+          },
+          {
+            "phase": "imap.AUTHENTICATE.sent",
+            "at": 82555.1191,
+            "detail": {
+              "tag": "2"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82556.4913,
+            "detail": {
+              "count": 4
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82568.5874,
+            "detail": {
+              "count": 452
+            }
+          },
+          {
+            "phase": "imap.AUTHENTICATE.reply",
+            "at": 82568.7152,
+            "detail": {
+              "status": "OK",
+              "tag": "2"
+            }
+          },
+          {
+            "phase": "imap.ID.sent",
+            "at": 82569.0011,
+            "detail": {
+              "tag": "3"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82630.0914,
+            "detail": {
+              "count": 66
+            }
+          },
+          {
+            "phase": "imap.ID.reply",
+            "at": 82630.2676,
+            "detail": {
+              "status": "OK",
+              "tag": "3"
+            }
+          },
+          {
+            "phase": "imap.NAMESPACE.sent",
+            "at": 82630.3555,
+            "detail": {
+              "tag": "4"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82632.477,
+            "detail": {
+              "count": 80
+            }
+          },
+          {
+            "phase": "imap.NAMESPACE.reply",
+            "at": 82632.6309,
+            "detail": {
+              "status": "OK",
+              "tag": "4"
+            }
+          },
+          {
+            "phase": "imap.ENABLE.sent",
+            "at": 82632.7288,
+            "detail": {
+              "tag": "5"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82633.6228,
+            "detail": {
+              "count": 57
+            }
+          },
+          {
+            "phase": "imap.ENABLE.reply",
+            "at": 82633.822,
+            "detail": {
+              "status": "OK",
+              "tag": "5"
+            }
+          },
+          {
+            "phase": "imap.connect-complete",
+            "at": 82633.9225
+          },
+          {
+            "phase": "imap.LIST.sent",
+            "at": 82634.0949,
+            "detail": {
+              "tag": "6"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82635.6922,
+            "detail": {
+              "count": 78
+            }
+          },
+          {
+            "phase": "imap.LIST.reply",
+            "at": 82635.87,
+            "detail": {
+              "status": "OK",
+              "tag": "6"
+            }
+          },
+          {
+            "phase": "imap.LSUB.sent",
+            "at": 82635.9402,
+            "detail": {
+              "tag": "7"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82636.9226,
+            "detail": {
+              "count": 43
+            }
+          },
+          {
+            "phase": "imap.LSUB.reply",
+            "at": 82636.9703,
+            "detail": {
+              "status": "OK",
+              "tag": "7"
+            }
+          },
+          {
+            "phase": "imap.SELECT.sent",
+            "at": 82637.0611,
+            "detail": {
+              "tag": "8"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82639.3195,
+            "detail": {
+              "count": 376
+            }
+          },
+          {
+            "phase": "imap.SELECT.reply",
+            "at": 82639.5606,
+            "detail": {
+              "status": "OK",
+              "tag": "8"
+            }
+          },
+          {
+            "phase": "imap.UID SEARCH.sent",
+            "at": 82639.7158,
+            "detail": {
+              "tag": "9"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82641.5156,
+            "detail": {
+              "count": 567
+            }
+          },
+          {
+            "phase": "imap.UID SEARCH.reply",
+            "at": 82642.2444,
+            "detail": {
+              "status": "OK",
+              "tag": "9"
+            }
+          },
+          {
+            "phase": "imap.UID FETCH.sent",
+            "at": 82642.4763,
+            "detail": {
+              "tag": "A"
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82644.0786,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82646.2514,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82648.0363,
+            "detail": {
+              "count": 2110
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82649.3692,
+            "detail": {
+              "count": 2305
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82650.9315,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82652.1417,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82653.2372,
+            "detail": {
+              "count": 1524
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82654.0709,
+            "detail": {
+              "count": 654
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82654.8377,
+            "detail": {
+              "count": 2241
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82656.212,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82657.5678,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82658.7419,
+            "detail": {
+              "count": 940
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82659.0773,
+            "detail": {
+              "count": 1245
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82659.9169,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82661.2672,
+            "detail": {
+              "count": 2346
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82662.6326,
+            "detail": {
+              "count": 2184
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82664.4748,
+            "detail": {
+              "count": 239
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82664.4995,
+            "detail": {
+              "count": 1945
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82665.6764,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82666.4357,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82667.3433,
+            "detail": {
+              "count": 1884
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82667.7914,
+            "detail": {
+              "count": 352
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82667.9688,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82669.2707,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82670.3806,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82670.8875,
+            "detail": {
+              "count": 1298
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82671.1486,
+            "detail": {
+              "count": 880
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82671.404,
+            "detail": {
+              "count": 2241
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82672.0459,
+            "detail": {
+              "count": 2179
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82672.5311,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82672.9921,
+            "detail": {
+              "count": 714
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82673.1361,
+            "detail": {
+              "count": 1471
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82673.5105,
+            "detail": {
+              "count": 2178
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82673.9936,
+            "detail": {
+              "count": 2236
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82674.511,
+            "detail": {
+              "count": 2184
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82675.0818,
+            "detail": {
+              "count": 123
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82675.0944,
+            "detail": {
+              "count": 2055
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82675.7178,
+            "detail": {
+              "count": 2180
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82676.3956,
+            "detail": {
+              "count": 2183
+            }
+          },
+          {
+            "phase": "imap.bytes",
+            "at": 82678.2327,
+            "detail": {
+              "count": 52
+            }
+          },
+          {
+            "phase": "imap.UID FETCH.reply",
+            "at": 82678.4087,
+            "detail": {
+              "status": "OK",
+              "tag": "A"
+            }
+          },
+          {
+            "phase": "imap.retirement-start",
+            "at": 82679.7507
+          },
+          {
+            "phase": "imap.native-close",
+            "at": 82680.3187,
+            "detail": {
+              "id": 123
+            }
+          },
+          {
+            "phase": "imap.retirement-end",
+            "at": 82680.3272
+          },
+          {
+            "phase": "postgres.persistence.request",
+            "at": 82684.6481,
+            "detail": {
+              "ordinal": 3,
+              "deadline": 84377.9839
+            }
+          },
+          {
+            "phase": "postgres.socket-created",
+            "at": 83723.0025,
+            "detail": {
+              "id": 125
+            }
+          },
+          {
+            "phase": "postgres.tcp-connected",
+            "at": 83724.6502,
+            "detail": {
+              "id": 125
+            }
+          },
+          {
+            "phase": "postgres.persistence.admitted-work-start",
+            "at": 83746.3326,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "postgres.persistence.work-end",
+            "at": 84378.3816,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "postgres.native-close",
+            "at": 84379.4974,
+            "detail": {
+              "id": 125
+            }
+          },
+          {
+            "phase": "postgres.persistence.error",
+            "at": 84390.9401,
+            "detail": {
+              "ordinal": 3,
+              "error": "Error: Receiving transaction did not settle; reload under conflicting locks before retry"
+            }
+          },
+          {
+            "phase": "postgres.persistence.settled-slot-released",
+            "at": 84390.9489,
+            "detail": {
+              "ordinal": 3
+            }
+          },
+          {
+            "phase": "scheduler.slot-released",
+            "at": 84391.0069,
+            "detail": {
+              "outcome": "error",
+              "retry": 200
+            }
+          }
+        ],
+        "transactions": 3,
+        "finished": true
+      }
+    ]
+  },
+  "artifacts": {
+    "before": {
+      "path": "experiments/receiving-production/r16-closure-stage3c-before.json.gz",
+      "rawSha256": "c908c1d9f66cb423f5f408577dfc8949a5855871c114ea3e2a85848e4467cd97",
+      "compressedSha256": "8da04c6eb3554db38102b89a878a96b2a595c352af996cdfa0aded4eb8585139",
+      "compressedBytes": 649709
+    },
+    "final": {
+      "path": "experiments/receiving-production/r16-closure-stage3c-final.json.gz",
+      "rawSha256": "5ba0c6d6388c8eb9a6e86cc4b6813b9f5a4313fa0c08745eee99931bab8960fa",
+      "compressedSha256": "67b96cd70b3104d407db4d97ebffd29c7362313d27012b7c128c07aed378206c",
+      "compressedBytes": 1317320
+    }
+  },
+  "measurements": {
+    "before": {
+      "outcomes": {
+        "fixture": "PASS",
+        "W4": "PASS",
+        "W2": "NOT RUN"
+      },
+      "elapsedMs": 66420.86379999999,
+      "cleanup": "PASS",
+      "runs": [
+        {
+          "workers": 4,
+          "maxDataAllocations": 3,
+          "freshVisibility": {
+            "count": 20,
+            "minMs": 393.88500000000204,
+            "p50Ms": 548.178399999997,
+            "p95Ms": 5740.446799999998,
+            "maxMs": 5750.573300000004
+          },
+          "historyPerAccount": [3, 3, 3, 3, 3],
+          "queue": {
+            "count": 228,
+            "minMs": 0.3184000000037486,
+            "p50Ms": 2.3304000000061933,
+            "p95Ms": 38.630199999999604,
+            "maxMs": 733.0342999999993
+          },
+          "historyQueue": {
+            "count": 45,
+            "minMs": 0.5627999999996973,
+            "p50Ms": 5.8004000000000815,
+            "p95Ms": 33.1281999999992,
+            "maxMs": 733.0342999999993
+          },
+          "publicationWork": {
+            "count": 76,
+            "minMs": 6.3378000000011525,
+            "p50Ms": 67.9603000000061,
+            "p95Ms": 696.8482000000004,
+            "maxMs": 899.7203000000009
+          },
+          "sqlScopeLifetime": {
+            "count": 228,
+            "minMs": 15.698399999993853,
+            "p50Ms": 43.54170000000158,
+            "p95Ms": 684.7209999999977,
+            "maxMs": 1369.4415999999983
+          },
+          "sqlConnectionSetup": {
+            "count": 228,
+            "minMs": 10.110000000000582,
+            "p50Ms": 13.084499999997206,
+            "p95Ms": 42.53199999999924,
+            "maxMs": 82.59859999999753
+          },
+          "commitAndRetirement": {
+            "count": 228,
+            "minMs": 1.8854999999966822,
+            "p50Ms": 4.266800000004878,
+            "p95Ms": 55.44249999999738,
+            "maxMs": 78.07069999999658
+          },
+          "ownerValidation": {
+            "count": 76,
+            "minMs": 1.1273000000001048,
+            "p50Ms": 1.5077999999994063,
+            "p95Ms": 4.965299999996205,
+            "maxMs": 7.733700000004319
+          },
+          "sourceRecovery": {
+            "count": 76,
+            "minMs": 11.236300000000483,
+            "p50Ms": 14.486199999999371,
+            "p95Ms": 43.234000000004016,
+            "maxMs": 52.93660000000091
+          },
+          "historyLifetime": {
+            "count": 15,
+            "minMs": 775.3937000000005,
+            "p50Ms": 944.8528000000006,
+            "p95Ms": 1429.2414999999964,
+            "maxMs": 1592.2560999999987
+          },
+          "sqlLockSamples": 77,
+          "lockQueries": [
+            "select maildock_receiving_renew($1::uuid,$2::bigint,60000) as live",
+            "insert into \"instance_state\" (\"id\", \"initialized_at\", \"bootstrap_secret_digest\", \"bootstrap_expires_at\", \"owner_user_id\", \"password_algorithm\", \"conversation_view\", \"notification_preferences\", \"notification_sequence\", \"notification_checkpoint\", \"auto_read\", \"password_parameters\", \"created_at\", \"updated_at\") values ($1, default, default, default, default, default, default, default, default, default, default, default, default, default) on conflict do nothing",
+            "select maildock_receiving_claim($1::uuid,$2::bigint,$3::uuid,$4::bigint,$5::bigint,$6::bigint,$7::bigint,$8::bigint)"
+          ],
+          "maxSqlScopes": null,
+          "maxSqlWaiting": null,
+          "resources": {
+            "maxSockets": 3,
+            "overlap": false,
+            "liveOwned": 0,
+            "activeSlots": 0,
+            "rssBytes": 289763328,
+            "maxPgSockets": 2,
+            "livePgSockets": 0
+          },
+          "restart": "PASS",
+          "failureIsolation": "PASS",
+          "boundaries": [
+            {
+              "name": "initial-fresh",
+              "oracle": "PASS",
+              "history": [0, 0, 0, 0, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [1, 0, 1, 1, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 1]
+            },
+            {
+              "name": "recent-metadata",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [1, 1, 2, 2, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "initial-history-two",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "fresh-injections-visible",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 3, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "history-after-fresh-three",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "restart",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "account-unavailable",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "healthy-progress",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "recovery-final",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            }
+          ],
+          "operationErrors": [
+            {
+              "user": "stage3c-1",
+              "retry": 200,
+              "at": 55331.0383,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 400,
+              "at": 57462.2574,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 59592.0593,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 62635.0108,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 65144.4335,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            }
+          ]
+        }
+      ]
+    },
+    "after": {
+      "outcomes": {
+        "fixture": "PASS",
+        "W2": "PASS",
+        "W4": "PASS"
+      },
+      "elapsedMs": 114919.14319999999,
+      "cleanup": "PASS",
+      "runs": [
+        {
+          "workers": 2,
+          "maxDataAllocations": 2,
+          "freshVisibility": {
+            "count": 20,
+            "minMs": 384.40559999999823,
+            "p50Ms": 703.3654999999999,
+            "p95Ms": 4565.220300000008,
+            "maxMs": 5566.171699999999
+          },
+          "historyPerAccount": [3, 3, 3, 3, 3],
+          "queue": {
+            "count": 313,
+            "minMs": 0.2776999999987311,
+            "p50Ms": 2.7026999999943655,
+            "p95Ms": 15.429800000005343,
+            "maxMs": 74.76569999998901
+          },
+          "historyQueue": {
+            "count": 45,
+            "minMs": 0.7158000000054017,
+            "p50Ms": 2.0315000000045984,
+            "p95Ms": 13.482100000001083,
+            "maxMs": 14.763099999996484
+          },
+          "publicationWork": {
+            "count": 78,
+            "minMs": 6.877099999997881,
+            "p50Ms": 59.7155999999959,
+            "p95Ms": 689.6145000000033,
+            "maxMs": 792.6008000000002
+          },
+          "sqlScopeLifetime": {
+            "count": 313,
+            "minMs": 15.778200000000652,
+            "p50Ms": 37.30160000000615,
+            "p95Ms": 688.0570999999982,
+            "maxMs": 881.490899999997
+          },
+          "sqlConnectionSetup": {
+            "count": 313,
+            "minMs": 10.706500000000233,
+            "p50Ms": 13.075899999996182,
+            "p95Ms": 21.18019999999524,
+            "maxMs": 209.7812999999951
+          },
+          "commitAndRetirement": {
+            "count": 313,
+            "minMs": 1.8241999999954714,
+            "p50Ms": 3.950199999999313,
+            "p95Ms": 56.89579999999842,
+            "maxMs": 93.69030000000203
+          },
+          "ownerValidation": {
+            "count": 78,
+            "minMs": 1.1235000000015134,
+            "p50Ms": 1.402299999994284,
+            "p95Ms": 3.1774999999979627,
+            "maxMs": 28.27969999999914
+          },
+          "sourceRecovery": {
+            "count": 78,
+            "minMs": 11.468600000007427,
+            "p50Ms": 15.198100000001432,
+            "p95Ms": 27.227500000000873,
+            "maxMs": 44.41570000000502
+          },
+          "historyLifetime": {
+            "count": 15,
+            "minMs": 739.9904999999999,
+            "p50Ms": 867.3001999999979,
+            "p95Ms": 993.3062999999966,
+            "maxMs": 1099.1658000000025
+          },
+          "sqlLockSamples": 203,
+          "lockQueries": [
+            "select * from maildock_receiving_recover($1::uuid,$2::bigint,$3::uuid)",
+            "select maildock_receiving_renew($1::uuid,$2::bigint,60000) as live",
+            "insert into \"instance_state\" (\"id\", \"initialized_at\", \"bootstrap_secret_digest\", \"bootstrap_expires_at\", \"owner_user_id\", \"password_algorithm\", \"conversation_view\", \"notification_preferences\", \"notification_sequence\", \"notification_checkpoint\", \"auto_read\", \"password_parameters\", \"created_at\", \"updated_at\") values ($1, default, default, default, default, default, default, default, default, default, default, default, default, default) on conflict do nothing"
+          ],
+          "maxSqlScopes": 2,
+          "maxSqlWaiting": 0,
+          "resources": {
+            "maxSockets": 2,
+            "overlap": false,
+            "liveOwned": 0,
+            "activeSlots": 0,
+            "rssBytes": 219750400,
+            "maxPgSockets": 2,
+            "livePgSockets": 0
+          },
+          "restart": "PASS",
+          "failureIsolation": "PASS",
+          "boundaries": [
+            {
+              "name": "initial-fresh",
+              "oracle": "PASS",
+              "history": [0, 0, 0, 0, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [0, 0, 1, 1, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [0, 1, 1, 1, 1]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 1]
+            },
+            {
+              "name": "recent-metadata",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [1, 1, 2, 2, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [1, 2, 2, 2, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "initial-history-two",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "fresh-injections-visible",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [2, 2, 3, 3, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [2, 3, 3, 3, 3]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "history-after-fresh-three",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "restart",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "account-unavailable",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "healthy-progress",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "recovery-final",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            }
+          ],
+          "operationErrors": [
+            {
+              "user": "stage3c-1",
+              "retry": 200,
+              "at": 59707.6469,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 400,
+              "at": 61829.7707,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 63949.305,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 67002.9229,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 69524.8819,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            }
+          ],
+          "sqlStatementTop": [
+            {
+              "query": "select maildock_receiving_renew($1::uuid,$2::bigint,$3) as live",
+              "calls": "79",
+              "total_exec_time": 4410.933159000001,
+              "min_exec_time": 1.8415300000000001,
+              "max_exec_time": 747.206882,
+              "mean_exec_time": 55.8345969493671,
+              "rows": "79"
+            },
+            {
+              "query": "insert into \"messages\" (\"id\", \"account_id\", \"provider_message_id\", \"rfc_message_id\", \"subject\", \"search_body\", \"sent_at\", \"internal_date\", \"size\", \"from\", \"sender\", \"reply_to\", \"to\", \"cc\", \"bcc\", \"in_reply_to\", \"references\", \"mime_structure\", \"has_attachments\", \"created_at\", \"updated_at\") values ($1, $2, $3, $4, $5, default, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+              "calls": "1940",
+              "total_exec_time": 3732.1704389999986,
+              "min_exec_time": 1.087787,
+              "max_exec_time": 23.651538,
+              "mean_exec_time": 1.9237991953608247,
+              "rows": "1940"
+            },
+            {
+              "query": "update mailbox_messages p set flags=f.flags,modseq=f.modseq\n          from jsonb_to_recordset($1::jsonb) as f(uid bigint,flags text[],modseq bigint)\n          where p.mailbox_id=$2::uuid and p.configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=$3::uuid)\n            and p.uid_validity=$4::bigint and p.uid=f.uid\n            and (($5 and f.modseq is null) or p.modseq is null or (f.modseq is not null and p.modseq<=f.modseq))\n            and ($6 or not exists(select from message_commands c where c.mailbox_id=p.mailbox_id and c.source_uid=p.uid and c.source_uid_validity=p.uid_validity\n              and c.source_configuration_binding=p.configuration_binding and c.status in ($7,$8) and c.action in ($9,$10,$11,$12)))",
+              "calls": "24",
+              "total_exec_time": 946.9191919999998,
+              "min_exec_time": 4.867442,
+              "max_exec_time": 95.265893,
+              "mean_exec_time": 39.45496633333333,
+              "rows": "2322"
+            },
+            {
+              "query": "insert into \"mailbox_messages\" (\"configuration_binding\", \"id\", \"mailbox_id\", \"message_id\", \"uid_validity\", \"uid\", \"modseq\", \"flags\", \"action_hidden\", \"first_synchronized_at\", \"last_synchronized_at\", \"created_at\", \"updated_at\") values (default, $1, $2, $3, $4, $5, $6, $7, default, $8, $9, $10, $11)",
+              "calls": "1940",
+              "total_exec_time": 871.5853070000005,
+              "min_exec_time": 0.253236,
+              "max_exec_time": 3.667289,
+              "mean_exec_time": 0.44927077680412353,
+              "rows": "1940"
+            },
+            {
+              "query": "select maildock_receiving_claim($1::uuid,$2::bigint,$3::uuid,$4::bigint,$5::bigint,$6::bigint,$7::bigint,$8::bigint)",
+              "calls": "59",
+              "total_exec_time": 356.2930849999999,
+              "min_exec_time": 4.295943,
+              "max_exec_time": 12.434648,
+              "mean_exec_time": 6.038865847457628,
+              "rows": "59"
+            },
+            {
+              "query": "update receiving_mailboxes set epoch=$1::bigint,revision=$2::bigint,fresh_through=$3::bigint,history_before=$4::bigint,reconcile_after=$5::bigint,configuration_binding=coalesce($6::bigint,configuration_binding) where mailbox_id=$7::uuid",
+              "calls": "59",
+              "total_exec_time": 200.92345299999994,
+              "min_exec_time": 1.843409,
+              "max_exec_time": 6.168573,
+              "mean_exec_time": 3.4054822542372882,
+              "rows": "59"
+            }
+          ],
+          "sampledServerTransactionElapsedMaxMs": 790.725
+        },
+        {
+          "workers": 4,
+          "maxDataAllocations": 3,
+          "freshVisibility": {
+            "count": 20,
+            "minMs": 1248.0417000000016,
+            "p50Ms": 1981.9088000000047,
+            "p95Ms": 5972.355200000005,
+            "maxMs": 6113.716100000005
+          },
+          "historyPerAccount": [3, 3, 3, 3, 3],
+          "queue": {
+            "count": 309,
+            "minMs": 0.3135000000038417,
+            "p50Ms": 2.232399999993504,
+            "p95Ms": 33.68610000000626,
+            "maxMs": 309.94430000000284
+          },
+          "historyQueue": {
+            "count": 45,
+            "minMs": 0.3135000000038417,
+            "p50Ms": 1.6762999999918975,
+            "p95Ms": 12.71380000001227,
+            "maxMs": 13.523700000005192
+          },
+          "publicationWork": {
+            "count": 77,
+            "minMs": 6.7700000000040745,
+            "p50Ms": 66.29529999999795,
+            "p95Ms": 794.7239000000118,
+            "maxMs": 978.5314999999973
+          },
+          "sqlScopeLifetime": {
+            "count": 309,
+            "minMs": 15.831399999995483,
+            "p50Ms": 39.02540000001318,
+            "p95Ms": 758.148199999996,
+            "maxMs": 1299.430400000012
+          },
+          "sqlConnectionSetup": {
+            "count": 309,
+            "minMs": 11.047399999995832,
+            "p50Ms": 15.411500000001979,
+            "p95Ms": 25.77929999999469,
+            "maxMs": 896.3466999999946
+          },
+          "commitAndRetirement": {
+            "count": 309,
+            "minMs": 1.6520000000018626,
+            "p50Ms": 3.8818000000028405,
+            "p95Ms": 47.42059999999765,
+            "maxMs": 136.32700000000477
+          },
+          "ownerValidation": {
+            "count": 77,
+            "minMs": 1.1244000000006054,
+            "p50Ms": 1.5904999999911524,
+            "p95Ms": 4.460500000001048,
+            "maxMs": 9.35910000000149
+          },
+          "sourceRecovery": {
+            "count": 77,
+            "minMs": 11.896100000012666,
+            "p50Ms": 17.61960000000545,
+            "p95Ms": 34.357499999998254,
+            "maxMs": 324.29299999999057
+          },
+          "historyLifetime": {
+            "count": 15,
+            "minMs": 800.1062000000093,
+            "p50Ms": 917.9382000000041,
+            "p95Ms": 1105.1043000000063,
+            "maxMs": 1118.8815000000031
+          },
+          "sqlLockSamples": 14,
+          "lockQueries": [
+            "select maildock_receiving_renew($1::uuid,$2::bigint,60000) as live",
+            "insert into \"instance_state\" (\"id\", \"initialized_at\", \"bootstrap_secret_digest\", \"bootstrap_expires_at\", \"owner_user_id\", \"password_algorithm\", \"conversation_view\", \"notification_preferences\", \"notification_sequence\", \"notification_checkpoint\", \"auto_read\", \"password_parameters\", \"created_at\", \"updated_at\") values ($1, default, default, default, default, default, default, default, default, default, default, default, default, default) on conflict do nothing"
+          ],
+          "maxSqlScopes": 2,
+          "maxSqlWaiting": 1,
+          "resources": {
+            "maxSockets": 3,
+            "overlap": false,
+            "liveOwned": 0,
+            "activeSlots": 0,
+            "rssBytes": 527847424,
+            "maxPgSockets": 2,
+            "livePgSockets": 0
+          },
+          "restart": "PASS",
+          "failureIsolation": "PASS",
+          "boundaries": [
+            {
+              "name": "initial-fresh",
+              "oracle": "PASS",
+              "history": [0, 0, 0, 0, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [1, 0, 0, 1, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 0]
+            },
+            {
+              "name": "history-1-wave",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 1]
+            },
+            {
+              "name": "recent-metadata",
+              "oracle": "PASS",
+              "history": [1, 1, 1, 1, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [2, 1, 1, 2, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 1]
+            },
+            {
+              "name": "history-2-wave",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "initial-history-two",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "fresh-injections-visible",
+              "oracle": "PASS",
+              "history": [2, 2, 2, 2, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [3, 2, 2, 3, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 2]
+            },
+            {
+              "name": "history-3-wave",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "history-after-fresh-three",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "restart",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "account-unavailable",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "healthy-progress",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            },
+            {
+              "name": "recovery-final",
+              "oracle": "PASS",
+              "history": [3, 3, 3, 3, 3]
+            }
+          ],
+          "operationErrors": [
+            {
+              "user": "stage3c-1",
+              "retry": 200,
+              "at": 101548.6892,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 400,
+              "at": 103667.8577,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 105820.5348,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 108895.6642,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            },
+            {
+              "user": "stage3c-1",
+              "retry": 800,
+              "at": 111995.2688,
+              "error": "Error: IMAP AUTHENTICATE failed"
+            }
+          ],
+          "sqlStatementTop": [
+            {
+              "query": "insert into \"messages\" (\"id\", \"account_id\", \"provider_message_id\", \"rfc_message_id\", \"subject\", \"search_body\", \"sent_at\", \"internal_date\", \"size\", \"from\", \"sender\", \"reply_to\", \"to\", \"cc\", \"bcc\", \"in_reply_to\", \"references\", \"mime_structure\", \"has_attachments\", \"created_at\", \"updated_at\") values ($1, $2, $3, $4, $5, default, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+              "calls": "1940",
+              "total_exec_time": 4475.021870999998,
+              "min_exec_time": 1.275247,
+              "max_exec_time": 27.365565,
+              "mean_exec_time": 2.3067123046391735,
+              "rows": "1940"
+            },
+            {
+              "query": "select maildock_receiving_renew($1::uuid,$2::bigint,$3) as live",
+              "calls": "78",
+              "total_exec_time": 853.8996189999998,
+              "min_exec_time": 1.9015250000000001,
+              "max_exec_time": 415.58221499999996,
+              "mean_exec_time": 10.947431012820516,
+              "rows": "78"
+            },
+            {
+              "query": "update mailbox_messages p set flags=f.flags,modseq=f.modseq\n          from jsonb_to_recordset($1::jsonb) as f(uid bigint,flags text[],modseq bigint)\n          where p.mailbox_id=$2::uuid and p.configuration_binding=(select configuration_binding from receiving_mailboxes where mailbox_id=$3::uuid)\n            and p.uid_validity=$4::bigint and p.uid=f.uid\n            and (($5 and f.modseq is null) or p.modseq is null or (f.modseq is not null and p.modseq<=f.modseq))\n            and ($6 or not exists(select from message_commands c where c.mailbox_id=p.mailbox_id and c.source_uid=p.uid and c.source_uid_validity=p.uid_validity\n              and c.source_configuration_binding=p.configuration_binding and c.status in ($7,$8) and c.action in ($9,$10,$11,$12)))",
+              "calls": "23",
+              "total_exec_time": 781.9758379999998,
+              "min_exec_time": 5.099394,
+              "max_exec_time": 58.572478,
+              "mean_exec_time": 33.99894947826087,
+              "rows": "2194"
+            },
+            {
+              "query": "insert into \"mailbox_messages\" (\"configuration_binding\", \"id\", \"mailbox_id\", \"message_id\", \"uid_validity\", \"uid\", \"modseq\", \"flags\", \"action_hidden\", \"first_synchronized_at\", \"last_synchronized_at\", \"created_at\", \"updated_at\") values (default, $1, $2, $3, $4, $5, $6, $7, default, $8, $9, $10, $11)",
+              "calls": "1940",
+              "total_exec_time": 763.2227060000004,
+              "min_exec_time": 0.202227,
+              "max_exec_time": 4.0663540000000005,
+              "mean_exec_time": 0.39341376597938194,
+              "rows": "1940"
+            },
+            {
+              "query": "select maildock_receiving_claim($1::uuid,$2::bigint,$3::uuid,$4::bigint,$5::bigint,$6::bigint,$7::bigint,$8::bigint)",
+              "calls": "57",
+              "total_exec_time": 443.30771100000004,
+              "min_exec_time": 4.459795,
+              "max_exec_time": 14.734831,
+              "mean_exec_time": 7.7773282631578935,
+              "rows": "57"
+            },
+            {
+              "query": "update receiving_mailboxes set epoch=$1::bigint,revision=$2::bigint,fresh_through=$3::bigint,history_before=$4::bigint,reconcile_after=$5::bigint,configuration_binding=coalesce($6::bigint,configuration_binding) where mailbox_id=$7::uuid",
+              "calls": "57",
+              "total_exec_time": 238.9756380000001,
+              "min_exec_time": 2.086618,
+              "max_exec_time": 8.215244,
+              "mean_exec_time": 4.1925550526315805,
+              "rows": "57"
+            }
+          ],
+          "sampledServerTransactionElapsedMaxMs": 1134.679
+        }
+      ]
+    }
+  },
+  "deterministicRegression": {
+    "before": {
+      "passed": 0,
+      "failed": 1
+    },
+    "after": {
+      "passed": 1,
+      "failed": 0
+    },
+    "usesRealSelectorAndControlledTurnBoundary": true
+  },
+  "completeRegression": {
+    "files": 132,
+    "total": 2031,
+    "passed": 2029,
+    "failed": 2,
+    "pending": 0,
+    "durationSeconds": 1485.72,
+    "failures": [
+      {
+        "file": "D:/Projects/JS/Maildock/tests/receiving-demand-settlement.integration.test.ts",
+        "name": "R15 durable settlement and quiet INBOX membership restart/takeover resumes quiet reconciliation and retains a lost live wake",
+        "messages": [
+          "Error: R06 barrier deadline exceeded\n    at until (D:/Projects/JS/Maildock/tests/receiving-demand-settlement.integration.test.ts:44:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at D:/Projects/JS/Maildock/tests/receiving-demand-settlement.integration.test.ts:451:5\n    at file:///D:/Projects/JS/Maildock/node_modules/.pnpm/vitest@5.0.1_@types+node@24_39934ec575a5f0b60ee37536bdb266e1/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+        ]
+      },
+      {
+        "file": "D:/Projects/JS/Maildock/tests/receiving-scheduler.integration.test.ts",
+        "name": "isolated shared receiving scheduler history age cannot override the health gate; recovery restores opportunities",
+        "messages": [
+          "AssertionError: expected [ { …(3) } ] to deeply equal []\n    at D:/Projects/JS/Maildock/tests/receiving-scheduler.integration.test.ts:1215:24\n    at file:///D:/Projects/JS/Maildock/node_modules/.pnpm/vitest@5.0.1_@types+node@24_39934ec575a5f0b60ee37536bdb266e1/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+        ]
+      }
+    ],
+    "knownHealthyHung": "passed",
+    "sha256": "05ff46b4f2fde0e0f56b1152b253f38f2fcfdb66fc688c85f6a303a0e9aaffc1"
+  },
+  "deployment": {
+    "build": "PASS",
+    "appImage": "sha256:519a2dfa525cd0875e4e8af066f5abf9866cf00793cc1b5628dd00cf351cf3c8",
+    "postgresImage": "sha256:94538b2f6cf702b0177abd2672e0e7623a54cfa9f87486c8f1c6d49ce9dd6441",
+    "project": "maildock-r16-closure",
+    "freshVolumes": true,
+    "normalEntrypointAndMigrations": true,
+    "phases": {
+      "setup": {
+        "result": "PASS",
+        "ms": 477.52272600000015,
+        "peer": {
+          "active": 0,
+          "maxActive": 0,
+          "maxPerAccount": 0,
+          "smtp": 0,
+          "append": 0
+        }
+      },
+      "receive": {
+        "result": "PASS",
+        "ms": 113.56729599999994,
+        "peer": {
+          "active": 0,
+          "maxActive": 2,
+          "maxPerAccount": 1,
+          "smtp": 0,
+          "append": 0
+        }
+      },
+      "ingress": {
+        "result": "PASS",
+        "ms": 80.48570999999993,
+        "peer": {
+          "active": 0,
+          "maxActive": 2,
+          "maxPerAccount": 1,
+          "smtp": 0,
+          "append": 0
+        }
+      },
+      "reader": {
+        "result": "PASS",
+        "ms": 19736.766808,
+        "peer": {
+          "active": 0,
+          "maxActive": 2,
+          "maxPerAccount": 1,
+          "smtp": 0,
+          "append": 0
+        }
+      },
+      "outgoing": {
+        "result": "PASS",
+        "ms": 16834.6124,
+        "peer": {
+          "active": 0,
+          "maxActive": 2,
+          "maxPerAccount": 1,
+          "smtp": 2,
+          "append": 1
+        }
+      }
+    },
+    "ingress": {
+      "live": 200,
+      "ready": 200,
+      "unauthenticatedAccounts": 401
+    },
+    "ownerBefore": {
+      "owner": "391096dc-4072-46c3-bc85-dcd815875825",
+      "generation": "1",
+      "live": true,
+      "receivingSqlScopes": 1,
+      "migrations": 54
+    },
+    "ownerAfter": {
+      "owner": "391096dc-4072-46c3-bc85-dcd815875825",
+      "generation": "1",
+      "live": false,
+      "receivingSqlScopes": 0
+    },
+    "peerAfter": {
+      "active": 0,
+      "smtp": 2,
+      "append": 1,
+      "maxActive": 2,
+      "maxPerAccount": 1
+    },
+    "shutdownMs": null,
+    "containerExitCode": 143,
+    "workerEvents": [
+      "receiving.owner",
+      "worker.shutdown SIGTERM",
+      "jobs.stopped"
+    ],
+    "cleanup": "down --remove-orphans; isolated volumes preserved",
+    "preliminaryOutgoing": {
+      "result": "FAIL before SMTP creation",
+      "message": "pending != ready during quote preparation: reader prerequisite omitted",
+      "sourceUnchanged": true,
+      "correction": "Run existing reader phase then existing outgoing phase once; both PASS"
+    }
+  },
+  "decision": "PARTIAL",
+  "sourceHashes": {
+    "src/modules/mail/application/receiving-scheduler.ts": "0d846161ad13dd14fec6ca13f6afa33c0f6322075737dcee8ee343a02cb175a3",
+    "tests/receiving-sql-contention.test.ts": "bd2f2cc1c9b4b572b7999e9651c26a5b3dae0e30bd31617f65733374a4a81243",
+    "experiments/imap-dovecot/stage3c.ts": "de12b323e79734320d8d58c62df518561c48826c61c8229a35971b93d340b993",
+    "experiments/imap-dovecot/stage3c-diagnostics.ts": "a0bda6386cdfa596b587064c59d1f1aa5e191a151b515137b2b31755b079919c"
+  },
+  "boundedComparison": {
+    "accepted": {
+      "files": 2,
+      "total": 68,
+      "passed": 66,
+      "failed": 2,
+      "sha256": "35b5c3b3e13e6c431e1b22ebb654c81f81093ff9fb57f255404b87a4374a1af4",
+      "failures": [
+        {
+          "file": "C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-scheduler.integration.test.ts",
+          "name": "isolated shared receiving scheduler W=4 rotates continuously busy fresh accounts and gives repeated protected history opportunities",
+          "messages": [
+            "Error: Durable history fairness failed W=4: [{\"account\":\"3094d84e-65e3-4a0f-8494-28761c4c510c\",\"f\":\"1536\",\"e\":\"897\",\"revision\":\"5\",\"historyAdmissions\":1,\"errors\":[]},{\"account\":\"bd32fff5-0889-412a-9c73-f709db58dbf8\",\"f\":\"1408\",\"e\":\"897\",\"revision\":\"4\",\"historyAdmissions\":2,\"errors\":[]},{\"account\":\"bbd93b79-3f35-41de-9f37-3c9232e3777a\",\"f\":\"1664\",\"e\":\"1025\",\"revision\":\"5\",\"historyAdmissions\":1,\"errors\":[\"Receiving admission did not settle; reload under conflicting locks before retry\"]},{\"account\":\"71e38d6e-752b-41e4-85a8-085e72fa5874\",\"f\":\"1536\",\"e\":\"897\",\"revision\":\"5\",\"historyAdmissions\":1,\"errors\":[\"Receiving commit did not settle; reload under conflicting locks before retry\"]},{\"account\":\"257d099e-97e4-4c82-aa2a-61cd0099b584\",\"f\":\"1280\",\"e\":\"897\",\"revision\":\"3\",\"historyAdmissions\":1,\"errors\":[\"Receiving transaction did not settle; reload under conflicting locks before retry\"]},{\"account\":\"814366af-eacf-44cd-9b11-221c14075886\",\"f\":\"1280\",\"e\":\"897\",\"revision\":\"3\",\"historyAdmissions\":1,\"errors\":[\"Receiving transaction did not settle; reload under conflicting locks before retry\"]},{\"account\":\"a2790e8b-bf12-4f21-b4d2-d92f25247551\",\"f\":\"1536\",\"e\":\"897\",\"revision\":\"5\",\"historyAdmissions\":1,\"errors\":[\"Receiving commit did not settle; reload under conflicting locks before retry\"]},{\"account\":\"2b322c31-be08-48b0-9555-11c7b06a4e07\",\"f\":\"1408\",\"e\":\"897\",\"revision\":\"4\",\"historyAdmissions\":1,\"errors\":[]}]\n    at C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-scheduler.integration.test.ts:1019:15\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-scheduler.integration.test.ts:996:7\n    at file:///D:/Projects/JS/Maildock/node_modules/.pnpm/vitest@5.0.1_@types+node@24_39934ec575a5f0b60ee37536bdb266e1/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+          ]
+        },
+        {
+          "file": "C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-scheduler.integration.test.ts",
+          "name": "isolated shared receiving scheduler backs off one hung account independently while healthy accounts commit",
+          "messages": [
+            "AssertionError: expected 67807.6173 to be less than 67773.7517\n    at C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-scheduler.integration.test.ts:1175:33\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at file:///D:/Projects/JS/Maildock/node_modules/.pnpm/vitest@5.0.1_@types+node@24_39934ec575a5f0b60ee37536bdb266e1/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+          ]
+        }
+      ],
+      "perFile": [
+        {
+          "name": "C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-demand-settlement.integration.test.ts",
+          "passed": 37,
+          "failed": 0
+        },
+        {
+          "name": "C:/Users/mateu/AppData/Local/Temp/maildock-r16-closure-accepted/tests/receiving-scheduler.integration.test.ts",
+          "passed": 29,
+          "failed": 2
+        }
+      ]
+    },
+    "current": {
+      "files": 2,
+      "total": 68,
+      "passed": 68,
+      "failed": 0,
+      "sha256": "aa84c0fd3122e1733a8da68038ad6ec19661a8c6ea8d61ff4b22cde0c5d5741a",
+      "failures": [],
+      "perFile": [
+        {
+          "name": "D:/Projects/JS/Maildock/tests/receiving-demand-settlement.integration.test.ts",
+          "passed": 37,
+          "failed": 0
+        },
+        {
+          "name": "D:/Projects/JS/Maildock/tests/receiving-scheduler.integration.test.ts",
+          "passed": 31,
+          "failed": 0
+        }
+      ]
+    },
+    "acceptedHealthyHungOrdering": {
+      "healthyFirstCompletionMs": 67807.6173,
+      "badFirstTimeoutMs": 67773.7517,
+      "healthyLaterByMs": 33.8656,
+      "precedingHealthyErrorFrontierAndBadRetryAssertionsPassed": true
+    },
+    "interpretation": "Current focused 68/68 does not replace the complete 2029/2031 run. Accepted source has different failures; exact broad-run failure causes remain inconclusive."
+  },
+  "finalQuality": {
+    "applicationAndWorkerTypecheck": "PASS",
+    "repositoryLint": "PASS",
+    "changedFilePrettier": "PASS",
+    "whitespace": "PASS",
+    "repositoryPrettier": {
+      "result": "FAIL historical baseline",
+      "warnings": 75,
+      "changedFileWarnings": 0
+    }
+  },
+  "remainingBlockers": [
+    "The complete final-source regression run has unresolved first-observation R15 barrier and health-gate COMMIT failures; a separate 68/68 selection does not resolve or replace them."
+  ]
+}
