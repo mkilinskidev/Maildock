@@ -562,10 +562,11 @@ describe("Stage 4A durable account wakes, actual PostgreSQL/pg-boss", () => {
         "src/composition/worker-process.ts",
         "utf8",
       );
+      expect(worker).toContain("registerReceivingWakeDelivery");
+      expect(worker).toContain("registerReceivingConversions");
       expect(worker).not.toMatch(
-        /registerReceivingWakeDelivery|ReceivingScheduler|ReceivingDueRepair/,
+        /registerRecentSyncWorker|registerDeltaWorker|registerBackfillWorker|registerContentWorker|registerAttachmentWorker|registerMessageCommandWorker|registerSentCopyWorker|registerMailboxDiscoveryWorker/,
       );
-      expect(worker).toContain("registerRecentSyncWorker");
     } finally {
       await exec.stop();
     }

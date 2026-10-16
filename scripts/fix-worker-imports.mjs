@@ -13,7 +13,7 @@ async function rewrite(directory) {
     if (!entry.name.endsWith(".js")) continue;
     const source = await readFile(target, "utf8");
     const qualified = source.replace(
-      /(from\s+["']|import\s*["'])@\/([^"']+)(["'])/g,
+      /(from\s+["']|import\s*(?:\(\s*)?["'])@\/([^"']+)(["'])/g,
       (_statement, prefix, specifier, quote) => {
         const relative = path
           .relative(path.dirname(target), path.join(outputRoot, specifier))
@@ -22,7 +22,7 @@ async function rewrite(directory) {
       },
     );
     const rewritten = qualified.replace(
-      /(from\s+["']|import\s*["'])(\.\.?\/[^"']+)(["'])/g,
+      /(from\s+["']|import\s*(?:\(\s*)?["'])(\.\.?\/[^"']+)(["'])/g,
       (statement, prefix, specifier, quote) =>
         /\.[a-z0-9]+$/i.test(specifier)
           ? statement

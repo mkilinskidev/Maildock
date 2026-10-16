@@ -84,15 +84,32 @@ export function MessageList({
         <div>
           <h3>{mailbox.name}</h3>
           <p className="muted">
-            Sync: {mailbox.recentSync.status} · Last successful:{" "}
-            {mailbox.recentSync.lastSuccessfulAt
-              ? new Date(mailbox.recentSync.lastSuccessfulAt).toLocaleString()
-              : "Never"}
+            {mailbox.receiving ? (
+              mailbox.receiving.mode === "deferred" ? (
+                "Background synchronization for this folder is not available yet."
+              ) : (
+                `Inbox · Older mail: ${mailbox.receiving.historyComplete ? "complete" : "in progress"}`
+              )
+            ) : (
+              <>
+                Sync: {mailbox.recentSync.status} · Last successful:{" "}
+                {mailbox.recentSync.lastSuccessfulAt
+                  ? new Date(
+                      mailbox.recentSync.lastSuccessfulAt,
+                    ).toLocaleString()
+                  : "Never"}
+              </>
+            )}
           </p>
         </div>
-        <button onClick={() => void refresh()}>Refresh messages</button>
+        <button
+          disabled={mailbox.receiving?.mode === "deferred"}
+          onClick={() => void refresh()}
+        >
+          Refresh messages
+        </button>
       </div>
-      {mailbox.recentSync.error ? (
+      {!mailbox.receiving && mailbox.recentSync.error ? (
         <p className="error">{mailbox.recentSync.error}</p>
       ) : null}
       {error ? <p className="error">{error}</p> : null}

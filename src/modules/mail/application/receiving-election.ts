@@ -79,6 +79,9 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   private sentSelection?: Promise<void>;
   private readonly selectedSent = new Set<string>();
   private sentCursor?: { at: string; id: string };
+  private topologySelection?: Promise<void>;
+  private topologyCursor?: string;
+  private readonly selectedTopologies = new Set<string>();
 
   constructor(
     private readonly config: Readonly<{
@@ -302,6 +305,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       void this.dispatchSentCopies().catch(() => undefined);
       void this.dispatchMoveCommands().catch(() => undefined);
       void this.dispatchRepairs().catch(() => undefined);
+      void this.dispatchTopology().catch(() => undefined);
       return true;
     } catch (error) {
       this.lose();
@@ -568,6 +572,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             void this.dispatchSentCopies().catch(() => undefined);
             void this.dispatchMoveCommands().catch(() => undefined);
             void this.dispatchRepairs().catch(() => undefined);
+            void this.dispatchTopology().catch(() => undefined);
           }
         });
       },
@@ -586,7 +591,71 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       await this.dispatchSentCopies();
       await this.dispatchMoveCommands();
       await this.dispatchRepairs();
+      await this.dispatchTopology();
     }
+  }
+
+  /** Read-only LIST demand shares the existing elected control opportunities.
+   * Its success marker represents only committed topology, never account-wide
+   * demand or secondary message coverage. A newer request survives the CAS. */
+  dispatchTopology(): Promise<void> {
+    if (this.topologySelection) return this.topologySelection;
+    const handler = this.config.operationHandlers?.list;
+    if (
+      this.phase !== "owner" ||
+      !handler ||
+      typeof handler === "function" ||
+      !("topology" in handler) ||
+      handler.topology !== "list" ||
+      handler.discover !== true
+    )
+      return Promise.resolve();
+    this.topologySelection = (async () => {
+      const candidates = await this.control(async (db) => {
+        await this.validate(db, this.owner!);
+        return db.execute(sql`select id,configuration_version,receiving_lifecycle_version,
+          mailbox_discovery_requested_at::text as requested,
+          (enabled and removal_requested_at is null and
+            (mailbox_discovery_status<>'success' or last_successful_mailbox_discovery_at is null
+              or mailbox_discovery_requested_at>last_successful_mailbox_discovery_at)) as eligible
+          from mail_accounts where (${this.topologyCursor ?? null}::uuid is null or id>${this.topologyCursor ?? null}::uuid)
+          order by id limit 32`);
+      });
+      this.topologyCursor = candidates.at(-1)?.id as string | undefined;
+      for (const row of candidates) {
+        const account = String(row.id);
+        if (!row.eligible || this.selectedTopologies.has(account)) continue;
+        this.selectedTopologies.add(account);
+        void this.submit({
+          kind: "list",
+          requestId: randomUUID(),
+          deadline: performance.now() + 10_000,
+          identity: {
+            account,
+            configurationVersion: BigInt(String(row.configuration_version)),
+            receivingLifecycleVersion: BigInt(
+              String(row.receiving_lifecycle_version),
+            ),
+          },
+        })
+          .then(async () => {
+            await this.control(async (db) => {
+              await this.validate(db, this.owner!);
+              await db.execute(sql`update mail_accounts set mailbox_discovery_status='success',
+              mailbox_discovery_error=null,last_successful_mailbox_discovery_at=clock_timestamp()
+              where id=${account}::uuid and enabled and removal_requested_at is null
+                and configuration_version=${String(row.configuration_version)}::bigint
+                and receiving_lifecycle_version=${String(row.receiving_lifecycle_version)}::bigint
+                and mailbox_discovery_requested_at is not distinct from ${row.requested ?? null}::timestamptz`);
+            });
+          })
+          .catch(() => undefined)
+          .finally(() => this.selectedTopologies.delete(account));
+      }
+    })().finally(() => {
+      this.topologySelection = undefined;
+    });
+    return this.topologySelection;
   }
 
   /** One bounded durable selection on the existing control opportunities. The
@@ -1179,6 +1248,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     await this.sentSelection?.catch(() => undefined);
     await this.moveSelection?.catch(() => undefined);
     await this.repairSelection?.catch(() => undefined);
+    await this.topologySelection?.catch(() => undefined);
     await this.retirement;
     // Release only AFTER socket/SQL retirement. Unknown server COMMIT still
     // conflicts with this UPDATE lock; failure leaves lease expiry as fallback.

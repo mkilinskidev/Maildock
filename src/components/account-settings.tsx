@@ -137,14 +137,21 @@ export function AccountSettings({
     onBusyChange(pending);
     return () => onBusyChange(false);
   }, [pending, onBusyChange]);
+  const inboxReceiving = mailboxes.find(
+    (m) => m.receiving?.mode === "inbox",
+  )?.receiving;
   const working =
     account.removalStatus === "removing" ||
     account.mailboxDiscovery.status === "pending" ||
     account.mailboxDiscovery.status === "running" ||
     mailboxes.some((m) =>
-      [m.recentSync.status, m.deltaSync.status, m.backfill.status].some(
-        (s) => s === "pending" || s === "running",
-      ),
+      m.receiving
+        ? account.enabled &&
+          m.receiving.mode === "inbox" &&
+          !m.receiving.historyComplete
+        : [m.recentSync.status, m.deltaSync.status, m.backfill.status].some(
+            (s) => s === "pending" || s === "running",
+          ),
     );
   useEffect(() => {
     if (!working || generalDirty || connectionDirty || pending) return;
@@ -621,9 +628,13 @@ export function AccountSettings({
             <dd>
               {!account.enabled
                 ? "Synchronization disabled"
-                : latestSync(mailboxes)
-                  ? "Synchronization has succeeded"
-                  : "No successful synchronization recorded"}
+                : inboxReceiving
+                  ? inboxReceiving.freshThrough === null
+                    ? "Inbox synchronization pending"
+                    : "Inbox receiving initialized"
+                  : latestSync(mailboxes)
+                    ? "Synchronization has succeeded"
+                    : "No successful synchronization recorded"}
             </dd>
             <dt>Manual connection test</dt>
             <dd>{friendlyStatus(account.connectionStatus)}</dd>
@@ -637,8 +648,14 @@ export function AccountSettings({
             <dd>{friendlyStatus(account.mailboxDiscovery.status)}</dd>
             <dt>Last successful discovery</dt>
             <dd>{date(account.mailboxDiscovery.lastSuccessfulAt)}</dd>
-            <dt>Last successful sync</dt>
-            <dd>{date(latestSync(mailboxes))}</dd>
+            <dt>{inboxReceiving ? "Inbox history" : "Last successful sync"}</dt>
+            <dd>
+              {inboxReceiving
+                ? inboxReceiving.historyComplete
+                  ? "Complete"
+                  : "In progress"
+                : date(latestSync(mailboxes))}
+            </dd>
             <dt>Capabilities</dt>
             <dd>
               {account.mailboxDiscovery.capabilities.join(", ") ||
@@ -704,21 +721,47 @@ export function AccountSettings({
                 <div key={m.id}>
                   <strong>{m.name}</strong>
                   <span>
-                    {friendlyStatus(m.lifecycleStatus)} · Latest mail:{" "}
-                    {friendlyStatus(m.recentSync.status)} · Changes:{" "}
-                    {friendlyStatus(m.deltaSync.status)} · Older mail:{" "}
-                    {friendlyStatus(m.backfill.status)}
+                    {m.receiving ? (
+                      m.receiving.mode === "deferred" ? (
+                        "Background synchronization for this folder is not available yet."
+                      ) : (
+                        `Inbox · Older mail: ${m.receiving.historyComplete ? "complete" : "in progress"}`
+                      )
+                    ) : (
+                      <>
+                        {friendlyStatus(m.lifecycleStatus)} · Latest mail:{" "}
+                        {friendlyStatus(m.recentSync.status)} · Changes:{" "}
+                        {friendlyStatus(m.deltaSync.status)} · Older mail:{" "}
+                        {friendlyStatus(m.backfill.status)}
+                      </>
+                    )}
                   </span>
                   <span>
-                    Last sync: {date(latestSync([m]))} ·{" "}
+                    {!m.receiving ? (
+                      <>Last sync: {date(latestSync([m]))} · </>
+                    ) : null}
                     {m.synchronizedMessageCount} messages saved in Maildock
                   </span>
                   <details>
                     <summary>Technical sync details</summary>
-                    {m.lifecycleStatus} · Recent: {m.recentSync.status} · Delta:{" "}
-                    {m.deltaSync.status} · History: {m.backfill.status}
+                    {m.receiving ? (
+                      m.receiving.mode === "inbox" ? (
+                        `Metadata coverage through UID ${m.receiving.freshThrough ?? "pending"}`
+                      ) : (
+                        "Background inventory and history are deferred."
+                      )
+                    ) : (
+                      <>
+                        {m.lifecycleStatus} · Recent: {m.recentSync.status} ·
+                        Delta: {m.deltaSync.status} · History:{" "}
+                        {m.backfill.status}
+                      </>
+                    )}
                   </details>
-                  {[m.recentSync.error, m.deltaSync.error, m.backfill.error]
+                  {(m.receiving
+                    ? []
+                    : [m.recentSync.error, m.deltaSync.error, m.backfill.error]
+                  )
                     .filter(Boolean)
                     .map((e, i) => (
                       <p key={i} className="error">

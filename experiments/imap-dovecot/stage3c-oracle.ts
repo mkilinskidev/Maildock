@@ -16,6 +16,7 @@ export type Frontier = {
   epoch: string;
   f: number;
   e: number;
+  r: number;
   revision: number;
   placements: Placement[];
   history: number;
@@ -28,6 +29,8 @@ export type Publication = {
   f: number;
   oldE: number;
   e: number;
+  oldR: number;
+  r: number;
   metadata: Placement[];
 };
 export type Snapshot = { at: string; states: Frontier[]; audit: Publication[] };
@@ -93,6 +96,7 @@ export function verifySnapshot(
     exact(state.placements, state.e, state.f);
     let f = a.baselineNext - 1,
       e = a.baselineNext,
+      r = 0,
       revision = 0,
       history = 0;
     for (const p of snapshot.audit.filter((v) => v.mailbox === a.mailbox)) {
@@ -100,21 +104,73 @@ export function verifySnapshot(
       assert.equal(p.revision, ++revision);
       assert.equal(p.oldF, f);
       assert.equal(p.oldE, e);
+      assert.equal(p.oldR, r);
       assert(p.f >= f && p.e <= e && p.e >= 1);
+      assert(p.r >= 0 && p.r <= p.f);
       assert(
-        p.f > f !== p.e < e,
+        Number(p.f > f) + Number(p.e < e) + Number(p.r !== r) === 1,
         "Exactly one frontier advances per publication",
       );
-      assert(p.f - f <= 128 && e - p.e <= 128, "128 numeric UID bound");
-      exact(p.metadata, p.f > f ? f + 1 : p.e, p.f > f ? p.f : e - 1);
+      if (p.r !== r) {
+        const page = known.items
+          .filter((v) => v.uid >= e && v.uid <= f && v.uid > r)
+          .sort((a, b) => a.uid - b.uid)
+          .slice(0, 128);
+        assert.equal(
+          p.r,
+          page.at(-1)?.uid ?? 0,
+          "Exact R page or exhausted wrap",
+        );
+        assert.deepEqual(
+          p.metadata.map((v) => v.uid).sort((a, b) => a - b),
+          page.map((v) => v.uid),
+        );
+        if (page.length) exact(p.metadata, page[0].uid, page.at(-1)!.uid);
+        else assert.equal(p.metadata.length, 0);
+      } else {
+        assert(p.f - f <= 128 && e - p.e <= 128, "128 numeric UID bound");
+        exact(p.metadata, p.f > f ? f + 1 : p.e, p.f > f ? p.f : e - 1);
+      }
       if (p.e < e) history++;
       f = p.f;
       e = p.e;
+      r = p.r;
     }
     assert.equal(state.f, f);
     assert.equal(state.e, e);
+    assert.equal(state.r, r);
     assert.equal(state.revision, revision);
     assert.equal(state.history, history);
+  }
+}
+
+/** Restart may perform R15 membership observations, never replay F/E metadata. */
+export function verifyRestart(
+  before: Snapshot,
+  after: Snapshot,
+  accounts: Identity[],
+  inventory: Map<string, Inventory>,
+) {
+  verifySnapshot(before, accounts, inventory);
+  verifySnapshot(after, accounts, inventory);
+  const durable = (s: Frontier) => ({
+    mailbox: s.mailbox,
+    epoch: s.epoch,
+    f: s.f,
+    e: s.e,
+    placements: s.placements,
+    history: s.history,
+  });
+  assert.deepEqual(after.states.map(durable), before.states.map(durable));
+  for (const account of accounts) {
+    const oldAudit = before.audit.filter((p) => p.mailbox === account.mailbox);
+    const current = after.audit.filter((p) => p.mailbox === account.mailbox);
+    assert.deepEqual(current.slice(0, oldAudit.length), oldAudit);
+    for (const publication of current.slice(oldAudit.length)) {
+      assert.equal(publication.f, publication.oldF);
+      assert.equal(publication.e, publication.oldE);
+      assert.notEqual(publication.r, publication.oldR);
+    }
   }
 }
 
@@ -147,6 +203,7 @@ export function checkOracle() {
         epoch: "7",
         f: 4,
         e: 3,
+        r: 0,
         revision: 1,
         history: 1,
         placements: metadata,
@@ -161,6 +218,8 @@ export function checkOracle() {
         f: 4,
         oldE: 5,
         e: 3,
+        oldR: 0,
+        r: 0,
         metadata,
       },
     ],
@@ -206,7 +265,63 @@ export function checkOracle() {
     mutate(s);
     assert.throws(() => verifySnapshot(s, accounts, known));
   }
+  const repaired = structuredClone(valid);
+  repaired.states[0].r = 4;
+  repaired.states[0].revision = 2;
+  repaired.audit.push({
+    ...repaired.audit[0],
+    revision: 2,
+    oldE: 3,
+    oldR: 0,
+    r: 4,
+  });
+  verifySnapshot(repaired, accounts, known);
+  const repairMutations: ((s: Snapshot) => void)[] = [
+    (s) => {
+      s.audit[1].metadata.pop();
+    },
+    (s) => {
+      s.audit[1].r = 3;
+      s.states[0].r = 3;
+    },
+    (s) => {
+      s.audit[1].oldR = 1;
+    },
+    (s) => {
+      s.audit[1].f = 5;
+      s.states[0].f = 5;
+    },
+  ];
+  for (const mutate of repairMutations) {
+    const s = structuredClone(repaired);
+    mutate(s);
+    assert.throws(() => verifySnapshot(s, accounts, known));
+  }
+  const wrapped = structuredClone(repaired);
+  wrapped.states[0].r = 0;
+  wrapped.states[0].revision = 3;
+  wrapped.audit.push({
+    ...repaired.audit[1],
+    revision: 3,
+    oldR: 4,
+    r: 0,
+    metadata: [],
+  });
+  verifySnapshot(wrapped, accounts, known);
+  verifyRestart(valid, repaired, accounts, known);
+  verifyRestart(repaired, wrapped, accounts, known);
+  assert.throws(() =>
+    verifyRestart(
+      valid,
+      structuredClone({ ...valid, states: [] }),
+      accounts,
+      known,
+    ),
+  );
+  const premature = structuredClone(wrapped);
+  premature.audit[2].oldR = 3;
+  assert.throws(() => verifySnapshot(premature, accounts, known));
   console.log(
-    `Oracle checks PASS: positive sparse interval and ${mutations.length} negative controls`,
+    `Oracle checks PASS: sparse interval, exact R page, exhausted wrap, durable restart and ${mutations.length + repairMutations.length + 2} negative controls`,
   );
 }

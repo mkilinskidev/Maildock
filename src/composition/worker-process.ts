@@ -1,16 +1,11 @@
+import { ReceivingDemand } from "../modules/mail/application/receiving-demand";
+import { registerReceivingWakeDelivery } from "../modules/mail/infrastructure/receiving-wake-jobs";
+import { registerReceivingConversions } from "../modules/mail/infrastructure/receiving-conversion-jobs";
 import { registerAccountRemovalWorker } from "../modules/accounts/infrastructure/account-removal-jobs";
 import { logFailure } from "../shared/infrastructure/logging/diagnostics";
 import { createLogger } from "../shared/infrastructure/logging/logger";
-import { registerAttachmentWorker } from "../modules/mail/infrastructure/attachment-jobs";
 import { createWorkerComposition } from "./worker.js";
-import { registerMailboxDiscoveryWorker } from "../modules/mail/infrastructure/mailbox-discovery-jobs.js";
-import { registerRecentSyncWorker } from "../modules/mail/infrastructure/recent-sync-jobs.js";
-import { registerContentWorker } from "../modules/mail/infrastructure/content-jobs.js";
-import { registerDeltaWorker } from "../modules/mail/infrastructure/delta-sync-jobs.js";
-import { registerBackfillWorker } from "../modules/mail/infrastructure/backfill-sync-jobs.js";
-import { registerMessageCommandWorker } from "../modules/mail/infrastructure/message-command-jobs.js";
 import { registerOutgoingWorker } from "../modules/mail/infrastructure/outgoing-jobs.js";
-import { registerSentCopyWorker } from "../modules/mail/infrastructure/sent-copy-jobs.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { isInstanceReady } from "../modules/auth/application/instance-readiness.js";
 import { validateDatabaseAuthority } from "../shared/infrastructure/database/database-authority.js";
@@ -43,6 +38,7 @@ async function main() {
     stopping = true;
     shutdownController.abort();
     clearInterval(retentionTimer);
+    void worker.receiving.stop().catch(() => undefined);
     worker.logger.info(
       { event: "worker.shutdown", signal },
       "Worker shutting down",
@@ -50,15 +46,10 @@ async function main() {
   }
 
   async function stopBusinessWorkers() {
-    worker.attachmentPoller.stop();
-    worker.poller.stop();
-    worker.backfillPoller.stop();
-    worker.commandPoller.stop();
     worker.outgoingPoller.stop();
-    worker.sentCopyPoller.stop();
     const errors: unknown[] = [];
     try {
-      await worker.watchers.stop();
+      await worker.receiving.stop();
     } catch (error) {
       errors.push(error);
     }
@@ -93,54 +84,42 @@ async function main() {
     if (stopping) return;
     await worker.jobs.start();
     await registerAccountRemovalWorker(worker.jobs.boss, worker.accounts);
-    await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
-    await worker.attachmentPoller.start();
-    await registerSentCopyWorker(worker.jobs.boss, worker.sentCopy);
+    await registerReceivingConversions(
+      worker.jobs.boss,
+      worker.database.db,
+      worker.receiving,
+    );
+    const demand = new ReceivingDemand(worker.database.db, (id) =>
+      worker.receiving.notify(id),
+    );
+    await registerReceivingWakeDelivery(
+      worker.jobs.boss,
+      demand,
+      worker.receiving,
+    );
     await registerOutgoingWorker(worker.jobs.boss, worker.outgoing);
     await worker.outgoingPoller.start();
-    await registerRecentSyncWorker(
-      worker.jobs.boss,
-      worker.messages,
-      worker.config.messageSyncConcurrency,
-      worker.withMailboxLock,
-    );
-    await registerDeltaWorker(
-      worker.jobs.boss,
-      worker.delta,
-      worker.config.messageSyncConcurrency,
-      worker.withMailboxLock,
-    );
-    await registerBackfillWorker(
-      worker.jobs.boss,
-      worker.backfill,
-      worker.withMailboxLock,
-    );
-    await registerContentWorker(worker.jobs.boss, worker.content);
-    await registerMessageCommandWorker(
-      worker.jobs.boss,
-      worker.commands,
-      worker.withMailboxLock,
-    );
-    await registerMailboxDiscoveryWorker(
-      worker.jobs.boss,
-      worker.mailboxDiscovery,
-      worker.config.workerConcurrency,
-    );
-    await worker.poller.start();
-    await worker.backfillPoller.start();
-    await worker.commandPoller.start();
-    await worker.sentCopyPoller.start();
-    await worker.watchers.start();
+    if (!stopping && (await isInstanceReady(worker.database.db))) {
+      await worker.receiving.start();
+      return true;
+    }
+    return false;
   }
 
   async function superviseBusinessReadiness() {
     while (!stopping) {
-      await startBusinessWorkers();
+      const started = await startBusinessWorkers();
       if (stopping) return;
+      if (!started) {
+        await stopBusinessWorkers();
+        continue;
+      }
       // Authenticator replacement is the first supported READY -> NOT READY
       // transition. Re-read PostgreSQL instead of caching startup readiness.
-      while (!stopping && (await isInstanceReady(worker.database.db)))
+      while (!stopping && (await isInstanceReady(worker.database.db))) {
+        await worker.receiving.tick();
         await waitForReadinessPoll();
+      }
       if (stopping) return;
       await stopBusinessWorkers();
       worker.logger.info(

@@ -15,7 +15,7 @@ const payloadSchema = z.object({
   accountId: z.uuid(),
 });
 
-async function ensureQueue(boss: PgBoss): Promise<void> {
+export async function ensureMailboxDiscoveryQueue(boss: PgBoss): Promise<void> {
   await boss.createQueue(MAILBOX_DISCOVERY_QUEUE, {
     policy: "stately",
     retryLimit: 4,
@@ -43,7 +43,7 @@ export class PgBossMailboxDiscoveryScheduler implements MailboxDiscoverySchedule
   private start(): Promise<void> {
     this.started ??= (async () => {
       await this.boss.start();
-      await ensureQueue(this.boss);
+      await ensureMailboxDiscoveryQueue(this.boss);
     })();
     return this.started;
   }
@@ -71,7 +71,7 @@ export async function registerMailboxDiscoveryWorker(
   service: MailboxDiscoveryService,
   concurrency: number,
 ): Promise<void> {
-  await ensureQueue(boss);
+  await ensureMailboxDiscoveryQueue(boss);
   await boss.work(
     MAILBOX_DISCOVERY_QUEUE,
     { localConcurrency: concurrency },

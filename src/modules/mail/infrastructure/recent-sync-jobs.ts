@@ -21,7 +21,7 @@ export const recentSyncPayloadSchema = z
   })
   .strict();
 
-async function ensureQueue(boss: PgBoss): Promise<void> {
+export async function ensureRecentSyncQueue(boss: PgBoss): Promise<void> {
   await boss.createQueue(MAILBOX_RECENT_SYNC_QUEUE, {
     policy: "stately",
     retryLimit: 4,
@@ -54,7 +54,7 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
   private start(): Promise<void> {
     this.started ??= (async () => {
       await this.boss.start();
-      await ensureQueue(this.boss);
+      await ensureRecentSyncQueue(this.boss);
     })().catch((error) => {
       this.started = undefined;
       throw error;
@@ -88,7 +88,7 @@ export async function registerRecentSyncWorker(
     work: () => Promise<void>,
   ) => Promise<void> = async (_mailboxId, work) => work(),
 ): Promise<void> {
-  await ensureQueue(boss);
+  await ensureRecentSyncQueue(boss);
   await boss.work(
     MAILBOX_RECENT_SYNC_QUEUE,
     { localConcurrency: concurrency },

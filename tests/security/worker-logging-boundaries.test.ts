@@ -62,6 +62,14 @@ vi.mock("@/composition/worker", async () => {
           stop: async () => {},
           boss: {},
         },
+        diagnosticRpc: { start: async () => {}, stop: async () => {} },
+        receiving: {
+          start: async () => {},
+          tick: async () => {},
+          stop: async () => {
+            throw failure();
+          },
+        },
         watchers: {
           stop: async () => {
             throw failure();

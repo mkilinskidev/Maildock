@@ -184,6 +184,7 @@ export async function prepareReceivingTopology(input: {
       await context.client.list();
       input.assertCurrent();
       const entries = assignIdentities(snapshot, collector.finish());
+      const capabilities = [...context.client.capabilities.keys()];
       const evidence = {
         complete: true as const,
         taggedOk: true as const,
@@ -204,6 +205,7 @@ export async function prepareReceivingTopology(input: {
           snapshot,
           evidence,
           options(),
+          capabilities,
         );
       } catch (error) {
         if (!(error instanceof ReceivingUnresolvedError)) throw error;

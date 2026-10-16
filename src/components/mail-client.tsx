@@ -1512,6 +1512,7 @@ export function MailClient({
                 searchActive ||
                 showDrafts ||
                 refreshing ||
+                folder?.receiving?.mode === "deferred" ||
                 !mailboxId ||
                 allInboxes
               }
@@ -1643,17 +1644,23 @@ export function MailClient({
                       ? "Add your first email account"
                       : !accounts.some((a) => a.enabled)
                         ? "All accounts are disabled"
-                        : folder &&
-                            [
-                              folder.recentSync?.status,
-                              folder.deltaSync?.status,
-                            ].includes("failed")
-                          ? "Mail could not be synchronized"
-                          : folder &&
-                              !folder.recentSync?.lastSuccessfulAt &&
-                              !folder.deltaSync?.lastSuccessfulAt
-                            ? "Waiting for mail to sync"
-                            : "No messages"
+                        : folder?.receiving?.mode === "deferred"
+                          ? "Folder synchronization is not available yet"
+                          : folder?.receiving?.mode === "inbox"
+                            ? folder.receiving.historyComplete
+                              ? "No messages"
+                              : "Waiting for mail to sync"
+                            : folder &&
+                                [
+                                  folder.recentSync?.status,
+                                  folder.deltaSync?.status,
+                                ].includes("failed")
+                              ? "Mail could not be synchronized"
+                              : folder &&
+                                  !folder.recentSync?.lastSuccessfulAt &&
+                                  !folder.deltaSync?.lastSuccessfulAt
+                                ? "Waiting for mail to sync"
+                                : "No messages"
                     : "No mailbox selected"}
                 </strong>
                 <p>
@@ -1665,17 +1672,23 @@ export function MailClient({
                       ? "Add an account in Settings to start reading and sending mail."
                       : !accounts.some((a) => a.enabled)
                         ? "Enable an account in Settings to synchronize mail."
-                        : folder &&
-                            [
-                              folder.recentSync?.status,
-                              folder.deltaSync?.status,
-                            ].includes("failed")
-                          ? "Check account Diagnostics in Settings, then request sync again."
-                          : folder &&
-                              !folder.recentSync?.lastSuccessfulAt &&
-                              !folder.deltaSync?.lastSuccessfulAt
-                            ? "Messages will appear as synchronization completes."
-                            : "This mailbox has no messages to display."
+                        : folder?.receiving?.mode === "deferred"
+                          ? "Saved messages and completed moves remain available. Background synchronization for this folder will be added later."
+                          : folder?.receiving?.mode === "inbox"
+                            ? folder.receiving.historyComplete
+                              ? "This mailbox has no messages to display."
+                              : "Messages will appear as synchronization completes."
+                            : folder &&
+                                [
+                                  folder.recentSync?.status,
+                                  folder.deltaSync?.status,
+                                ].includes("failed")
+                              ? "Check account Diagnostics in Settings, then request sync again."
+                              : folder &&
+                                  !folder.recentSync?.lastSuccessfulAt &&
+                                  !folder.deltaSync?.lastSuccessfulAt
+                                ? "Messages will appear as synchronization completes."
+                                : "This mailbox has no messages to display."
                     : "Choose a mailbox from the sidebar."}
                 </p>
                 {!accounts.length ? (

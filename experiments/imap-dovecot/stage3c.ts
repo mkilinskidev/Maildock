@@ -7,6 +7,7 @@ import {
   checkOracle,
   historyCandidates,
   verifySnapshot,
+  verifyRestart,
   type Snapshot,
   type Placement,
   type Identity,
@@ -194,12 +195,13 @@ async function smoke() {
     postgres: (await db`select version()`)[0].version,
     node: process.version,
   };
-  await db.unsafe(`CREATE TABLE stage3c_audit (mailbox uuid, epoch bigint, revision bigint, old_f bigint, new_f bigint, old_e bigint, new_e bigint, metadata jsonb);
+  await db.unsafe(`CREATE TABLE stage3c_audit (mailbox uuid, epoch bigint, revision bigint, old_f bigint, new_f bigint, old_e bigint, new_e bigint, old_r bigint, new_r bigint, metadata jsonb);
     CREATE FUNCTION stage3c_audit_progress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-    INSERT INTO stage3c_audit SELECT NEW.mailbox_id,NEW.epoch,NEW.revision,OLD.fresh_through,NEW.fresh_through,OLD.history_before,NEW.history_before,
+    INSERT INTO stage3c_audit SELECT NEW.mailbox_id,NEW.epoch,NEW.revision,OLD.fresh_through,NEW.fresh_through,OLD.history_before,NEW.history_before,OLD.reconcile_after,NEW.reconcile_after,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('uid',p.uid,'epoch',p.uid_validity::text,'account',m.account_id::text,'id',m.rfc_message_id) ORDER BY p.uid)
     FROM mailbox_messages p JOIN messages m ON m.id=p.message_id WHERE p.mailbox_id=NEW.mailbox_id AND p.uid_validity=NEW.epoch
-    AND ((p.uid>OLD.fresh_through AND p.uid<=NEW.fresh_through) OR (p.uid>=NEW.history_before AND p.uid<OLD.history_before))), '[]'::jsonb);
+    AND ((p.uid>OLD.fresh_through AND p.uid<=NEW.fresh_through) OR (p.uid>=NEW.history_before AND p.uid<OLD.history_before)
+      OR (p.uid>OLD.reconcile_after AND p.uid<=NEW.reconcile_after))), '[]'::jsonb);
     RETURN NEW; END $$;
     CREATE TRIGGER stage3c_audit AFTER UPDATE ON receiving_mailboxes FOR EACH ROW EXECUTE FUNCTION stage3c_audit_progress();`);
   if (!failureOnly) {
@@ -425,7 +427,7 @@ async function smoke() {
           renew: async (tx) => {
             diagnostic?.mark(user, "postgres.lease.lock-request");
             const [current] = await tx.execute(
-              sql`select owner,generation,expires_at>clock_timestamp() as live from receiving_coordinator where singleton for update`,
+              sql`select owner,generation,expires_at>clock_timestamp() as live from receiving_coordinator where singleton for share`,
             );
             diagnostic?.mark(user, "postgres.lease.lock-acquired");
             assert(
@@ -433,10 +435,7 @@ async function smoke() {
                 current.owner === actor &&
                 BigInt(current.generation as string) === owner.generation,
             );
-            await tx.execute(
-              sql`update receiving_coordinator set expires_at=clock_timestamp()+interval '60 seconds' where singleton`,
-            );
-            diagnostic?.mark(user, "postgres.lease.renewed");
+            diagnostic?.mark(user, "postgres.lease.validated");
           },
         },
         timing: {
@@ -544,6 +543,7 @@ async function smoke() {
             epoch: String(r.epoch),
             f: Number(r.fresh_through),
             e: Number(r.history_before),
+            r: Number(r.reconcile_after),
             revision: Number(r.revision),
             history: audit.filter(
               (p) =>
@@ -566,6 +566,8 @@ async function smoke() {
             f: Number(p.new_f),
             oldE: Number(p.old_e),
             e: Number(p.new_e),
+            oldR: Number(p.old_r),
+            r: Number(p.new_r),
             metadata: p.metadata as Placement[],
           })),
         };
@@ -610,6 +612,20 @@ async function smoke() {
         accounts: selected,
         executor: executor!,
         tuning: { workers },
+        // Match the elected composition: renewal is control work before
+        // admission; per-turn owner validation takes a compatible share lock.
+        // A prototype FOR UPDATE renewal inside the two-second history turn
+        // serialized unrelated accounts behind another result's owner lock.
+        beforeAdmission: () =>
+          executor!.transaction(
+            async (tx) => {
+              const [row] = await tx.execute(
+                sql`select maildock_receiving_renew(${actor}::uuid,${owner.generation}::bigint,60000) as live`,
+              );
+              return row.live === true;
+            },
+            { deadline: Math.min(deadline, performance.now() + 2000) },
+          ),
         historyAllowed: () => history,
         onAdmission: (a) => {
           admissions.push(a);
@@ -970,7 +986,7 @@ async function smoke() {
         .every((a) => a.kind === "fresh"),
     );
     const restarted = await boundary("restart");
-    assert.deepEqual(restarted.states, saved.states);
+    verifyRestart(saved, restarted, identities, inventories);
     run.restart = "PASS";
     disabled = true;
     const errorIndex = errors.length;

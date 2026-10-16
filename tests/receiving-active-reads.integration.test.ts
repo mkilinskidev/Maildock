@@ -19,6 +19,7 @@ import { ReceivingExecutor } from "@/shared/infrastructure/database/receiving-ex
 import { ReceivingPersistence } from "@/modules/mail/application/receiving-persistence";
 import { ReceivingPublication } from "@/modules/mail/application/receiving-publication";
 import { MessageService } from "@/modules/mail/application/message-service";
+import { initializeLocalSearchBodies } from "@/modules/mail/infrastructure/search-local-backfill";
 import { MessageContentService } from "@/modules/mail/application/message-content-service";
 import { MessageCommandService } from "@/modules/mail/application/message-command-service";
 import { MailboxService } from "@/modules/mail/application/mailbox-service";
@@ -200,6 +201,24 @@ describe("R05 active identity public reads", () => {
     message = row.message_id;
   }
   const content = () => new MessageContentService(database.db);
+  it("startup local search conversion leaves enrolled pending content and authority unchanged", async () => {
+    await enroll();
+    await content().request(account, inbox, message);
+    const before =
+      await reader`select to_jsonb(c) as row from message_contents c where message_id=${message}`;
+    const authority =
+      await reader`select * from receiving_mailboxes where mailbox_id=${inbox}`;
+    expect(before[0].row.status).toBe("pending");
+    expect(before[0].row.search_text).toBeNull();
+    await initializeLocalSearchBodies(database.db);
+    await initializeLocalSearchBodies(database.db);
+    expect(
+      await reader`select to_jsonb(c) as row from message_contents c where message_id=${message}`,
+    ).toEqual(before);
+    expect(
+      await reader`select * from receiving_mailboxes where mailbox_id=${inbox}`,
+    ).toEqual(authority);
+  });
   const attachments = () =>
     new AttachmentService(
       database.db,

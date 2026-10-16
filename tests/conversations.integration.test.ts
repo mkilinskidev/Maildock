@@ -14,6 +14,7 @@ import {
   mailAccounts,
   mailboxes,
   mailboxMessages,
+  messages,
   conversationMembers,
   conversations,
   instanceState,
@@ -178,6 +179,36 @@ describe("Phase 2G conversation graph and queries", () => {
   afterAll(async () => {
     await database?.client.end();
     await container?.stop();
+  });
+
+  it("retains an unchanged redirect tuple when another sibling joins its winner", async () => {
+    const root = "00000000-0000-4000-8000-000000000001";
+    const sibling = "00000000-0000-4000-8000-000000000002";
+    const next = "00000000-0000-4000-8000-000000000003";
+    const insert = (id: string) =>
+      database.db.insert(messages).values({
+        id,
+        accountId: account,
+        rfcMessageId: `<${id}@redirect.test>`,
+        references: "<parent@redirect.test>",
+        internalDate: new Date(),
+        size: 1n,
+      });
+    await insert(root);
+    await insert(sibling);
+    const before = await database.client`
+      select ctid::text as tuple, merged_into from conversations where id=${sibling}`;
+    expect(before[0].merged_into).toBe(root);
+    await insert(next);
+    const after = await database.client`
+      select ctid::text as tuple, merged_into from conversations where id=${sibling}`;
+    expect(after).toEqual(before);
+    expect(await groupCount()).toBe(1);
+    expect((await groups()).map((m) => m.conversationId)).toEqual([
+      root,
+      root,
+      root,
+    ]);
   });
 
   it("persists automatic read preferences alongside existing singleton settings", async () => {

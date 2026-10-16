@@ -165,7 +165,10 @@ export class MessageService {
     // INBOX demand no longer depends on v1 initialization/status. Its producer
     // records due before wake and must not write legacy lifecycle metadata on
     // a Stage 1 enrolled mailbox.
-    if (mailbox.remotePath === "INBOX")
+    const [ownership] = await this.database.execute(
+      sql`select maildock_receiving_account_enrolled(${accountId}::uuid) as enrolled`,
+    );
+    if (mailbox.remotePath === "INBOX" || ownership.enrolled)
       return this.scheduler.schedule(accountId, mailboxId);
     const now = new Date();
     try {

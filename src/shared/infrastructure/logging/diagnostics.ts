@@ -13,6 +13,7 @@ export type FailureOperation =
   | "mailbox-discovery"
   | "recent-sync"
   | "receiving-wake"
+  | "receiving-conversion"
   | "delta-sync"
   | "backfill-sync"
   | "message-content"

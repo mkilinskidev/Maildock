@@ -8,11 +8,17 @@ import type { Database } from "../../../shared/infrastructure/database/database"
 import {
   messagePlacementProjection as mailboxMessages,
   mailboxes,
+  receivingMailboxes,
 } from "../../../shared/infrastructure/database/schema";
 
 type MailboxRow = typeof mailboxes.$inferSelect;
 
 export type MailboxView = Readonly<{
+  receiving?: Readonly<{
+    mode: "inbox" | "deferred";
+    historyComplete: boolean;
+    freshThrough: string | null;
+  }>;
   id: string;
   remotePath: string;
   name: string;
@@ -69,8 +75,10 @@ function view(
   row: MailboxRow,
   synchronizedMessageCount: string,
   countsIncludePendingActions = false,
+  receiving?: MailboxView["receiving"],
 ): MailboxView {
   return {
+    ...(receiving ? { receiving } : {}),
     id: row.id,
     remotePath: row.remotePath,
     name: row.name,
@@ -173,8 +181,21 @@ export class MailboxService {
           count: sql<string>`count(${mailboxMessages.id})::text`,
           unread: sql<string>`count(${mailboxMessages.id}) FILTER (WHERE NOT ${mailboxMessages.flags} @> ARRAY['\\Seen']::text[])::text`,
           enrolled: sql<boolean>`maildock_receiving_account_enrolled(${mailboxes.accountId})`,
+          receiving: sql<
+            MailboxView["receiving"]
+          >`case when maildock_receiving_account_enrolled(${mailboxes.accountId}) then
+            jsonb_build_object('mode',case when ${mailboxes.remotePath}='INBOX' then 'inbox' else 'deferred' end,
+              'historyComplete',coalesce(${receivingMailboxes.historyBefore}=1,false),
+              'freshThrough',${receivingMailboxes.freshThrough}::text) end`,
         })
         .from(mailboxes)
+        .leftJoin(
+          receivingMailboxes,
+          and(
+            eq(receivingMailboxes.mailboxId, mailboxes.id),
+            sql`${receivingMailboxes.configurationBinding}=(select configuration_version from mail_accounts where id=${mailboxes.accountId})`,
+          ),
+        )
         .leftJoin(
           mailboxMessages,
           and(
@@ -183,7 +204,7 @@ export class MailboxService {
           ),
         )
         .where(and(eq(mailboxes.accountId, accountId)))
-        .groupBy(mailboxes.id),
+        .groupBy(mailboxes.id, receivingMailboxes.mailboxId),
     ]);
     const countsByMailbox = new Map(counts.map((row) => [row.mailboxId, row]));
     return rows.map((row) => {
@@ -198,6 +219,7 @@ export class MailboxService {
           : row,
         count?.count ?? "0",
         count?.enrolled,
+        count?.receiving,
       );
     });
   }

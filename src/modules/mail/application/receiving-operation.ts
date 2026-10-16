@@ -152,6 +152,7 @@ export type ReceivingOperationResult = ReceivingDiagnosticResult | void;
 export type OwnedReceivingClient = Pick<
   ImapFlow,
   | "connect"
+  | "capabilities"
   | "list"
   | "getMailboxLock"
   | "mailboxOpen"
@@ -205,7 +206,7 @@ type ReceivingOperationBody = (
 export type ReceivingOperationHandler =
   | ReceivingOperationBody
   | Readonly<{ repair: true }>
-  | Readonly<{ topology: "list" | "select" }>
+  | Readonly<{ topology: "list" | "select"; discover?: true }>
   | Readonly<{ flags: true; move?: true }>
   | Readonly<{ move: true; flags?: true; sentCopy?: BlobStorage }>
   | Readonly<{ content: true }>
@@ -759,7 +760,7 @@ export async function runReceivingOperation(
     }
   };
   const providerIterators = new Set<AsyncIterator<unknown>>();
-  // A method-only facade prevents reflection from exposing client internals.
+  // A revocable facade prevents reflection from exposing client internals.
   // Even a method descriptor contains only the revocable wrapper, not ImapFlow.
   const methods = Object.freeze(
     Object.fromEntries(
@@ -900,13 +901,19 @@ export async function runReceivingOperation(
   );
   const ownedClient = new Proxy(methods, {
     get(target, property) {
+      if (property === "capabilities") {
+        guard();
+        if (retired || phase !== "NETWORK" || sqlWork.size)
+          throw new Error("Capabilities require an owned live network phase");
+        return new Map(client?.capabilities ?? []);
+      }
       if (typeof property !== "string" || !Object.hasOwn(target, property))
         throw new Error(
           "Provider helper requested an unowned client capability",
         );
       return Reflect.get(target, property);
     },
-  }) as OwnedReceivingClient;
+  }) as unknown as OwnedReceivingClient;
   const rejectDiagnostic = (entry: unknown) => {
     if (flags || content || attachment || sent || move) {
       (flags ?? content ?? attachment ?? sent ?? move)!.collector.reject();

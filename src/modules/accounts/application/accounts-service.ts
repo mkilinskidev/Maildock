@@ -685,43 +685,19 @@ export class AccountsService {
   private async scheduleDiscovery(id: string): Promise<void> {
     if (!this.discoveryScheduler) return;
     const now = new Date();
+    await this.database
+      .update(mailAccounts)
+      .set({
+        mailboxDiscoveryStatus: "pending",
+        mailboxDiscoveryError: null,
+        mailboxDiscoveryRequestedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(mailAccounts.id, id));
     try {
-      const scheduled = await this.discoveryScheduler.schedule(id);
-      if (scheduled) {
-        await this.database
-          .update(mailAccounts)
-          .set({
-            mailboxDiscoveryStatus: "pending",
-            mailboxDiscoveryError: null,
-            mailboxDiscoveryRequestedAt: now,
-            updatedAt: now,
-          })
-          .where(eq(mailAccounts.id, id));
-      } else {
-        await this.database
-          .update(mailAccounts)
-          .set({
-            mailboxDiscoveryStatus: "pending",
-            mailboxDiscoveryError: null,
-            mailboxDiscoveryRequestedAt: now,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(mailAccounts.id, id),
-              eq(mailAccounts.mailboxDiscoveryStatus, "failed"),
-            ),
-          );
-      }
+      await this.discoveryScheduler.schedule(id);
     } catch {
-      await this.database
-        .update(mailAccounts)
-        .set({
-          mailboxDiscoveryStatus: "failed",
-          mailboxDiscoveryError: "Mailbox discovery could not be scheduled.",
-          updatedAt: now,
-        })
-        .where(eq(mailAccounts.id, id));
+      /* The elected heartbeat rediscovers the committed request. */
     }
   }
 

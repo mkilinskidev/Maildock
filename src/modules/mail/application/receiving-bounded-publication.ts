@@ -203,6 +203,7 @@ export class ReceivingBoundedPublication {
     snapshot: TopologySnapshot,
     evidence: TopologyEvidence,
     options: Options,
+    capabilities?: readonly string[],
   ) {
     const actor = owner.actor,
       term = owner.generation,
@@ -219,10 +220,26 @@ export class ReceivingBoundedPublication {
     ) {
       throw Error("Invalid bounded complete topology evidence");
     }
+    if (
+      capabilities &&
+      (capabilities.length > 128 ||
+        capabilities.some(
+          (value) =>
+            typeof value !== "string" || !/^[\x21-\x7e]{1,256}$/.test(value),
+        ))
+    )
+      throw Error("Invalid bounded server capabilities");
     return this.transaction(async (db) => {
       await db.execute(
         sql`select maildock_receiving_topology_result(${actor}::uuid,${term}::bigint,${account}::uuid,${expected}::jsonb,${completed}::jsonb)`,
       );
+      // The topology result holds the owner, account and configuration locks.
+      // Publish the observed capability hint atomically with that same result.
+      // R14 still checks the live connection before authorizing a MOVE.
+      if (capabilities)
+        await db.execute(
+          sql`update mail_accounts set imap_capabilities=ARRAY(select jsonb_array_elements_text(${JSON.stringify(capabilities)}::jsonb)) where id=${account}::uuid`,
+        );
     }, options);
   }
   /** Authenticated account lifecycle composition only; works with workers stopped. */
