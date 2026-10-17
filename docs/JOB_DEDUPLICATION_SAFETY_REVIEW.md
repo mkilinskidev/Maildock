@@ -225,3 +225,158 @@ Safety: tests ran only in their own throw-away containers. The running
 were not touched; no real IMAP/Gmail access.
 
 Branch: `codex/v1-dedup-safety`, commit `c8ea358` (message commit; later amendments none).
+
+## 8. Final verification — expiration and full regression
+
+Scope: verification only. No production code changed; one test file added.
+Decision: **A, keep `expireInSeconds: 900`** on all three queues.
+
+### 8.1 Full regression (actual results)
+
+Environment check before running: no `DATABASE_URL` / `TEST_DATABASE_URL` in the
+shell, so every integration test starts its own throw-away
+`postgres:18.6-bookworm` Testcontainer on a random port. The only Docker call
+that touches compose is `docker compose config` (read-only, placeholder
+secrets). Test files mention Gmail only as fixture strings; providers are fakes.
+The running `maildock-app-1` and `maildock-postgres-1` containers, their
+database and queues were not touched; no migration, restart, IMAP or SMTP.
+
+| Check                                            | Result                                                                                                                                                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vitest run` before the new tests (HEAD 57bcda5) | 110 files, **1347/1347 passed**, exit 0                                                                                                                                                           |
+| `vitest run` with the new test file              | 111 files, **1353/1353 passed**, exit 0 (includes the 30 `tests/security/*.test.ts` files and the security integration suites)                                                                    |
+| `pnpm typecheck` (app and worker)                | clean                                                                                                                                                                                             |
+| `pnpm lint`                                      | clean                                                                                                                                                                                             |
+| `pnpm format:check`                              | fails only on `SYNC_ENGINE_V1_AUDIT.md` and `SYNC_ENGINE_V1_PRIORITY_DESIGN.md`; both predate this branch (b24e19a), left alone                                                                   |
+| Fakes of pg-boss                                 | the three suites that stub pg-boss for these queues (`inbox-first-priority`, `user-actions-first`, `security/safe-logging`) provide `updateQueue`; other fakes never reach `ensureHeartbeatQueue` |
+
+`tests/security/**` is covered by the single `vitest run` (include glob
+`tests/**/*.test.{ts,tsx}`). The `.mjs` production-image scripts are not part of
+vitest; they build images and start containers, so they were not run.
+
+### 8.2 What pg-boss 12.33.7 (with the local patch) does
+
+Read from `node_modules/pg-boss/dist/{manager,plans,tools}.js`, not from the
+current upstream documentation.
+
+1. **Expiry vs. heartbeat.** Independent. `failJobsByTimeout` tests
+   `started_on + expire_seconds < now` and never reads `heartbeat_on`; `touch`
+   only refreshes `heartbeat_on`. A live job with a perfect heartbeat is expired
+   at 900 s. The heartbeat only detects dead workers sooner.
+2. **Two enforcement points.** (a) In the worker: `#processJobs` races the
+   handler against a timer of `expireInSeconds` (`resolveWithinSeconds`) and then
+   calls `fail()` with "handler execution exceeded Ns". This is the normal path,
+   at 900 s of handler time. (b) The supervisor (`failJobsByTimeout`, "job timed
+   out"), at most once per `monitorIntervalSeconds`, covers dead workers and
+   other instances. Section 2.1 above lists only (b).
+3. **The handler is not interrupted.** The race only stops waiting for it. The
+   job becomes `retry` (commands, content) or `failed` (attachments,
+   `retryLimit: 0`); the handler promise keeps running. The worker slot is freed
+   and the heartbeat timer is cleared.
+4. **AbortSignal.** pg-boss sets `job.signal` on every job. It is aborted when
+   the race ends (timeout, but also normal completion) and on shutdown. **None
+   of the three Maildock handlers reads `job.signal`**, and IMAP, storage and DB
+   calls do not take one, so expiry never cancels work.
+5. **Late result.** The abandoned handler's return value is dropped:
+   `complete()` is not called and the failed/retried job is not revived (tested).
+   Edge case from code reading only (not tested): a handler that outlives a
+   _supervisor_-initiated failure (event-loop stall over 90 s) later calls
+   `complete()`, which matches on id and `state = active`; retries keep the job
+   id, so if the retry was already claimed it is marked completed while still
+   running. The executor locks make that harmless; it only weakens
+   deduplication for the rest of that run.
+6. **Second worker.** It can start after expiry, because the first job is no
+   longer `active` (the `stately` patch looks at live `active` rows only). What
+   prevents duplicate effects is the executor, not pg-boss.
+7. **Restart / upgrade.** In-process timers die with the process. After a
+   restart the new supervisor fails jobs whose heartbeat is stale (jobs inserted
+   with `heartbeat_seconds`, i.e. after the upgrade) or past 900 s (older jobs).
+   `ensureHeartbeatQueue` runs on every worker and web start, so `updateQueue`
+   reaches pre-existing queues; `heartbeat_seconds` is copied to each job at
+   insert, hence jobs created before the upgrade rely on the 900 s expiry
+   (covered by the "liveness contract" tests).
+
+### 8.3 Assessment per queue
+
+Timing facts: ImapFlow `connectionTimeout` 10 s, `socketTimeout` 15 s
+(inactivity, not total time). There is no overall operation deadline, so a slow
+but steadily trickling server is bounded only by size limits and by 900 s. No
+universal maximum message size is assumed; the limits below are Maildock's own
+configuration, and servers/providers may differ.
+
+**Message commands.** One IMAP mutation (MOVE or flag change) plus DB writes;
+`reconcile` only enqueues a delta job. Exceeding 900 s needs a server that keeps
+one STORE/MOVE alive with gaps under 15 s: not realistic. If it happens, the
+retry meets the mailbox advisory lock and defers (tested with MOVE: provider
+called once, no double MOVE). If the process dies instead, the lock drops with
+the connection; an `executing` MOVE is marked uncertain and restored without
+calling IMAP again, and a flag change may be re-applied once (idempotent).
+Keep 900 s.
+
+**Message content.** Fetch of the display parts (each capped by
+`MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES`, default 5 MiB, max 20 MiB), sanitising
+and one UPDATE. Reaching 900 s needs a sustained trickle below about 6 KB/s at
+the default cap. If it happens, **the content executor has no lock**: the retry
+fetches in parallel with the first fetch (tested, two concurrent fetches). Both
+write the same deterministic result, and the failure path never overwrites
+`ready` (`setWhere status <> 'ready'`); the test ends with one row, `ready`, no
+error. The cost is duplicate IMAP traffic, bounded by `retryLimit: 4` with 30 s
+backoff. A lock would remove it, but that is a service change without a measured
+problem behind it.
+
+**Attachments / CID.** Largest exposure: default cap 15 MiB, configurable up to
+100 MiB. 900 s is crossed below about 17 KB/s at the default, 116 KB/s at
+100 MiB. Tested with a transfer stalled mid-stream: at expiry pg-boss marks the
+job `failed`; the handler continues, still holding the attachment advisory lock;
+the row stays `fetching`; the poller re-enqueues and each extra job finds the
+lock held and returns without IMAP (`fetchAttachment` called once). When the
+transfer ends the blob is written (`LocalBlobStorage.put` writes a temp file and
+renames, so expiry during the write cannot leave a partial blob), then
+`registerBlob` and the `ready` update run once: one blob, status `ready`, no
+live job left. A second handler cannot start work; the only cost is one no-op
+job (plus an account lookup) per poll while the slow transfer lasts. 900 s is a
+reasonable safety bound.
+
+### 8.4 New tests
+
+`tests/job-expiration-safety.integration.test.ts` (6 tests, own container, fake
+providers, real pg-boss, real advisory locks, real command/content/attachment
+services). It first asserts the production values (900 s expiry, 90 s
+heartbeat), then shortens `expireInSeconds` to 3 s on the throw-away database so
+the real pg-boss timers fire in seconds; nothing waits 15 minutes. Heartbeat is
+the production value. All 6 pass.
+
+| Scenario                                                             | Result                                                                                              |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Production queue configuration                                       | 900 s / 90 s asserted for all three queues                                                          |
+| Supervisor, content and attachment, past expiry with fresh heartbeat | failed anyway ("job timed out"): `retry` (content), `failed` (attachment)                           |
+| AbortSignal probe                                                    | not aborted at start, aborted after expiry; handler finishes; job stays `failed`                    |
+| Command MOVE, live handler with fresh heartbeat passes expiry        | `retry` ("exceeded"), provider still blocked; retry defers; one `archive` call; command `succeeded` |
+| Content, handler passes expiry                                       | retry fetches in parallel; final row `ready`, consistent, no error                                  |
+| Attachment, stalled transfer passes expiry, repeated poller passes   | one provider call, one blob, `ready`, no live job                                                   |
+| Real crash recovery                                                  | already covered by the deduplication suite (killed heartbeat, restarted instance, uncertain MOVE)   |
+
+### 8.5 Decision: A
+
+900 s stays. Expiry never causes a second effect for commands (mailbox lock plus
+durable `executing`) or attachments (advisory lock plus durable status). Content
+can duplicate a fetch but converges to the same row. The timeout most likely to
+be hit, a slow attachment above the default 15 MiB, is handled by the lock and
+the poller without harm. No queue has a confirmed problem that another value
+would fix, and a larger value would only slow recovery of jobs created before
+the heartbeat upgrade.
+
+No production code change. Variant C items, not implemented and not urgent:
+propagate `job.signal` into the IMAP/storage calls, and/or add an executor lock
+to content fetch.
+
+### 8.6 Remaining risks
+
+- Expiry does not cancel work (no handler uses `job.signal`); an abandoned
+  handler can outlive 900 s and, for content, run in parallel with its retry.
+- A slow server can keep an attachment `fetching` for a long time while a no-op
+  job is created every poll.
+- Advisory locks are session-level: a lost database connection of a live worker
+  releases the lock under a still-running handler (section 6).
+- The late `complete()` of an abandoned handler on a re-claimed job (8.2, point 5) is from code reading; no test.
+- Two Markdown files fail `format:check` independently of this branch.
