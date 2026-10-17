@@ -981,24 +981,23 @@ export class ImapSmtpMailProvider implements MailProvider {
         assertImapHealthy(client);
         return;
       }
-      const lower =
+      const floor =
         frontier - BigInt(request.chunkSize) + 1n > 1n
           ? frontier - BigInt(request.chunkSize) + 1n
           : 1n;
+      const step = BigInt(
+        Math.max(
+          1,
+          Math.min(
+            request.subBatchSize ?? request.chunkSize,
+            request.chunkSize,
+          ),
+        ),
+      );
       const uidSearch = client.search as unknown as (
         query: { uid: string },
         options: { uid: true },
       ) => Promise<number[] | false | undefined>;
-      const found = await uidSearch.call(
-        client,
-        { uid: `${lower}:${frontier}` },
-        { uid: true },
-      );
-      if (found === false || found === undefined)
-        throw new Error("Historical UID search failed.");
-      const uids = found.filter(
-        (uid) => BigInt(uid) >= lower && BigInt(uid) <= frontier,
-      );
       const query = {
         uid: true,
         flags: true,
@@ -1010,32 +1009,54 @@ export class ImapSmtpMailProvider implements MailProvider {
         modseq: true,
         emailId: true,
       } as const;
-      const messages: RemoteMessageMetadata[] = [];
-      if (uids.length) {
-        for await (const item of client.fetch(uids.join(","), query, {
-          uid: true,
-        }))
-          messages.push(normalizeMessage(item));
-        const fetched = new Set(messages.map((item) => item.uid));
-        const missing = uids.filter((uid) => !fetched.has(uid.toString()));
-        if (missing.length) {
-          const stillPresent = await uidSearch.call(
-            client,
-            { uid: missing.join(",") },
-            { uid: true },
-          );
-          if (
-            stillPresent === false ||
-            stillPresent === undefined ||
-            stillPresent.length
-          )
-            throw new Error(
-              "Historical UID disappeared during FETCH; retrying range.",
+      // Disjoint, descending sub-ranges [lower, upper] of [floor, frontier].
+      // Each one is searched, fully fetched, verified and committed together
+      // with its frontier before the next starts. A started FETCH is never
+      // abandoned (ImapFlow does not cancel it); yielding happens only here,
+      // between committed sub-ranges, and ends the call normally.
+      for (let upper = frontier; ;) {
+        const lower = upper - step + 1n > floor ? upper - step + 1n : floor;
+        const found = await uidSearch.call(
+          client,
+          { uid: `${lower}:${upper}` },
+          { uid: true },
+        );
+        if (found === false || found === undefined)
+          throw new Error("Historical UID search failed.");
+        const uids = found.filter(
+          (uid) => BigInt(uid) >= lower && BigInt(uid) <= upper,
+        );
+        const messages: RemoteMessageMetadata[] = [];
+        if (uids.length) {
+          for await (const item of client.fetch(uids.join(","), query, {
+            uid: true,
+          }))
+            messages.push(normalizeMessage(item));
+          const fetched = new Set(messages.map((item) => item.uid));
+          const missing = uids.filter((uid) => !fetched.has(uid.toString()));
+          if (missing.length) {
+            const stillPresent = await uidSearch.call(
+              client,
+              { uid: missing.join(",") },
+              { uid: true },
             );
+            if (
+              stillPresent === false ||
+              stillPresent === undefined ||
+              stillPresent.length
+            )
+              throw new Error(
+                "Historical UID disappeared during FETCH; retrying range.",
+              );
+          }
         }
+        // The frontier comes from the range bound, never from fetched UIDs.
+        await sink.chunk(messages, (lower - 1n).toString());
+        assertImapHealthy(client);
+        upper = lower - 1n;
+        if (upper < floor) break;
+        if (await sink.shouldYield?.()) break;
       }
-      await sink.chunk(messages, (lower - 1n).toString());
-      assertImapHealthy(client);
     } catch (error) {
       if (
         error instanceof MailboxEpochChangedError ||

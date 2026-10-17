@@ -115,7 +115,7 @@ describe("user-actions-first with isolated PostgreSQL and pg-boss", () => {
   const backfillService = {
     run: async (_account: string, mailboxId: string) => {
       await syncRecord("backfill", mailboxId);
-      return null;
+      return { outcome: "completed" };
     },
   } as unknown as BackfillSyncService;
   const commandService = {

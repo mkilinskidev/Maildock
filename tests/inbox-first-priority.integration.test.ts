@@ -118,7 +118,10 @@ describe("INBOX-first execution priority with isolated PostgreSQL and pg-boss", 
   const backfillService = {
     run: async (_account: string, mailboxId: string) => {
       await record("backfill", mailboxId);
-      return continuation.get(mailboxId) ?? null;
+      const frontier = continuation.get(mailboxId);
+      return frontier
+        ? { outcome: "progressed", frontier }
+        : { outcome: "completed" };
     },
   } as unknown as BackfillSyncService;
 

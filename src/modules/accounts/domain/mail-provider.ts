@@ -155,7 +155,13 @@ export type RecentMailboxSyncResult = Readonly<{
 export type BackfillMailboxSyncRequest = Readonly<{
   remotePath: string;
   frontier: string | null;
+  /** UIDs covered by one call (one job). */
   chunkSize: number;
+  /**
+   * UIDs per SEARCH + FETCH + verify + chunk() unit inside the call, newest
+   * first; defaults to chunkSize (a single unit).
+   */
+  subBatchSize?: number;
 }>;
 
 export type BackfillMailboxSyncSink = Readonly<{
@@ -164,6 +170,12 @@ export type BackfillMailboxSyncSink = Readonly<{
     messages: readonly RemoteMessageMetadata[],
     nextFrontier: string,
   ): Promise<void>;
+  /**
+   * Asked only at a safe boundary: the previous FETCH is drained and its
+   * chunk() committed, and more UIDs of this call remain. true ends the call
+   * normally (no further FETCH, regular mailbox close and logout).
+   */
+  shouldYield?(): Promise<boolean>;
 }>;
 
 export type RemoteFlagDelta = Readonly<{

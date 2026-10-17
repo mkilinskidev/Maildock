@@ -178,6 +178,7 @@ export function createWorkerComposition() {
       provider,
       messages,
       config.backfillChunkSize,
+      logger,
     ),
     backfillPoller: new BackfillPoller(database.db, jobs.boss),
     watchers: new IdleWatcherManager(database.db, accounts, jobs.boss, logger),

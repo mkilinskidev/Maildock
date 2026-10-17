@@ -90,7 +90,7 @@ describe("Phase 1G job priority", () => {
     const service = {
       run: async () => {
         entered = true;
-        return null;
+        return { outcome: "completed" };
       },
     } as unknown as BackfillSyncService;
     await registerBackfillWorker(boss, service, async (_id, work) => {

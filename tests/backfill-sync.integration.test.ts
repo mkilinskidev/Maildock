@@ -230,8 +230,10 @@ describe("Phase 1G persisted backfill", () => {
       .map((row) => row.uid)
       .sort((a, b) => Number(a - b));
   }
+  /** Next frontier while history remains, else null (completed/ineligible). */
   async function run() {
-    return service.run(accountId, (await mailbox()).id);
+    const result = await service.run(accountId, (await mailbox()).id);
+    return "frontier" in result ? result.frontier : null;
   }
 
   it("commits sparse history progressively, retries idempotently, and completes", async () => {

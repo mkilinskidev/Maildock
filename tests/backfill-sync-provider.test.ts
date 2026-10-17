@@ -140,3 +140,215 @@ describe("Phase 1G IMAP UID traversal", () => {
     expect(fake.ranges).toEqual(["7:10", "9"]);
   });
 });
+
+/** Fake client that logs every protocol step in order. */
+function subBatchProvider(options: {
+  remote: number[];
+  uidNext: number;
+  /** UIDs SEARCH reports but FETCH omits. */
+  omitted?: number[];
+  /** Omitted UIDs a recheck SEARCH still sees (never deleted). */
+  stillPresent?: boolean;
+  /** Throws on the nth FETCH (1-based) after one message. */
+  failFetch?: number;
+  reverse?: boolean;
+}) {
+  const log: string[] = [];
+  let fetches = 0;
+  const factory: ProtocolClientFactories = {
+    createImap: () => ({
+      capabilities: new Map(),
+      enabled: new Set(),
+      connect: async () => undefined,
+      list: async () => [],
+      mailboxOpen: async () => ({ uidValidity: 7n, uidNext: options.uidNext }),
+      mailboxClose: async () => {
+        log.push("close");
+        return true;
+      },
+      logout: async () => {
+        log.push("logout");
+      },
+      close: () => undefined,
+      download: async () => {
+        throw new Error("body download forbidden");
+      },
+      search: async (query) => {
+        const range = (query as unknown as { uid: string }).uid;
+        log.push(`search ${range}`);
+        if (range.includes(":")) {
+          const [low, high] = range.split(":").map(Number);
+          // Unordered SEARCH result.
+          return options.remote
+            .filter((uid) => uid >= low! && uid <= high!)
+            .reverse();
+        }
+        return options.stillPresent ? range.split(",").map(Number) : [];
+      },
+      fetch: async function* (range) {
+        fetches++;
+        log.push(`fetch ${range}`);
+        let uids = range
+          .split(",")
+          .map(Number)
+          .filter((uid) => !options.omitted?.includes(uid));
+        if (options.reverse) uids = uids.reverse();
+        let sent = 0;
+        for (const uid of uids) {
+          if (options.failFetch === fetches && sent === 1)
+            throw new Error("socket reset");
+          sent++;
+          yield {
+            seq: uid,
+            uid,
+            flags: new Set(),
+            internalDate: new Date("2025-01-01"),
+            size: 1,
+            envelope: { subject: String(uid) },
+          } as FetchMessageObject;
+        }
+      },
+    }),
+    createSmtp: () => ({
+      verify: async () => undefined,
+      close: () => undefined,
+    }),
+  };
+  return { value: new ImapSmtpMailProvider(factory), log };
+}
+
+async function subBatches(
+  fake: ReturnType<typeof subBatchProvider>,
+  frontier: string | null,
+  yieldAfter: number | null,
+  chunkSize = 10,
+) {
+  let asked = 0;
+  await fake.value.synchronizeBackfillMailbox(
+    account,
+    { remotePath: "INBOX", frontier, chunkSize, subBatchSize: 3 },
+    {
+      selected: async () => undefined,
+      chunk: async (messages, next) => {
+        fake.log.push(
+          `commit ${messages.map((m) => m.uid).join(",")} -> ${next}`,
+        );
+      },
+      shouldYield: async () => {
+        asked++;
+        fake.log.push("check");
+        return yieldAfter !== null && asked >= yieldAfter;
+      },
+    },
+  );
+  return fake.log;
+}
+
+describe("Stage 3 cooperative history sub-batches", () => {
+  it("walks disjoint descending sub-ranges and checks only between commits", async () => {
+    const fake = subBatchProvider({
+      remote: [1, 2, 4, 5, 6, 8, 9, 10],
+      uidNext: 11,
+    });
+    expect(await subBatches(fake, null, null)).toEqual([
+      "search 8:10",
+      "fetch 10,9,8",
+      "commit 10,9,8 -> 7",
+      "check",
+      "search 5:7",
+      "fetch 6,5",
+      "commit 6,5 -> 4",
+      "check",
+      "search 2:4",
+      "fetch 4,2",
+      "commit 4,2 -> 1",
+      "check",
+      "search 1:1",
+      "fetch 1",
+      // Frontier 0: complete, no check after the last sub-range.
+      "commit 1 -> 0",
+      "close",
+      "logout",
+    ]);
+  });
+
+  it("yields after the committed sub-batch and never starts the next FETCH", async () => {
+    const fake = subBatchProvider({ remote: [1, 5, 9], uidNext: 11 });
+    expect(await subBatches(fake, null, 1)).toEqual([
+      "search 8:10",
+      "fetch 9",
+      "commit 9 -> 7",
+      "check",
+      // Regular end: mailbox closed and session logged out, no teardown.
+      "close",
+      "logout",
+    ]);
+  });
+
+  it("stays inside the job range and advances empty sub-ranges", async () => {
+    const fake = subBatchProvider({ remote: [2], uidNext: 1 });
+    expect(await subBatches(fake, "20", null, 5)).toEqual([
+      "search 18:20",
+      "commit  -> 17",
+      "check",
+      "search 16:17",
+      // The job range [16, 20] is done: no check, the worker continues.
+      "commit  -> 15",
+      "close",
+      "logout",
+    ]);
+  });
+
+  it("commits unordered FETCH responses completely", async () => {
+    const fake = subBatchProvider({
+      remote: [3, 7, 8],
+      uidNext: 9,
+      reverse: true,
+    });
+    const log = await subBatches(fake, null, null);
+    expect(log.filter((line) => line.startsWith("commit"))).toEqual([
+      "commit 7,8 -> 5",
+      "commit 3 -> 2",
+      "commit  -> 0",
+    ]);
+  });
+
+  it("skips a UID deleted during FETCH but blocks on one still present", async () => {
+    const deleted = subBatchProvider({
+      remote: [8, 9, 10],
+      uidNext: 11,
+      omitted: [9],
+    });
+    expect((await subBatches(deleted, null, 1)).slice(0, 4)).toEqual([
+      "search 8:10",
+      "fetch 10,9,8",
+      "search 9",
+      "commit 10,8 -> 7",
+    ]);
+    const present = subBatchProvider({
+      remote: [1, 2, 3, 8, 9, 10],
+      uidNext: 11,
+      omitted: [2],
+      stillPresent: true,
+    });
+    await expect(subBatches(present, null, null)).rejects.toThrow();
+    // The first sub-range stays committed; the incomplete one never is.
+    expect(present.log.filter((line) => line.startsWith("commit"))).toEqual([
+      "commit 10,9,8 -> 7",
+      "commit  -> 4",
+    ]);
+  });
+
+  it("a FETCH failure commits nothing of its sub-range", async () => {
+    const fake = subBatchProvider({
+      remote: [4, 5, 6, 8, 9, 10],
+      uidNext: 11,
+      failFetch: 2,
+    });
+    await expect(subBatches(fake, null, null)).rejects.toThrow();
+    expect(fake.log.filter((line) => line.startsWith("commit"))).toEqual([
+      "commit 10,9,8 -> 7",
+    ]);
+    expect(fake.log.slice(-2)).toEqual(["close", "logout"]);
+  });
+});

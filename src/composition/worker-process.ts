@@ -107,6 +107,7 @@ async function main() {
       worker.jobs.boss,
       worker.backfill,
       worker.withMailboxLock,
+      worker.logger,
     );
     await registerContentWorker(worker.jobs.boss, worker.content);
     await registerMessageCommandWorker(

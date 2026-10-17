@@ -11,6 +11,8 @@ import {
   MAILBOX_DELTA_SYNC_QUEUE,
   MAILBOX_RECENT_SYNC_QUEUE,
 } from "./sync-queues";
+import { MESSAGE_CONTENT_QUEUE } from "./content-jobs";
+import { ATTACHMENT_QUEUE } from "./attachment-jobs";
 
 // Application pg-boss instances use the library default schema.
 const PGBOSS_SCHEMA = "pgboss";
@@ -43,13 +45,26 @@ export async function higherPriorityWorkWaiting(
   mailboxId: string,
   kind: SyncKind,
 ): Promise<boolean> {
+  return (await higherPriorityWork(boss, accountId, mailboxId, kind)) !== null;
+}
+
+/** Category of the outranking work (diagnostics only), or null. */
+export type HigherPriorityWork = "command" | "fresh";
+
+/** Same decision as higherPriorityWorkWaiting, naming the first match. */
+export async function higherPriorityWork(
+  boss: PgBoss,
+  accountId: string,
+  mailboxId: string,
+  kind: SyncKind,
+): Promise<HigherPriorityWork | null> {
   const db = boss.getDb();
   const { rows: own } = await db.executeSql(
     "SELECT remote_path FROM mailboxes WHERE id = $1 AND account_id = $2",
     [mailboxId, accountId],
   );
   const mailbox = own[0] as { remote_path: string } | undefined;
-  if (!mailbox) return false;
+  if (!mailbox) return null;
   const { rows: commands } = await db.executeSql(
     `SELECT 1 FROM message_commands
       WHERE mailbox_id = $1 AND account_id = $2 AND status = 'pending'
@@ -57,9 +72,9 @@ export async function higherPriorityWorkWaiting(
       LIMIT 1`,
     [mailboxId, accountId, COMMAND_WAITING_STALE_SECONDS],
   );
-  if (commands.length > 0) return true;
+  if (commands.length > 0) return "command";
   const tier = syncTier(kind, mailbox.remote_path);
-  if (tier === "inbox-fresh") return false;
+  if (tier === "inbox-fresh") return null;
   const history = kind === "history";
   const { rows } = await db.executeSql(
     `SELECT 1
@@ -100,6 +115,67 @@ export async function higherPriorityWorkWaiting(
       history,
       WAITING_WORK_STALE_SECONDS,
       ACTIVE_WORK_STALE_SECONDS,
+    ],
+  );
+  return rows.length > 0 ? "fresh" : null;
+}
+
+/**
+ * Interactive fetching (message content, attachments and CID images, which
+ * are attachment jobs) of one account that is running or could start now.
+ * These jobs take no mailbox lock, so history cannot see them through lock
+ * contention; it yields to them between sub-batches instead, so the account's
+ * IMAP sessions and bandwidth go to what the user is looking at.
+ *
+ * Only pg-boss jobs count, never durable pending/fetching rows (an orphan is
+ * re-enqueued by its poller and counts again only as a live job):
+ * - active within ACTIVE_WORK_STALE_SECONDS (queue expiry; heartbeats fail
+ *   dead workers sooner);
+ * - created/retry already due and not older than WAITING_WORK_STALE_SECONDS,
+ *   so far retries and unclaimed leftovers never hold history back.
+ * Other accounts never count. Only history consults this.
+ */
+export async function interactiveFetchWaiting(
+  boss: PgBoss,
+  accountId: string,
+): Promise<boolean> {
+  const { rows } = await boss.getDb().executeSql(
+    `SELECT 1
+       FROM ${PGBOSS_SCHEMA}.job j
+      WHERE j.name = ANY($1::text[])
+        AND (
+          (
+            j.state = 'active'
+            AND j.started_on > now() - make_interval(secs => $5::int)
+          )
+          OR (
+            j.state IN ('created', 'retry')
+            AND j.start_after <= now()
+            AND greatest(j.created_on, j.start_after)
+                > now() - make_interval(secs => $4::int)
+          )
+        )
+        AND (
+          (j.name = $2 AND j.data->>'accountId' = $3::text)
+          OR (
+            j.name = $6
+            AND EXISTS (
+              SELECT 1
+                FROM message_attachments a
+                JOIN messages msg ON msg.id = a.message_id
+               WHERE a.id::text = j.data->>'attachmentId'
+                 AND msg.account_id = $3::uuid
+            )
+          )
+        )
+      LIMIT 1`,
+    [
+      [MESSAGE_CONTENT_QUEUE, ATTACHMENT_QUEUE],
+      MESSAGE_CONTENT_QUEUE,
+      accountId,
+      WAITING_WORK_STALE_SECONDS,
+      ACTIVE_WORK_STALE_SECONDS,
+      ATTACHMENT_QUEUE,
     ],
   );
   return rows.length > 0;
