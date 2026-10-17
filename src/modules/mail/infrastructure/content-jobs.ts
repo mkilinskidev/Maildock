@@ -4,7 +4,10 @@ import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnosti
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
-import { enqueueDeduplicated } from "./deduplicated-enqueue";
+import {
+  enqueueDeduplicated,
+  ensureHeartbeatQueue,
+} from "./deduplicated-enqueue";
 import type { ContentScheduler } from "../application/content-scheduler";
 import type { MessageContentService } from "../application/message-content-service";
 
@@ -19,7 +22,7 @@ const payload = z
   .strict();
 
 export async function ensureContentQueue(boss: PgBoss) {
-  await boss.createQueue(MESSAGE_CONTENT_QUEUE, {
+  await ensureHeartbeatQueue(boss, MESSAGE_CONTENT_QUEUE, {
     policy: "stately",
     retryLimit: 4,
     retryDelay: 30,
@@ -65,7 +68,6 @@ export class PgBossContentScheduler implements ContentScheduler {
  * is at most one more IMAP session; fetches take no mailbox sync lock.
  */
 export const CONTENT_WORKER_CONCURRENCY = 2;
-const CONTENT_ACTIVE_LIVE_SECONDS = 300;
 
 /** Repair path: sends only when the message has no live content job. */
 export function enqueueContentRepair(
@@ -79,10 +81,7 @@ export function enqueueContentRepair(
     MESSAGE_CONTENT_QUEUE,
     { messageId },
     { version: 1, accountId, mailboxId, messageId },
-    {
-      singletonKey: `${mailboxId}:${messageId}`,
-      activeLiveSeconds: CONTENT_ACTIVE_LIVE_SECONDS,
-    },
+    { singletonKey: `${mailboxId}:${messageId}` },
   );
 }
 

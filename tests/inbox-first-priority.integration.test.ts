@@ -128,6 +128,8 @@ describe("INBOX-first execution priority with isolated PostgreSQL and pg-boss", 
     ({
       createQueue: (...args: Parameters<PgBoss["createQueue"]>) =>
         boss.createQueue(...args),
+      updateQueue: (...args: Parameters<PgBoss["updateQueue"]>) =>
+        boss.updateQueue(...args),
       getDb: () => boss.getDb(),
       findJobs: (...args: Parameters<PgBoss["findJobs"]>) =>
         boss.findJobs(...args),

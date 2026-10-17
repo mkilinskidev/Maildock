@@ -129,6 +129,8 @@ describe("user-actions-first with isolated PostgreSQL and pg-boss", () => {
     ({
       createQueue: (...args: Parameters<PgBoss["createQueue"]>) =>
         boss.createQueue(...args),
+      updateQueue: (...args: Parameters<PgBoss["updateQueue"]>) =>
+        boss.updateQueue(...args),
       getDb: () => boss.getDb(),
       findJobs: (...args: Parameters<PgBoss["findJobs"]>) =>
         boss.findJobs(...args),
@@ -660,11 +662,11 @@ describe("user-actions-first with isolated PostgreSQL and pg-boss", () => {
       poller.stop();
       expect(await jobsFor(COMMAND, { commandId: id })).toHaveLength(1);
 
-      // An active job of a crashed worker is an orphan: the poller replaces it.
+      // Age alone never orphans an active job: a live worker keeps its job.
       await ageActive(COMMAND);
       await poller.start();
       poller.stop();
-      expect(await jobsFor(COMMAND, { commandId: id })).toHaveLength(2);
+      expect(await jobsFor(COMMAND, { commandId: id })).toHaveLength(1);
     });
 
     it("the poller repairs a command written without an enqueue (10)", async () => {
@@ -784,12 +786,12 @@ describe("user-actions-first with isolated PostgreSQL and pg-boss", () => {
       expect(await jobsFor(CONTENT, { messageId: orphanPending })).toHaveLength(
         1,
       );
-      // ...but the active job of a crashed worker is replaced.
+      // ...even when it has been active for a long time.
       await ageActive(CONTENT);
       await poller.start();
       poller.stop();
       expect(await jobsFor(CONTENT, { messageId: orphanPending })).toHaveLength(
-        2,
+        1,
       );
     });
 

@@ -6,12 +6,15 @@ import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { MessageCommandService } from "../application/message-command-service";
 import { commandBusyDelaySeconds } from "../application/inbox-first-policy";
-import { enqueueDeduplicated } from "./deduplicated-enqueue";
+import {
+  enqueueDeduplicated,
+  ensureHeartbeatQueue,
+} from "./deduplicated-enqueue";
 import { MailboxBusyError } from "./mailbox-lock";
 
 export const MESSAGE_COMMAND_QUEUE = "message-command-v1";
 export async function ensureMessageCommandQueue(boss: PgBoss) {
-  await boss.createQueue(MESSAGE_COMMAND_QUEUE, {
+  await ensureHeartbeatQueue(boss, MESSAGE_COMMAND_QUEUE, {
     retryLimit: 4,
     retryDelay: 15,
     retryBackoff: true,
@@ -25,14 +28,11 @@ const commandPayload = z
   })
   .strict();
 
-/** An active command job older than this is an orphan of a crashed worker. */
-const COMMAND_ACTIVE_LIVE_SECONDS = 120;
-
 /**
  * The single producer path for command jobs (API, poller, busy continuation).
  *
- * - "request": any queued job, or an active job started recently, suppresses
- *   the send;
+ * - "request": any queued or active job suppresses the send (a dead worker's
+ *   job leaves `active` through the pg-boss heartbeat, see deduplicated-enqueue);
  * - "continue": called by the command's own active job, so only a queued
  *   (created/retry) job counts; at most one successor exists.
  */
@@ -55,8 +55,7 @@ export function enqueueMessageCommand(
     },
     {
       singletonKey: id,
-      activeLiveSeconds:
-        options.mode === "continue" ? 0 : COMMAND_ACTIVE_LIVE_SECONDS,
+      ignoreActive: options.mode === "continue",
       ...(options.startAfter === undefined
         ? {}
         : { startAfter: options.startAfter }),
