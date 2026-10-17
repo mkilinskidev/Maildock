@@ -389,6 +389,8 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
         expires_in: 3600,
       }),
     );
+    const now = performance.now.bind(performance);
+    vi.spyOn(performance, "now").mockImplementation(() => now() + 3600_000);
     expect(await newProvider.accessToken(id)).toBe("after-expiry");
     expect((await row(id)).configurationVersion).toBe(initialConfiguration);
     expect(
@@ -399,6 +401,140 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
     expect(await authorization(id)).toMatchObject({
       refreshToken: "rotated-refresh",
     });
+  });
+  it("reuses one token across sustained metadata/content/command resolutions and local concurrent callers", async () => {
+    const id = await connect();
+    fetcher.mockClear();
+    expect(
+      await Promise.all(
+        Array.from({ length: 12 }, () => google.accessToken(id)),
+      ),
+    ).toEqual(Array(12).fill("access-private"));
+    for (let turn = 0; turn < 24; turn++)
+      expect(await google.accessToken(id)).toBe("access-private");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((await row(id)).oauthRefreshAttempt).toBeNull();
+  });
+  it("expires reuse at the actual response lifetime minus sixty seconds", async () => {
+    const id = await connect();
+    fetcher.mockClear();
+    const realNow = performance.now.bind(performance);
+    let offset = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => realNow() + offset);
+    await google.accessToken(id);
+    offset = 3530_000;
+    await google.accessToken(id);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    offset = 3541_000;
+    await google.accessToken(id);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    "configuration",
+    "grant",
+    "provider",
+    "disable",
+    "remove",
+    "reconnect",
+  ])("invalidates a reusable token after %s changes", async (change) => {
+    const id = await connect();
+    await google.accessToken(id);
+    fetcher.mockClear();
+    if (change === "configuration")
+      await database.db
+        .update(mailAccounts)
+        .set({
+          configurationVersion: (await row(id)).configurationVersion + 1n,
+        })
+        .where(eq(mailAccounts.id, id));
+    if (change === "grant")
+      await database.db
+        .update(mailAccounts)
+        .set({
+          oauthCache: encryption.encrypt(
+            JSON.stringify({
+              version: 1,
+              subject: identity.sub,
+              refreshToken: "replacement",
+            }),
+            accountCredentialContext(id, "oauth-cache"),
+          ),
+        })
+        .where(eq(mailAccounts.id, id));
+    if (change === "provider")
+      await composition.configurations.save("google", {
+        clientId: "new-client",
+        clientSecret: "replacement-client",
+        enabled: true,
+      });
+    if (change === "disable")
+      await database.db
+        .update(mailAccounts)
+        .set({ enabled: false })
+        .where(eq(mailAccounts.id, id));
+    if (change === "remove")
+      await database.db.delete(mailAccounts).where(eq(mailAccounts.id, id));
+    if (change === "reconnect") {
+      await google.complete(session, (await begin(id)).state, "fresh-code");
+      fetcher.mockClear();
+    }
+    if (change === "disable" || change === "remove") {
+      await expect(google.accessToken(id)).rejects.toThrow();
+      expect(fetcher).not.toHaveBeenCalled();
+    } else {
+      await google.accessToken(id);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  });
+  it("does not reuse another account's token", async () => {
+    const first = await connect();
+    await google.accessToken(first);
+    const second = await connect();
+    fetcher.mockClear();
+    await google.accessToken(second);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("retries a definitely unissued provider rejection without retaining an uncertain marker", async () => {
+    const id = await connect();
+    fetcher.mockResolvedValueOnce(
+      Response.json({ error: "invalid_client" }, { status: 400 }),
+    );
+    await expect(google.accessToken(id)).rejects.toThrow();
+    expect(await row(id)).toMatchObject({
+      oauthStatus: "connected",
+      oauthRefreshAttempt: null,
+      oauthFailureCategory: "temporary",
+    });
+    await expect(google.accessToken(id)).resolves.toBe("access-private");
+    expect((await row(id)).oauthFailureCategory).toBeNull();
+  });
+  it("releases a matching claim on cancellation proven before the token POST", async () => {
+    const id = await connect();
+    const controller = new AbortController();
+    const decrypt = encryption.decrypt.bind(encryption);
+    const spy = vi
+      .spyOn(encryption, "decrypt")
+      .mockImplementation((envelope, context) => {
+        const value = decrypt(envelope, context);
+        if (context === accountCredentialContext(id, "oauth-cache"))
+          controller.abort();
+        return value;
+      });
+    fetcher.mockClear();
+    await expect(
+      google.accessToken(id, {
+        deadline: performance.now() + 10000,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await row(id)).toMatchObject({
+      oauthRefreshAttempt: null,
+      oauthStatus: "connected",
+      oauthFailureCategory: "temporary",
+    });
+    spy.mockRestore();
+    await expect(google.accessToken(id)).resolves.toBe("access-private");
   });
   it("marks invalid_grant revoked authorization reconnect_required with safe errors", async () => {
     const id = await connect();
@@ -460,12 +596,35 @@ describe("Google OAuth through the Phase 3G.1 extension point (real PostgreSQL, 
   });
   it("does not mistake disabled configuration for revoked account authorization", async () => {
     const id = await connect();
+    await google.accessToken(id);
+    fetcher.mockClear();
     await composition.configurations.save("google", {
       clientId: "google-client",
       enabled: false,
     });
     await expect(google.accessToken(id)).rejects.toThrow("not configured");
     expect((await row(id)).oauthStatus).toBe("connected");
+    expect((await row(id)).oauthFailureCategory).toBe("temporary");
+    expect((await row(id)).oauthRefreshAttempt).toBeNull();
+    expect(
+      (
+        await new AccountsService(
+          database.db,
+          encryption,
+          new ImapSmtpMailProvider(),
+          { schedule: async () => true },
+          composition.registry,
+        ).get(id)
+      ).credentialAvailability?.state,
+    ).toBe("temporary");
+    expect(fetcher).not.toHaveBeenCalled();
+    await composition.configurations.save("google", {
+      clientId: "google-client",
+      enabled: true,
+    });
+    await google.accessToken(id);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((await row(id)).oauthFailureCategory).toBeNull();
   });
   it("requires initial offline authorization and full mail permission", async () => {
     fetcher.mockImplementation(async (url: string) =>

@@ -1,3 +1,4 @@
+import * as diagnostics from "@/shared/infrastructure/logging/receiving-diagnostics";
 import {
   ReceivingBoundedPublication,
   type DataAuthority,
@@ -22,6 +23,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
@@ -206,6 +208,7 @@ describe("R14 owner routed MOVE and bounded repair", () => {
     };
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const close of cleanup.splice(0).reverse()) await close();
   });
   afterAll(async () => {
@@ -500,10 +503,20 @@ describe("R14 owner routed MOVE and bounded repair", () => {
     },
   );
   it("lost MOVE reply never replays and source disappearance stays uncertain", async () => {
+    const events = vi.spyOn(diagnostics, "receivingDiagnostic");
     const id = await create(),
       f = await harness({ mode: "lost" });
     await expect(f.submit(id)).rejects.toThrow();
     const attempt = (await row(id)).receiving_attempt.id;
+    expect(
+      events.mock.calls.some(
+        ([event]) =>
+          event.event === "receiving.operation" &&
+          event.stage === "messageMove" &&
+          event.category === "mutation_outcome_unknown" &&
+          event.disposition === "recover",
+      ),
+    ).toBe(true);
     await f.submit(id, "exact-lookup");
     expect((await row(id)).error).toBe("uncertain_remote_execution");
     expect((await row(id)).receiving_attempt.id).toBe(attempt);

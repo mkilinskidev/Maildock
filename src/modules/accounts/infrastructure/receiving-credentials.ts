@@ -1,3 +1,4 @@
+import { receivingDiagnostic } from "../../../shared/infrastructure/logging/receiving-diagnostics";
 import { and, eq } from "drizzle-orm";
 import type { AccountsService } from "../application/accounts-service";
 import type { ElectedReceivingCoordinator } from "../../mail/application/receiving-election";
@@ -43,6 +44,14 @@ export function receivingCredentialBindings(accounts: AccountsService) {
     const receivingLifecycleVersion = row.receivingLifecycleVersion;
     return {
       ...candidate,
+      onError: () =>
+        receivingDiagnostic({
+          event: "receiving.credentials",
+          operation: "metadata",
+          stage: "turn",
+          category: "unavailable_or_remote_failure",
+          disposition: "retry",
+        }),
       connection: await load(db, candidate.account, configurationVersion),
       resolveConnection: (budget) =>
         accounts.resolveReceivingConnection(candidate.account, {

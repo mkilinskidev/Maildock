@@ -1,3 +1,4 @@
+import { OAuthAuthorizationError } from "../../accounts/domain/oauth-mail-provider";
 import {
   runReceivingOperation,
   validateReceivingOperation,
@@ -34,6 +35,7 @@ type Pending = {
 type AccountConfig = Omit<ReceivingCoordinatorConfig, "executor">;
 type Account = {
   retired?: boolean;
+  credentialCancellation?: AbortController;
   config: ReceivingCoordinatorConfig;
   timing: ReturnType<typeof receivingTiming>;
   active: boolean;
@@ -217,6 +219,7 @@ export class ReceivingScheduler {
         next.configurationVersion !== current.config.configurationVersion ||
         next.receivingLifecycleVersion !==
           current.config.receivingLifecycleVersion;
+      if (current.retired) current.credentialCancellation?.abort();
     }
     for (let i = this.accounts.length - 1; i >= 0; i--)
       if (this.accounts[i].retired && !this.accounts[i].active)
@@ -558,10 +561,31 @@ export class ReceivingScheduler {
     // owned through IMAP/DB cancellation and local resource retirement.
     const task = Promise.resolve().then(async () => {
       try {
+        let prepared = account.config;
+        if (account.config.resolveConnection) {
+          account.credentialCancellation = new AbortController();
+          const credentialSignal = AbortSignal.any([
+            this.cancellation.signal,
+            account.credentialCancellation.signal,
+            AbortSignal.timeout(10_000),
+          ]);
+          const connection = await account.config.resolveConnection({
+            deadline: performance.now() + 10_000,
+            signal: credentialSignal,
+          });
+          if (credentialSignal.aborted || account.retired)
+            throw new Error("Receiving credential preparation retired");
+          account.config.authority.assertCurrent();
+          prepared = {
+            ...account.config,
+            connection,
+            resolveConnection: undefined,
+          };
+        }
         const turn = await runOneReceivingTurn(
-          account.config,
+          prepared,
           kind,
-          at + operationMs,
+          performance.now() + operationMs,
           this.cancellation.signal,
         );
         const now = performance.now();
@@ -593,7 +617,11 @@ export class ReceivingScheduler {
         if (!this.cancellation.signal.aborted) {
           const retry = account.retryMs;
           account.freshDue = performance.now();
-          account.retryAt = account.freshDue + retry;
+          account.retryAt =
+            error instanceof OAuthAuthorizationError &&
+            error.disposition === "reconnect"
+              ? Infinity
+              : account.freshDue + retry;
           // Recovery must observe fresh before old history becomes eligible.
           account.historySince = undefined;
           account.initialFreshGranted = false;
@@ -601,6 +629,7 @@ export class ReceivingScheduler {
           this.diagnostic(() => account.config.onError?.(error, retry));
         }
       } finally {
+        account.credentialCancellation = undefined;
         this.activeIdentities.delete(account.config.account);
         if (kind === "history") this.activeHistory--;
         if (protectedHistory) this.protectedActive = false;

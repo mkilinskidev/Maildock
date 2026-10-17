@@ -1,3 +1,4 @@
+import { credentialAvailability } from "../domain/credential-availability";
 import { randomUUID } from "node:crypto";
 import type { CredentialBudget } from "../infrastructure/oauth-refresh";
 import type { ImapDiagnostics } from "../../mail/infrastructure/receiving-diagnostic-rpc";
@@ -59,6 +60,7 @@ export type MailAccountView = Readonly<{
   oauthProviderName?: string | null;
   oauthAuthorizationPath?: string | null;
   oauthStatus: "connected" | "reconnect_required" | null;
+  credentialAvailability?: ReturnType<typeof credentialAvailability>;
   imap: Readonly<{
     host: string;
     port: number;
@@ -119,6 +121,7 @@ function toView(
     oauthProviderName: definition?.name ?? row.oauthProviderId,
     oauthAuthorizationPath: definition?.authorizationPath ?? null,
     oauthStatus: row.oauthStatus as MailAccountView["oauthStatus"],
+    credentialAvailability: credentialAvailability(row),
     imap: {
       host: row.imapHost,
       port: row.imapPort,

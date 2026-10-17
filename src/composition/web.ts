@@ -1,7 +1,10 @@
+import { configureReceivingDiagnostics } from "../shared/infrastructure/logging/receiving-diagnostics.js";
 import { getConfig } from "../shared/infrastructure/config/config.js";
 import { createLogger } from "../shared/infrastructure/logging/logger.js";
 
 export function createWebComposition() {
   const config = getConfig();
-  return { config, logger: createLogger(config) };
+  const logger = createLogger(config);
+  configureReceivingDiagnostics(logger);
+  return { config, logger };
 }

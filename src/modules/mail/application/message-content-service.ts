@@ -1,3 +1,4 @@
+import { credentialAvailability } from "../../accounts/domain/credential-availability";
 import type { SourceContext } from "../domain/compose-source";
 import { visibleContent, matchingComposeSource } from "./active-identity";
 import {
@@ -102,7 +103,7 @@ export class MessageContentService {
     messageId: string,
     identity?: SourceContext["identity"],
   ) {
-    const { message, placement, content } = await this.placement(
+    const { account, message, placement, content } = await this.placement(
       accountId,
       mailboxId,
       messageId,
@@ -121,6 +122,7 @@ export class MessageContentService {
         message.mimeStructure,
       );
     return {
+      credentialAvailability: credentialAvailability(account),
       id: message.id,
       subject: message.subject,
       sentAt: message.sentAt?.toISOString() ?? null,

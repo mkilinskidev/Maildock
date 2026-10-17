@@ -460,6 +460,33 @@ describe("isolated shared receiving scheduler", () => {
     },
   );
 
+  it("keeps credential preparation outside the two-second history execution clock", async () => {
+    const exec = executor(1);
+    const a = await account(exec);
+    a.config.timing = { ...a.config.timing, pollMs: 60_000 };
+    let acquisitions = 0;
+    a.config.resolveConnection = async ({ signal, deadline }) => {
+      acquisitions++;
+      if (acquisitions >= 2) {
+        expect(deadline - performance.now()).toBeGreaterThan(2000);
+        await delay(2200);
+        expect(signal.aborted).toBe(false);
+      }
+      return a.config.connection;
+    };
+    const scheduler = new ReceivingScheduler({
+      accounts: [a.config],
+      executor: exec,
+      tuning: { workers: 1, historyWaitMs: 1 },
+    });
+    cleanup.push(() => scheduler.stop());
+    scheduler.start();
+    await until(() => a.turns.some((t) => t.kind === "history"), 10000);
+    expect(acquisitions).toBeGreaterThanOrEqual(2);
+    expect(a.errors).toHaveLength(0);
+    await scheduler.stop();
+    expect(exec.snapshot.executing).toBe(0);
+  });
   it("isolated DB cancellation after handoff returns its reserved slot", async () => {
     const exec = executor(1),
       abort = new AbortController();

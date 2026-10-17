@@ -52,9 +52,9 @@ export class ReceivingWorker {
       executor: this.executor!,
       ...this.input.credentials,
       diagnosticEndpoint: this.input.config.diagnosticEndpoint,
-      onControlError: (error) =>
+      onControlError: () =>
         this.input.logger.warn(
-          { event: "receiving.control", err: error },
+          { event: "receiving.control", category: "control_failed" },
           "Receiving control failed; retiring owner",
         ),
       operationHandlers: {

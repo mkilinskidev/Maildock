@@ -7,6 +7,11 @@ import type { AttachmentView } from "@/modules/mail/domain/attachments";
 import type { ComposeMode } from "@/modules/mail/domain/compose-source";
 type Address = { name?: string; address?: string };
 export type MessageDetail = {
+  credentialAvailability?: {
+    state: "reconnect_required" | "temporary";
+    message: string;
+    settingsPath: string;
+  } | null;
   id: string;
   seen: boolean;
   flagged: boolean;
@@ -155,6 +160,18 @@ export function MessageReader({
               {detail.cc.length ? " · Cc: " + address(detail.cc) : ""}
             </div>
           </header>
+          {detail.content.status === "ready" &&
+          detail.credentialAvailability ? (
+            <div className="mail-content-failure" role="alert">
+              <p>{detail.credentialAvailability.message}</p>
+              <a
+                className="button-link secondary"
+                href={detail.credentialAvailability.settingsPath}
+              >
+                Account settings
+              </a>
+            </div>
+          ) : null}
           <div className="mail-body" key={`body:${detail.id}`}>
             {detail.content.status === "ready" ? (
               detail.content.sanitizedHtml?.trim() && renderUrl ? (
@@ -167,6 +184,21 @@ export function MessageReader({
               ) : (
                 <pre>{detail.content.plainText}</pre>
               )
+            ) : detail.credentialAvailability ? (
+              <div className="mail-content-failure" role="alert">
+                <p>{detail.credentialAvailability.message}</p>
+                <a
+                  className="button-link secondary"
+                  href={detail.credentialAvailability.settingsPath}
+                >
+                  Account settings
+                </a>
+                {detail.credentialAvailability.state === "temporary" ? (
+                  <button className="button secondary" onClick={retryMessage}>
+                    Retry loading
+                  </button>
+                ) : null}
+              </div>
             ) : detail.content.status === "failed" ? (
               <div className="mail-content-failure">
                 {detail.content.plainText ? (

@@ -76,6 +76,7 @@ describe("sidebar unread count", () => {
     if (root) await act(async () => root!.unmount());
     document.body.innerHTML = "";
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
   it.each([false, true])(
     "keeps the optimistic count after immediately switching mailboxes (server projected=%s)",
@@ -167,6 +168,104 @@ describe("sidebar unread count", () => {
       expect(
         host.querySelector(`[title="INBOX"] .folder-count`)?.textContent,
       ).toBe("4");
+    },
+  );
+  it.each([
+    ["reconnect_required", false, false],
+    ["temporary", false, false],
+    ["reconnect_required", true, false],
+    ["reconnect_required", false, true],
+  ] as const)(
+    "shows actionable %s and stops pending-content polling (recovery=%s, cached=%s)",
+    async (state, recover, cached) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+        configurable: true,
+        value: vi.fn(),
+      });
+      const statusMessage =
+        state === "temporary"
+          ? "Authorization is temporarily unavailable."
+          : "Reconnect this account to resume synchronization safely.";
+      let detailRequests = 0;
+      let recovered = false;
+      const fetcher = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith(`/messages/${messageId}`)) {
+          detailRequests++;
+          if (recovered)
+            return Response.json({
+              ...detail,
+              seen: true,
+              credentialAvailability: null,
+            });
+          return Response.json({
+            ...detail,
+            seen: true,
+            credentialAvailability: {
+              state,
+              message: statusMessage,
+              settingsPath: "/accounts",
+            },
+            content: cached
+              ? detail.content
+              : { ...detail.content, status: "pending", plainText: null },
+          });
+        }
+        if (url.includes("/messages?pageSize=50"))
+          return Response.json({
+            items: [{ ...message, seen: true }],
+            nextCursor: null,
+          });
+        if (url.endsWith("/mailboxes"))
+          return Response.json({
+            mailboxes: [inbox],
+            roles: [],
+            credentialAvailability: recovered
+              ? null
+              : { state, message: statusMessage, settingsPath: "/accounts" },
+          });
+        throw new Error("Unexpected fixture request");
+      });
+      vi.stubGlobal("fetch", fetcher);
+      const host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      await act(async () =>
+        root!.render(
+          <MailClient
+            initialNotification={{ accountId, mailboxId: inboxId }}
+            accounts={[account]}
+            mailboxesByAccount={{ [accountId]: [inbox] }}
+            rolesByAccount={{ [accountId]: [] }}
+          />,
+        ),
+      );
+      await act(async () =>
+        (host.querySelector(".mail-list-row") as HTMLButtonElement).click(),
+      );
+      expect(host.textContent).toContain(statusMessage);
+      if (cached) expect(host.textContent).toContain("Body");
+      expect(host.textContent).not.toContain("Downloading message content");
+      expect(
+        host.querySelector(".mail-content-failure a")?.getAttribute("href"),
+      ).toBe("/accounts");
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      });
+      expect(detailRequests).toBe(1);
+      expect(
+        fetcher.mock.calls.some(([url]) => String(url).endsWith("/content")),
+      ).toBe(false);
+      if (recover) {
+        recovered = true;
+        await act(async () =>
+          document.dispatchEvent(new Event("visibilitychange")),
+        );
+        expect(detailRequests).toBe(2);
+        expect(host.textContent).toContain("Body");
+        expect(host.textContent).not.toContain(statusMessage);
+      }
     },
   );
 });

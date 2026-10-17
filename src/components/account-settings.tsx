@@ -427,6 +427,9 @@ export function AccountSettings({
         {account.authMethod === "oauth2" ? (
           <section className="settings-section">
             <h3>OAuth authentication</h3>
+            {account.credentialAvailability ? (
+              <p role="alert">{account.credentialAvailability.message}</p>
+            ) : null}
             <dl className="settings-facts">
               <dt>Provider</dt>
               <dd>{account.oauthProviderName ?? account.oauthProviderId}</dd>

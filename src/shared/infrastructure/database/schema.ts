@@ -596,6 +596,7 @@ export const mailAccounts = pgTable(
     oauthCache: jsonb("oauth_cache").$type<EncryptedEnvelope>(),
     oauthHomeAccountId: text("oauth_home_account_id"),
     oauthStatus: text("oauth_status"),
+    oauthFailureCategory: text("oauth_failure_category"),
     smtpHost: text("smtp_host").notNull(),
     smtpPort: integer("smtp_port").notNull(),
     smtpSecurity: text("smtp_security").notNull(),

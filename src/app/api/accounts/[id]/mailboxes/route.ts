@@ -18,12 +18,16 @@ export async function GET(
     if (denied) return denied;
     try {
       const accountId = z.uuid().parse((await params).id);
-      await accountsService.get(accountId);
+      const account = await accountsService.get(accountId);
       const [mailboxes, roles] = await Promise.all([
         mailboxService.listForAccount(accountId),
         mailboxRoleService.list(accountId),
       ]);
-      return Response.json({ mailboxes, roles });
+      return Response.json({
+        mailboxes,
+        roles,
+        credentialAvailability: account.credentialAvailability,
+      });
     } catch (error) {
       if (error instanceof MailAccountNotFoundError)
         return Response.json({ error: error.message }, { status: 404 });

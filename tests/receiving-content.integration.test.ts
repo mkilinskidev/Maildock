@@ -1,3 +1,4 @@
+import * as diagnostics from "@/shared/infrastructure/logging/receiving-diagnostics";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { ImapFlow } from "imapflow";
@@ -15,6 +16,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
@@ -99,7 +101,7 @@ describe("R11 owned content retrieval", () => {
     await migrate(database.db, { migrationsFolder: "db/migrations" });
     executor = new ReceivingExecutor(url, 2);
   });
-  beforeEach(async () => {
+  beforeEach(async (context) => {
     await reader`update receiving_coordinator set expires_at='-infinity'`;
     await reader`update mail_accounts set enabled=false`;
     const actor = randomUUID();
@@ -127,6 +129,22 @@ describe("R11 owned content retrieval", () => {
       smtpHost: "invalid.test",
       smtpPort: 465,
       smtpSecurity: "tls",
+      ...(context.task.name.startsWith("OAuth blockage")
+        ? {
+            authMethod: "oauth2",
+            oauthProviderId: "google",
+            oauthStatus: "connected",
+            imapPassword: null,
+            oauthCache: {
+              version: 1 as const,
+              algorithm: "AES-256-GCM" as const,
+              keyId: "fixture",
+              iv: "fixture",
+              ciphertext: "fixture",
+              authTag: "fixture",
+            },
+          }
+        : {}),
     });
     await database.db.insert(mailboxes).values({
       id: mailbox,
@@ -202,6 +220,7 @@ describe("R11 owned content retrieval", () => {
     };
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const close of cleanup.splice(0).reverse()) await close();
   });
   afterAll(async () => {
@@ -615,6 +634,66 @@ describe("R11 owned content retrieval", () => {
       expect((await contentRow()).plain_text).toBe("café");
     },
   );
+  it.each(["rejected_grant", "exchange_unknown"])(
+    "OAuth blockage %s retains content/STORE demand without claims or sockets",
+    async (category) => {
+      await request();
+      const commands = new MessageCommandService(
+        database.db,
+        async () => {},
+        async () => {},
+      );
+      const command = await commands.create(
+        account,
+        source.mailbox,
+        message,
+        "mark_read",
+      );
+      const [before] =
+        await reader`select * from receiving_mailboxes where mailbox_id=${source.mailbox}`;
+      await reader`update mail_accounts set oauth_status='reconnect_required',oauth_failure_category=${category},oauth_refresh_attempt=${randomUUID()} where id=${account}`;
+      const h = await harness({ bodies: [plain()], automatic: true });
+      for (let opportunity = 0; opportunity < 3; opportunity++) {
+        await h.coordinator.refreshMembership();
+        await h.coordinator.dispatchContentRequests();
+        await expect(h.submit()).rejects.toThrow();
+        await expect(
+          h.coordinator.submit({
+            kind: "store",
+            pendingId: command.id,
+            requestId: randomUUID(),
+            deadline: performance.now() + 5000,
+            identity: {
+              account,
+              mailbox: source.mailbox,
+              configurationVersion: 1n,
+            },
+          }),
+        ).rejects.toThrow();
+      }
+      expect(h.peer.commands).toHaveLength(0);
+      expect(h.counters()).toMatchObject({ reads: 0, stores: 0 });
+      expect(await contentRow()).toMatchObject({
+        status: "pending",
+        receiving_attempt: null,
+      });
+      const [intent] =
+        await reader`select status,receiving_attempt from message_commands where id=${command.id}`;
+      expect(intent).toMatchObject({
+        status: "pending",
+        receiving_attempt: null,
+      });
+      const [after] =
+        await reader`select * from receiving_mailboxes where mailbox_id=${source.mailbox}`;
+      expect(after).toEqual(before);
+      const detail = await service().detail(account, source.mailbox, message);
+      expect(detail.credentialAvailability?.state).toBe("reconnect_required");
+      expect(detail.credentialAvailability?.message.includes("rejected")).toBe(
+        category === "rejected_grant",
+      );
+    },
+  );
+
   it("streams chunks across transfer encoding boundaries and requires a final empty EOF", async () => {
     const value = "a".repeat((3 * 32768) / 4);
     const encoded = Buffer.from(value).toString("base64");
@@ -641,12 +720,29 @@ describe("R11 owned content retrieval", () => {
     "structure",
     "disappear",
   ] as const)("rejects %s evidence without ready bytes", async (corrupt) => {
+    const events = vi.spyOn(diagnostics, "receivingDiagnostic");
     await request();
     const h = await harness({ corrupt });
     await expect(h.submit()).rejects.toThrow();
     const row = await contentRow();
     expect(row.status).not.toBe("ready");
     expect(row.plain_text).toBeNull();
+    expect(
+      events.mock.calls.some(
+        ([event]) =>
+          event.event === "receiving.operation" &&
+          event.category === "remote_stage_failed" &&
+          event.stage !== "before_claim",
+      ),
+    ).toBe(true);
+    expect(
+      events.mock.calls.some(
+        ([event]) =>
+          event.event === "receiving.publication" &&
+          event.category === "published",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(events.mock.calls)).not.toContain("uniquebodytoken");
   });
   it.each([
     {

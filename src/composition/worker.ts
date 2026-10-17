@@ -1,3 +1,4 @@
+import { configureReceivingDiagnostics } from "../shared/infrastructure/logging/receiving-diagnostics";
 import { ReceivingDiagnosticServer } from "../modules/mail/infrastructure/receiving-diagnostic-rpc";
 import { createOAuthComposition } from "../modules/accounts/infrastructure/oauth-composition";
 import { receivingCredentialBindings } from "../modules/accounts/infrastructure/receiving-credentials";
@@ -22,6 +23,7 @@ import { ReceivingWorker } from "./receiving-worker";
 export function createWorkerComposition() {
   const config = getConfig();
   const logger = createLogger(config);
+  configureReceivingDiagnostics(logger);
   const database = createWorkerDatabase(config);
   const events = new ApplicationEventService(database.db, logger);
   // The legacy provider remains only for the independent SMTP pipeline.

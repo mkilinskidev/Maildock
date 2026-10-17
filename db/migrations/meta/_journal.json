@@ -386,6 +386,13 @@
       "when": 1792220000000,
       "tag": "0054_receiving_secondary_mailboxes",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792230000000,
+      "tag": "0055_oauth_failure_category",
+      "breakpoints": true
     }
   ]
 }

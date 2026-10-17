@@ -1,6 +1,7 @@
 export type CredentialBudget = Readonly<{
   deadline: number;
   signal?: AbortSignal;
+  forceRefresh?: boolean;
   configurationVersion?: bigint;
   receivingLifecycleVersion?: bigint;
 }>;
@@ -41,6 +42,7 @@ export interface OAuthMailProvider {
 export class OAuthAuthorizationError extends Error {
   constructor(
     message = "Account authorization expired or was revoked. Reconnect the account.",
+    readonly disposition: "retry" | "reconnect" = "retry",
   ) {
     super(message);
     this.name = "OAuthAuthorizationError";

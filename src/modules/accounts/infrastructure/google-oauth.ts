@@ -1,6 +1,9 @@
+import { receivingDiagnostic } from "../../../shared/infrastructure/logging/receiving-diagnostics";
 import {
   OAuthRefreshes,
   OAuthRefreshNotIssuedError,
+  OAuthRefreshFailure,
+  OAuthResponseInvalidError,
   readOAuthJson,
   credentialLifetime,
   type CredentialBudget,
@@ -35,7 +38,7 @@ const authorizationState = z.object({
 const tokenResponse = z.object({
   access_token: z.string().min(1).max(16384),
   token_type: z.string().refine((value) => value.toLowerCase() === "bearer"),
-  expires_in: z.number().finite().gt(60),
+  expires_in: z.number().finite().gt(60).max(86400),
   refresh_token: z.string().min(1).max(16384).optional(),
   scope: z.string().optional(),
 });
@@ -56,7 +59,7 @@ export class GoogleAuthorizationError extends OAuthAuthorizationError {
 class GoogleReconnectRequired extends GoogleAuthorizationError {
   constructor() {
     super(
-      "Google authorization expired or was revoked. Reconnect the account.",
+      "Google authorization is unavailable. Reconnect the account to resume synchronization safely.",
     );
   }
 }
@@ -144,6 +147,8 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
     // Never let fetch/JSON/Google errors (which can contain credentials) escape.
     let response: Response;
     let body: unknown;
+    if (signal?.aborted)
+      throw new OAuthRefreshFailure("cancelled_before_issue", false);
     try {
       response = await fetch(tokenEndpoint, {
         method: "POST",
@@ -154,9 +159,16 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         cache: "no-store",
       });
       body = await readOAuthJson(response);
-    } catch {
-      throw new GoogleAuthorizationError(
-        "Google token service is temporarily unavailable. Try again.",
+    } catch (error) {
+      throw new OAuthRefreshFailure(
+        error instanceof OAuthResponseInvalidError
+          ? "invalid_response"
+          : signal?.aborted
+            ? signal.reason?.name === "TimeoutError"
+              ? "timeout_after_issue"
+              : "cancelled_after_issue"
+            : "exchange_unknown",
+        true,
       );
     }
     if (!response.ok) {
@@ -166,20 +178,24 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         failure.success &&
         failure.data.error === "invalid_grant"
       )
-        throw new GoogleReconnectRequired();
-      if (failure.success)
+        throw new OAuthRefreshFailure("rejected_grant", true);
+      if (
+        failure.success &&
+        [
+          "invalid_client",
+          "unauthorized_client",
+          "invalid_request",
+          "unsupported_grant_type",
+        ].includes(failure.data.error)
+      )
         throw new OAuthRefreshNotIssuedError(
           "Google token renewal failed. Check provider configuration or try again.",
         );
-      throw new GoogleAuthorizationError(
-        "Google token response was uncertain. Reconnect the account.",
-      );
+      throw new OAuthRefreshFailure("exchange_unknown", true);
     }
     const parsed = tokenResponse.safeParse(body);
     if (!parsed.success)
-      throw new GoogleAuthorizationError(
-        "Google did not return a usable access token. Try again.",
-      );
+      throw new OAuthRefreshFailure("invalid_response", true);
     if (
       parsed.data.scope &&
       !parsed.data.scope.split(/\s+/).includes(googleScopes[0])
@@ -323,6 +339,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
       if (!refreshToken) {
         // Claim/CAS through the same refresh resolver; no token request under SQL.
         await this.accessToken(id, {
+          forceRefresh: true,
           deadline: lifetime.deadline,
           signal: lifetime.signal,
           configurationVersion: snapshot.configurationVersion,
@@ -381,6 +398,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
               refreshToken,
             ),
             oauthStatus: "connected",
+            oauthFailureCategory: null,
             connectionStatus: "unverified",
             imapStatus: "untested",
             smtpStatus: "untested",
@@ -410,6 +428,7 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
           tokens.refresh_token,
         ),
         oauthStatus: "connected",
+        oauthFailureCategory: null,
         ...this.getMailDefaults(),
         imapUsername: email,
         imapPassword: null,
@@ -418,35 +437,70 @@ export class GoogleOAuthProvider implements OAuthMailProvider {
         smtpPassword: null,
       });
     }
+    receivingDiagnostic({
+      event: "receiving.account",
+      stage: "authorized",
+      category: pending.accountId ? "reconnected" : "connected",
+      disposition: "continue",
+    });
     return id;
   }
   async accessToken(
     accountId: string,
     budget?: CredentialBudget,
   ): Promise<string> {
-    const credentials = await this.credentials();
-    return this.refreshes.resolve(accountId, budget, async (row, lifetime) => {
-      lifetime.check();
-      const stored = this.readAuthorization(accountId, row.oauthCache!);
-      const tokens = await this.requestToken(
-        {
-          client_id: credentials.clientId,
-          client_secret: credentials.clientSecret,
-          grant_type: "refresh_token",
-          refresh_token: stored.refreshToken,
-        },
-        lifetime.signal,
+    let credentials: Awaited<ReturnType<GoogleOAuthProvider["credentials"]>>;
+    try {
+      credentials = await this.credentials();
+    } catch {
+      await this.refreshes.configurationUnavailable(accountId, budget);
+      throw new GoogleAuthorizationError(
+        "Google account connection is not configured or temporarily unavailable. Check account settings.",
       );
-      return {
-        token: tokens.access_token,
-        cache: tokens.refresh_token
-          ? this.encryptAuthorization(
-              accountId,
-              stored.subject,
-              tokens.refresh_token,
-            )
-          : row.oauthCache,
-      };
-    });
+    }
+    const resolved = await this.refreshes.resolve(
+      accountId,
+      budget,
+      async (row, lifetime) => {
+        if (lifetime.signal.aborted)
+          throw new OAuthRefreshFailure("cancelled_before_issue", false);
+        let stored: z.infer<typeof authorizationState>;
+        try {
+          stored = this.readAuthorization(accountId, row.oauthCache!);
+        } catch {
+          throw new OAuthRefreshFailure("configuration_mismatch", false);
+        }
+        const requestedAt = performance.now();
+        const tokens = await this.requestToken(
+          {
+            client_id: credentials.clientId,
+            client_secret: credentials.clientSecret,
+            grant_type: "refresh_token",
+            refresh_token: stored.refreshToken,
+          },
+          lifetime.signal,
+        );
+        return {
+          token: tokens.access_token,
+          // Count from request START; response latency never extends token life.
+          expiresAt: requestedAt + (tokens.expires_in - 60) * 1000,
+          cache: tokens.refresh_token
+            ? this.encryptAuthorization(
+                accountId,
+                stored.subject,
+                tokens.refresh_token,
+              )
+            : row.oauthCache,
+        };
+      },
+      createHash("sha256").update(JSON.stringify(credentials)).digest("hex"),
+    );
+    if (
+      JSON.stringify(await this.credentials()) !== JSON.stringify(credentials)
+    )
+      throw new GoogleAuthorizationError(
+        "Google provider configuration changed. Try again.",
+      );
+    return resolved;
   }
 }

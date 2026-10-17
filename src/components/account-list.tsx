@@ -221,6 +221,9 @@ export function AccountList({
               <p className="error">{account.mailboxDiscovery.error}</p>
             ) : null}
             <div className="actions">
+              {account.credentialAvailability ? (
+                <p role="alert">{account.credentialAvailability.message}</p>
+              ) : null}
               {account.authMethod === "oauth2" ? (
                 <Link
                   className="button-link secondary"

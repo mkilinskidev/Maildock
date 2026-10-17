@@ -1,3 +1,4 @@
+import { receivingDiagnostic } from "../../../shared/infrastructure/logging/receiving-diagnostics";
 import {
   RECEIVING_ATTACHMENT_BYTES,
   RECEIVING_ATTACHMENT_LIFETIME_MS,
@@ -357,7 +358,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           from mail_accounts a left join mailboxes m on m.account_id=a.id and m.remote_path='INBOX'
             and m.selectable and m.lifecycle_status='active'
           left join receiving_mailboxes s on s.mailbox_id=m.id
-          where a.enabled and a.removal_requested_at is null
+          where a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or a.oauth_status='connected')
           order by a.id limit ${max + 1}`);
       if (rows.length > max)
         throw new Error("Receiving candidate capacity exceeded");
@@ -439,7 +440,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
   ) {
     const rows = await db.execute(sql`
       select a.configuration_version,a.receiving_lifecycle_version from mail_accounts a
-      where a.id=${account}::uuid and a.enabled and a.configuration_version=${version}::bigint
+      where a.id=${account}::uuid and a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null)) and a.configuration_version=${version}::bigint
         and (${mailbox ?? null}::uuid is null or exists (
           select 1 from mailboxes m where m.id=${mailbox ?? null}::uuid and m.account_id=a.id
             and m.selectable and m.lifecycle_status='active')) for share`);
@@ -449,6 +450,10 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
     return BigInt(rows[0].receiving_lifecycle_version as string);
   }
 
+  private readonly operationCredentials = new WeakMap<
+    AbortSignal,
+    Account["connection"]
+  >();
   private async operationConnection(operation: ReceivingOperation) {
     const captured: Account["connection"] & {
       receivingLifecycleVersion?: bigint;
@@ -497,10 +502,29 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
       operation.diagnosticConnection
     )
       return captured;
-    const connection = await this.config.resolveOperationConnection(
-      operation,
-      captured,
-    );
+    let connection = operation.signal
+      ? this.operationCredentials.get(operation.signal)
+      : undefined;
+    if (!connection) {
+      try {
+        connection = await this.config.resolveOperationConnection(
+          operation,
+          captured,
+        );
+      } catch (error) {
+        receivingDiagnostic({
+          event: "receiving.credentials",
+          operation: operation.kind,
+          correlation: operation.requestId,
+          stage: "before_claim",
+          category: "unavailable",
+          disposition: "retry",
+        });
+        throw error;
+      }
+      if (operation.signal)
+        this.operationCredentials.set(operation.signal, connection);
+    }
     if (operation.signal?.aborted || performance.now() >= operation.deadline)
       throw new Error("Credential resolution expired");
     await this.control(
@@ -681,7 +705,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
         await this.validate(db, this.owner!);
         return db.execute(sql`select id,configuration_version,receiving_lifecycle_version,
           mailbox_discovery_requested_at::text as requested,
-          (enabled and removal_requested_at is null and
+          (enabled and removal_requested_at is null and (oauth_failure_category is distinct from 'temporary' or updated_at<clock_timestamp()-interval '30 seconds') and (auth_method<>'oauth2' or (oauth_status='connected' and oauth_refresh_attempt is null)) and
             (mailbox_discovery_status<>'success' or last_successful_mailbox_discovery_at is null
               or mailbox_discovery_requested_at>last_successful_mailbox_discovery_at
               or last_successful_mailbox_discovery_at<clock_timestamp()-interval '60 seconds')) as eligible
@@ -754,7 +778,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             order by created_at,id limit 32
           )
           select c.id,c.created_at::text as cursor_at,c.account_id,c.mailbox_id,c.status,c.source_configuration_binding,a.receiving_lifecycle_version
-            ,(a.enabled and a.removal_requested_at is null and b.selectable and b.lifecycle_status='active'
+            ,(a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null)) and b.selectable and b.lifecycle_status='active'
             and (c.status='pending' or (c.status in ('executing','failed')
               and c.receiving_attempt->>'phase' in ('claimed','uncertain_remote_execution')
               and coalesce((c.receiving_attempt->>'observations')::integer,0)<3))
@@ -881,7 +905,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             select ${fields},r.${key} as repair_id from ${relation} r where ${where}
               and coalesce(r.receiving_attempt->>'phase','')<>'repair_terminal' ${after} order by r.updated_at,r.${key} limit 32
           ) select c.repair_id,c.updated_at::text as cursor_at,a.id as account_id,a.configuration_version,a.receiving_lifecycle_version,
-            (a.enabled and a.removal_requested_at is null and (${exhausted} or ${obsolete})) as eligible
+            (a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null)) and (${exhausted} or ${obsolete})) as eligible
             from candidates c ${messageJoin} join mail_accounts a on a.id=${account} order by c.updated_at,c.repair_id`);
         });
         this.assertCurrent();
@@ -952,7 +976,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             and c.source_configuration_binding is not null and (c.status='pending' or (c.receiving_attempt->>'phase' in ('claimed','uncertain_remote_execution') and coalesce((c.receiving_attempt->>'observations')::integer,0)<3))
             ${after} order by c.updated_at,c.id limit 32
         ) select c.*,c.updated_at::text as cursor_at,a.configuration_version,a.receiving_lifecycle_version,
-          (a.enabled and a.removal_requested_at is null) as account_active,
+          (a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null))) as account_active,
           b.selectable,b.lifecycle_status,b.remote_path,s.epoch,s.configuration_binding,r.mailbox_id as mapped_destination,
           maildock_receiving_move_destination(c.account_id,c.action,c.destination_mailbox_id,c.destination_path) as destination_available
           from candidates c join mail_accounts a on a.id=c.account_id
@@ -1070,9 +1094,9 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
             ))
           ${after} order by o.updated_at,o.id limit 32
         ) select o.*,o.updated_at::text as cursor_at,a.configuration_version,a.receiving_lifecycle_version,
-          (a.enabled and a.removal_requested_at is null) as account_active,
+          (a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null))) as account_active,
           b.id as destination,b.remote_path,s.epoch,s.configuration_binding,coalesce(bl.size,o.legacy_upper) as mime_bytes,
-          (a.enabled and a.removal_requested_at is null and b.selectable and b.lifecycle_status='active') as eligible
+          (a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null)) and b.selectable and b.lifecycle_status='active') as eligible
           from candidates o join mail_accounts a on a.id=o.account_id
           left join mailbox_roles role on role.account_id=o.account_id and role.role='sent'
           left join mailboxes b on b.id=case when o.receiving_attempt is null then role.mailbox_id else o.sent_copy_mailbox_id end
@@ -1184,7 +1208,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           from message_contents where status in ('pending','fetching') and source_configuration_binding is not null
           ${after} order by updated_at,message_id limit 32
         ) select c.message_id,c.updated_at::text as cursor_at,c.source_mailbox_id,c.source_configuration_binding,m.account_id,a.receiving_lifecycle_version,
-          (a.enabled and a.removal_requested_at is null
+          (a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null))
             and (c.status='pending' or (c.receiving_attempt->>'phase'='claimed' and coalesce((c.receiving_attempt->>'reads')::integer,1)<3))
             and c.source_configuration_binding=a.configuration_version and c.source_configuration_binding=s.configuration_binding
             and c.source_uid_validity=s.epoch
@@ -1256,7 +1280,7 @@ export class ElectedReceivingCoordinator implements ReceivingWakeTarget {
           from message_attachments where status in ('pending','fetching') and source_configuration_binding is not null
           ${after} order by updated_at,id limit 32
         ) select c.id,c.message_id,c.updated_at::text as cursor_at,c.source_mailbox_id,c.source_configuration_binding,m.account_id,a.receiving_lifecycle_version,
-          (a.enabled and a.removal_requested_at is null
+          (a.enabled and a.removal_requested_at is null and (a.oauth_failure_category is distinct from 'temporary' or a.updated_at<clock_timestamp()-interval '30 seconds') and (a.auth_method<>'oauth2' or (a.oauth_status='connected' and a.oauth_refresh_attempt is null))
             and (c.status='pending' or (c.receiving_attempt->>'phase'='claimed' and coalesce((c.receiving_attempt->>'reads')::integer,1)<3))
             and c.source_configuration_binding=a.configuration_version and c.source_configuration_binding=s.configuration_binding
             and c.source_uid_validity=s.epoch

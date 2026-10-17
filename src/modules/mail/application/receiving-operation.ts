@@ -1,3 +1,4 @@
+import { receivingDiagnostic } from "../../../shared/infrastructure/logging/receiving-diagnostics";
 import { sql } from "drizzle-orm";
 import { prepareReceivingMove } from "./receiving-move";
 import { prepareReceivingAttachment } from "./receiving-attachment";
@@ -413,6 +414,7 @@ export async function runReceivingOperation(
   let claimStarted = false;
   let preFailed = false;
   let mutationMayHaveExecuted = false;
+  let remoteMutationInvoked = false;
   let publicationSettled = false;
   let resultUnresolved = false;
   let capturedLifecycle: bigint | undefined;
@@ -420,6 +422,8 @@ export async function runReceivingOperation(
   let retired: Promise<void> | undefined;
   let socketSettled = false;
   let connected = false;
+  let remoteStage = "before_connect";
+  const diagnosticStarted = performance.now();
   const retireSocket = () => {
     retired ??= (async () => {
       phase = "RETIRING";
@@ -838,6 +842,17 @@ export async function runReceivingOperation(
               );
             mutationMayHaveExecuted = true;
           }
+          remoteStage = property;
+          if (
+            [
+              "append",
+              "messageMove",
+              "messageFlagsAdd",
+              "messageFlagsRemove",
+              "messageFlagsSet",
+            ].includes(property)
+          )
+            remoteMutationInvoked = true;
           const result: unknown =
             property === "list" && topologyKind === "list"
               ? (topology!.collector.begin(client!),
@@ -1419,6 +1434,30 @@ export async function runReceivingOperation(
       } as const);
     }
   } catch (error) {
+    receivingDiagnostic({
+      event: "receiving.operation",
+      operation: operation.kind,
+      correlation: operation.requestId,
+      stage:
+        remoteStage !== "before_connect"
+          ? remoteStage
+          : claim || move || sent || flags || content || attachment
+            ? "before_connect"
+            : "before_claim",
+      phase,
+      category:
+        performance.now() >= operation.deadline
+          ? "timeout"
+          : signal.aborted
+            ? "cancelled"
+            : remoteMutationInvoked
+              ? "mutation_outcome_unknown"
+              : connected
+                ? "remote_stage_failed"
+                : "failed_before_execution",
+      disposition: remoteMutationInvoked ? "recover" : "retry",
+      elapsedMs: performance.now() - diagnosticStarted,
+    });
     if (move && !signal.aborted) {
       await retireSocket();
       await move.fail();
@@ -1467,7 +1506,22 @@ export async function runReceivingOperation(
                 options(),
               ),
         );
+        receivingDiagnostic({
+          event: "receiving.publication",
+          operation: operation.kind,
+          correlation: operation.requestId,
+          stage: "failure_result",
+          category: "published",
+        });
       } catch (settlement) {
+        receivingDiagnostic({
+          event: "receiving.publication",
+          operation: operation.kind,
+          correlation: operation.requestId,
+          stage: "failure_result",
+          category: "unresolved",
+          disposition: "recover",
+        });
         throw new AggregateError(
           [error, settlement],
           "Receiving failure settlement requires recovery",

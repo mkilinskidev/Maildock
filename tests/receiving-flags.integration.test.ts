@@ -1,3 +1,4 @@
+import * as diagnostics from "@/shared/infrastructure/logging/receiving-diagnostics";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { ImapFlow } from "imapflow";
@@ -15,6 +16,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import { createDatabase } from "@/shared/infrastructure/database/database";
 import {
@@ -194,6 +196,7 @@ describe("R10 owned flag execution", () => {
     };
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const close of cleanup.splice(0).reverse()) await close();
   });
   afterAll(async () => {
@@ -521,11 +524,30 @@ describe("R10 owned flag execution", () => {
     "duplicate",
     "no-completion",
   ] as const)("rejects %s FETCH evidence before mutation", async (corrupt) => {
+    const events = vi.spyOn(diagnostics, "receivingDiagnostic");
     const id = await create();
     const f = await harness({ corrupt });
     await expect(f.submit(id)).rejects.toThrow();
     expect(f.counters().stores).toBe(0);
     expect((await row(id)).status).toBe("failed");
+    expect((await row(id)).receiving_attempt.phase).toBe(
+      "failed_before_execution",
+    );
+    expect(
+      events.mock.calls.some(
+        ([event]) =>
+          event.event === "receiving.operation" &&
+          event.operation === "store" &&
+          event.category === "remote_stage_failed",
+      ),
+    ).toBe(true);
+    expect(
+      events.mock.calls.some(
+        ([event]) =>
+          event.event === "receiving.publication" &&
+          event.category === "published",
+      ),
+    ).toBe(true);
   });
   it("SELECT epoch mismatch prevents any STORE", async () => {
     const id = await create();

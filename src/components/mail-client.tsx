@@ -206,6 +206,13 @@ export function MailClient({
     useState(mailboxesByAccount);
   const [liveRolesByAccount, setLiveRolesByAccount] = useState(rolesByAccount);
   const [folderReloadNonce, setFolderReloadNonce] = useState(0);
+  const [liveCredentials, setLiveCredentials] = useState<
+    Record<string, MessageDetail["credentialAvailability"]>
+  >(
+    Object.fromEntries(
+      accounts.map((account) => [account.id, account.credentialAvailability]),
+    ),
+  );
   const folders = liveMailboxesByAccount[accountId] ?? [];
   const [mailboxId, setMailboxId] = useState(
     () =>
@@ -355,6 +362,7 @@ export function MailClient({
     ? (searchSelection?.mailboxId ?? mailboxId)
     : (inboxSelection?.mailboxId ?? selectedMember?.mailboxId ?? mailboxId);
   const messageBase = `/api/accounts/${actionAccountId}/mailboxes/${actionMailboxId}/messages`;
+  const credentialState = liveCredentials[actionAccountId]?.state;
   const preparationKey = `${actionAccountId}:${actionMailboxId}:${selectedId}`;
   const preparing = preparingState && prepareLocation === preparationKey;
   const prepareError =
@@ -1001,10 +1009,16 @@ export function MailClient({
               return response.json() as Promise<{
                 mailboxes: MailboxView[];
                 roles: MailboxRoleView[];
+                credentialAvailability?: MessageDetail["credentialAvailability"];
               }>;
             })
             .then((result) => {
               if (!cancelled) {
+                if ("credentialAvailability" in result)
+                  setLiveCredentials((current) => ({
+                    ...current,
+                    [pollAccountId]: result.credentialAvailability,
+                  }));
                 setLiveMailboxesByAccount((current) => ({
                   ...current,
                   [pollAccountId]: result.mailboxes,
@@ -1185,6 +1199,7 @@ export function MailClient({
       if (cancelled) return;
       setDetail(value);
       setLoadingDetail(false);
+      if (value.credentialAvailability) return;
       if (value.content.status === "not_fetched") {
         const queued = await fetch(`${url}/content`, {
           method: "POST",
@@ -1225,6 +1240,7 @@ export function MailClient({
     contentPollIntervalMs,
     searchActive,
     showDrafts,
+    credentialState,
   ]);
 
   async function retryContent() {
