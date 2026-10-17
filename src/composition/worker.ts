@@ -46,6 +46,8 @@ import {
   enqueueMessageCommand,
 } from "../modules/mail/infrastructure/message-command-jobs.js";
 
+import { ContentRepairPoller } from "../modules/mail/infrastructure/content-jobs.js";
+
 export function createWorkerComposition() {
   const config = getConfig();
   const logger = createLogger(config);
@@ -125,12 +127,21 @@ export function createWorkerComposition() {
   );
   const commands = new MessageCommandService(
     database.db,
-    (id) => enqueueMessageCommand(jobs.boss, id),
+    async (id) => {
+      await enqueueMessageCommand(jobs.boss, id);
+    },
     async (accountId, mailboxId) => {
       await enqueueDelta(jobs.boss, accountId, mailboxId, "manual");
     },
     accounts,
     provider,
+  );
+  const content = new MessageContentService(
+    database.db,
+    undefined,
+    accounts,
+    provider,
+    config,
   );
   return {
     events,
@@ -178,12 +189,7 @@ export function createWorkerComposition() {
       messages,
     ),
     messages,
-    content: new MessageContentService(
-      database.db,
-      undefined,
-      accounts,
-      provider,
-      config,
-    ),
+    content,
+    contentPoller: new ContentRepairPoller(jobs.boss, content),
   };
 }

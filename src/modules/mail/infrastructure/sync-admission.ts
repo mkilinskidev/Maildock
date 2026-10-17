@@ -2,6 +2,7 @@ import type { PgBoss } from "pg-boss";
 
 import {
   ACTIVE_WORK_STALE_SECONDS,
+  COMMAND_WAITING_STALE_SECONDS,
   syncTier,
   WAITING_WORK_STALE_SECONDS,
   type SyncKind,
@@ -15,10 +16,15 @@ import {
 const PGBOSS_SCHEMA = "pgboss";
 
 /**
- * Account-scoped INBOX-first admission. Called before the mailbox lock and
+ * User-actions-first, then account-scoped INBOX-first admission. Called before the mailbox lock and
  * again under it; a true result means the caller should commit a delayed
  * successor and finish without touching IMAP.
  *
+ * - every sync kind, INBOX included, yields to a runnable command of the same
+ *   mailbox. Runnable = status 'pending' (never started; 'executing' either
+ *   holds the mailbox lock or waits in bounded pg-boss retry) created within
+ *   COMMAND_WAITING_STALE_SECONDS, so an orphan cannot starve history. Commands
+ *   of other mailboxes and accounts never matter;
  * - other-folder fresh yields to INBOX fresh that is ready but not started;
  * - history yields to any ready fresh work of the account and to active INBOX
  *   fresh work.
@@ -44,6 +50,14 @@ export async function higherPriorityWorkWaiting(
   );
   const mailbox = own[0] as { remote_path: string } | undefined;
   if (!mailbox) return false;
+  const { rows: commands } = await db.executeSql(
+    `SELECT 1 FROM message_commands
+      WHERE mailbox_id = $1 AND account_id = $2 AND status = 'pending'
+        AND created_at > now() - make_interval(secs => $3::int)
+      LIMIT 1`,
+    [mailboxId, accountId, COMMAND_WAITING_STALE_SECONDS],
+  );
+  if (commands.length > 0) return true;
   const tier = syncTier(kind, mailbox.remote_path);
   if (tier === "inbox-fresh") return false;
   const history = kind === "history";

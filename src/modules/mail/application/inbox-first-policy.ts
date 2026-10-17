@@ -52,3 +52,25 @@ export function freshLanes(concurrency: number): {
     ? { general: concurrency - 1, inbox: 1 }
     : { general: Math.max(1, concurrency), inbox: 0 };
 }
+
+// User actions (message commands) outrank every sync tier on the same mailbox.
+/**
+ * A pending command nobody has started for this long no longer holds sync back
+ * (orphan without a live job); the command poller keeps retrying it meanwhile.
+ */
+export const COMMAND_WAITING_STALE_SECONDS = 10 * 60;
+/** Busy-lock continuation delay: short, growing, capped (seconds). */
+export const COMMAND_BUSY_BASE_SECONDS = 2;
+export const COMMAND_BUSY_MAX_SECONDS = 6;
+
+/** Integer seconds (pg-boss startAfter) with up-to-1 s jitter; no thundering herd. */
+export function commandBusyDelaySeconds(
+  deferrals: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(
+    COMMAND_BUSY_MAX_SECONDS,
+    COMMAND_BUSY_BASE_SECONDS + Math.max(0, deferrals),
+  );
+  return base + Math.floor(random() * 2);
+}

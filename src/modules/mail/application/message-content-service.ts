@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, lt, ne } from "drizzle-orm";
 import {
   persistAttachmentMetadata,
   listAttachmentMetadata,
@@ -119,6 +119,46 @@ export class MessageContentService {
         error: content?.status === "failed" ? content.error : null,
       },
     };
+  }
+
+  /**
+   * pending/fetching rows untouched for `olderThanSeconds` (the request path
+   * writes pending before it schedules). The caller must still skip messages
+   * that have a live job; this only names candidates with a usable placement.
+   */
+  async orphanedRequests(olderThanSeconds = 30, limit = 50) {
+    const rows = await this.database
+      .select({
+        accountId: messages.accountId,
+        mailboxId: mailboxMessages.mailboxId,
+        messageId: messageContents.messageId,
+      })
+      .from(messageContents)
+      .innerJoin(messages, eq(messages.id, messageContents.messageId))
+      .innerJoin(
+        mailboxMessages,
+        eq(mailboxMessages.messageId, messageContents.messageId),
+      )
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxMessages.mailboxId))
+      .innerJoin(mailAccounts, eq(mailAccounts.id, mailboxes.accountId))
+      .where(
+        and(
+          inArray(messageContents.status, ["pending", "fetching"]),
+          lt(
+            messageContents.updatedAt,
+            new Date(Date.now() - olderThanSeconds * 1000),
+          ),
+          eq(mailAccounts.enabled, true),
+          eq(mailboxes.selectable, true),
+          eq(mailboxes.lifecycleStatus, "active"),
+        ),
+      )
+      .orderBy(messageContents.updatedAt)
+      .limit(limit);
+    const seen = new Set<string>();
+    return rows.filter(
+      (row) => !seen.has(row.messageId) && seen.add(row.messageId),
+    );
   }
 
   async request(accountId: string, mailboxId: string, messageId: string) {
