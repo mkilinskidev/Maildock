@@ -3,6 +3,9 @@
 Data: 2026-10-17. Gałąź: `codex/v1-inbox-first`, utworzona z `main`
 (`ba074880768645473af070ecc846e420ced990d5`).
 
+Kontynuacja na cały czas działania aplikacji (delta, IDLE, poller, retry,
+backfill): `docs/INBOX_FIRST_FULL_PRIORITY.md`.
+
 ## Zachowanie
 
 - Discovery rozpoznaje INBOX po `remotePath.toUpperCase() === "INBOX"`.

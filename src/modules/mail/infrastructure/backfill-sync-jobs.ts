@@ -10,10 +10,16 @@ import {
   mailboxes,
 } from "../../../shared/infrastructure/database/schema";
 import type { BackfillSyncService } from "../application/backfill-sync-service";
-import { MAILBOX_DELTA_SYNC_QUEUE } from "./delta-sync-jobs";
-import { MAILBOX_RECENT_SYNC_QUEUE } from "./recent-sync-jobs";
+import { MailboxBusyError } from "./mailbox-lock";
+import { higherPriorityWorkWaiting } from "./sync-admission";
+import {
+  MAILBOX_BACKFILL_SYNC_QUEUE,
+  MAILBOX_DELTA_SYNC_QUEUE,
+  MAILBOX_RECENT_SYNC_QUEUE,
+} from "./sync-queues";
+import { HISTORY_DEFER_SECONDS } from "../application/inbox-first-policy";
 
-export const MAILBOX_BACKFILL_SYNC_QUEUE = "mailbox-backfill-sync-v1";
+export { MAILBOX_BACKFILL_SYNC_QUEUE };
 const payloadSchema = z
   .object({ version: z.literal(1), accountId: z.uuid(), mailboxId: z.uuid() })
   .strict();
@@ -34,12 +40,30 @@ export async function enqueueBackfill(
   accountId: string,
   mailboxId: string,
   frontier?: string | null,
+  startAfter?: number,
+): Promise<boolean> {
+  return enqueueBackfillKey(
+    boss,
+    accountId,
+    mailboxId,
+    `${mailboxId}:${frontier ?? "initial"}`,
+    startAfter,
+  );
+}
+
+function enqueueBackfillKey(
+  boss: PgBoss,
+  accountId: string,
+  mailboxId: string,
+  singletonKey: string,
+  startAfter?: number,
 ): Promise<boolean> {
   return enqueueCoalescedSync(
     boss,
     MAILBOX_BACKFILL_SYNC_QUEUE,
     { version: 1, accountId, mailboxId },
-    { singletonKey: `${mailboxId}:${frontier ?? "initial"}`, priority: -10 },
+    { singletonKey, ...(startAfter === undefined ? {} : { startAfter }) },
+    { accountId, mailboxId, kind: "history" },
   );
 }
 
@@ -51,45 +75,76 @@ export async function registerBackfillWorker(
   await ensureBackfillQueue(boss);
   await boss.work(
     MAILBOX_BACKFILL_SYNC_QUEUE,
-    { localConcurrency: 1 },
+    { localConcurrency: 1, includeMetadata: true },
     safeJobHandler("backfill-sync", async (batch) => {
       const job = batch[0];
       if (!job) throw new Error("Backfill received an empty batch.");
       const payload = payloadSchema.parse(job.data);
-      const [recent, delta] = await Promise.all([
-        boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
-          key: payload.mailboxId,
-          queued: true,
-        }),
-        boss.findJobs(MAILBOX_DELTA_SYNC_QUEUE, {
-          key: payload.mailboxId,
-          queued: true,
-        }),
-      ]);
-      if (recent.length || delta.length) return;
-      let more: string | null = null;
-      await withLock(payload.mailboxId, async () => {
+      const { accountId, mailboxId } = payload;
+      const key =
+        (job as { singletonKey?: string | null }).singletonKey ??
+        `${mailboxId}:initial`;
+      // Any queued fresh run of this mailbox (also a delayed retry) or more
+      // urgent fresh work of this account goes first. History never outranks
+      // INBOX fresh work, including INBOX history.
+      const yields = async () => {
         const [recent, delta] = await Promise.all([
           boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
-            key: payload.mailboxId,
+            key: mailboxId,
             queued: true,
           }),
           boss.findJobs(MAILBOX_DELTA_SYNC_QUEUE, {
-            key: payload.mailboxId,
+            key: mailboxId,
             queued: true,
           }),
         ]);
-        if (recent.length || delta.length) return;
-        more = await service.run(payload.accountId, payload.mailboxId);
-      });
+        return (
+          recent.length > 0 ||
+          delta.length > 0 ||
+          (await higherPriorityWorkWaiting(
+            boss,
+            accountId,
+            mailboxId,
+            "history",
+          ))
+        );
+      };
+      // Yield commits a delayed successor with the same key (stately keeps it
+      // behind this active run); the checkpoint is unchanged and the poller
+      // still repairs a crash before this send.
+      const successor = () =>
+        enqueueBackfillKey(
+          boss,
+          accountId,
+          mailboxId,
+          key,
+          HISTORY_DEFER_SECONDS,
+        );
+      if (await yields()) {
+        await successor();
+        return;
+      }
+      let more: string | null = null;
+      let yielded = false;
+      try {
+        await withLock(mailboxId, async () => {
+          if (await yields()) {
+            yielded = true;
+            return;
+          }
+          more = await service.run(accountId, mailboxId);
+        });
+      } catch (error) {
+        if (!(error instanceof MailboxBusyError)) throw error;
+        yielded = true;
+      }
+      if (yielded) {
+        await successor();
+        return;
+      }
       // The active singleton still owns its key. A fresh key permits exactly one
       // continuation; the poller repairs a crash between commit and enqueue.
-      if (more)
-        await enqueueCoalescedSync(boss, MAILBOX_BACKFILL_SYNC_QUEUE, payload, {
-          singletonKey: `${payload.mailboxId}:${more}`,
-          priority: -10,
-          startAfter: 5,
-        });
+      if (more) await enqueueBackfill(boss, accountId, mailboxId, more, 5);
     }),
   );
 }

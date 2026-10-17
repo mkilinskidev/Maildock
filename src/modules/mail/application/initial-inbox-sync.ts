@@ -1,8 +1,10 @@
+import { syncPriority } from "./inbox-first-policy";
+
 // Stable across retries and worker restarts; never based on requested/startedAt.
 export const INITIAL_INBOX_PROTECTION_MS = 60_000;
 
 export function recentSyncPriority(remotePath: string): number {
-  return remotePath.toUpperCase() === "INBOX" ? 20 : 10;
+  return syncPriority("fresh", remotePath);
 }
 
 export function protectsInitialInbox(

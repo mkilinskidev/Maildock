@@ -27,6 +27,7 @@ import {
 import type { RecentSyncScheduler } from "./recent-sync-scheduler";
 import type { DeltaReason } from "./delta-sync-service";
 import { protectsInitialInbox } from "./initial-inbox-sync";
+import { isInboxPath } from "./inbox-first-policy";
 
 export class MailboxNotSynchronizableError extends Error {
   constructor(message = "Mailbox is missing or not selectable.") {
@@ -237,10 +238,7 @@ export class MessageService {
     mailboxId: string,
   ): Promise<boolean> {
     const mailbox = await this.ownedMailbox(accountId, mailboxId);
-    if (
-      mailbox.remotePath.toUpperCase() === "INBOX" ||
-      mailbox.lastSuccessfulRecentSyncAt
-    )
+    if (isInboxPath(mailbox.remotePath) || mailbox.lastSuccessfulRecentSyncAt)
       return false;
     const [account] = await this.database
       .select({ enabled: mailAccounts.enabled })

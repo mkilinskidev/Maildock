@@ -13,6 +13,7 @@ import { OAuthAuthorizationError } from "../../accounts/domain/oauth-mail-provid
 import { mailAccounts } from "../../../shared/infrastructure/database/schema";
 import type { MailboxService } from "./mailbox-service";
 import type { MessageService } from "./message-service";
+import { isInboxPath } from "./inbox-first-policy";
 
 function sanitizedDiscoveryError(error: unknown): string {
   if (error instanceof OAuthAuthorizationError) return error.message;
@@ -61,8 +62,8 @@ export class MailboxDiscoveryService {
       if (this.messages) {
         const selectable = await this.mailboxes.listForAccount(accountId);
         const eligible = selectable.filter((mailbox) => mailbox.selectable);
-        const inbox = eligible.find(
-          (mailbox) => mailbox.remotePath.toUpperCase() === "INBOX",
+        const inbox = eligible.find((mailbox) =>
+          isInboxPath(mailbox.remotePath),
         );
         const failures: unknown[] = [];
         if (inbox) {

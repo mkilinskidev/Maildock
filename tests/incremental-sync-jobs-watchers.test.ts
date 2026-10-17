@@ -37,6 +37,20 @@ function databaseRows<T>(rows: T[]): Database {
   return { select: () => ({ from: () => chain }) } as unknown as Database;
 }
 
+// Each poll reads initial-recent rows first (none here), then delta rows.
+function pollerRows<T>(rows: T[]): Database {
+  let calls = 0;
+  const chain = () => {
+    const result = calls++ % 2 === 0 ? [] : rows;
+    const value = {
+      innerJoin: () => value,
+      where: () => ({ orderBy: async () => result }),
+    };
+    return value;
+  };
+  return { select: () => ({ from: chain }) } as unknown as Database;
+}
+
 function boss() {
   const pending = new Set<string>();
   const sent: { queue: string; data: unknown; options: unknown }[] = [];
@@ -187,7 +201,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
   it("polls initialized eligible mailboxes and coalesces pending jobs", async () => {
     const jobs = boss();
     const poller = new DeltaPoller(
-      databaseRows([{ accountId, mailboxId }]),
+      pollerRows([{ accountId, mailboxId }]),
       jobs.value,
       60,
     );
@@ -212,6 +226,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     >();
     const jobs = {
       createQueue: async () => undefined,
+      getDb: () => ({ executeSql: async () => ({ rows: [] }) }),
       work: async (
         name: string,
         _options: unknown,

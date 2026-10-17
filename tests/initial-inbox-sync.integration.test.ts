@@ -193,7 +193,18 @@ describe("initial INBOX with isolated PostgreSQL, pg-boss and fake IMAP", () => 
           _options: unknown,
           callback: typeof handler,
         ) => {
-          handler = callback;
+          // Direct calls stand for a worker that claimed this mailbox's queued
+          // job; otherwise it would still look like waiting INBOX-first work.
+          handler = async (batch) => {
+            const { mailboxId } = batch[0].data as { mailboxId: string };
+            await boss.getDb().executeSql(
+              `UPDATE pgboss.job SET state = 'completed', completed_on = now()
+                  WHERE name = $1 AND singleton_key = $2
+                    AND state IN ('created', 'retry')`,
+              [queue, mailboxId],
+            );
+            return callback(batch);
+          };
         },
       } as unknown as PgBoss,
       service,
@@ -300,6 +311,13 @@ describe("initial INBOX with isolated PostgreSQL, pg-boss and fake IMAP", () => 
       expect(
         await makeService().shouldDeferInitialRecent(accountId, archive.id),
       ).toBe(false);
+      // A slot claimed the INBOX job: running INBOX no longer blocks admission
+      // once the initial deadline passed (a ready, unclaimed one would).
+      await boss.getDb().executeSql(
+        `UPDATE pgboss.job SET state = 'active', started_on = now()
+            WHERE name = $1 AND singleton_key = $2 AND state = 'created'`,
+        [queue, (await box("INBOX")).id],
+      );
       await handler(payload(archive.id));
       expect(starts).toEqual(["Archive"]);
     },
