@@ -3,6 +3,7 @@ import { MailboxTree } from "./mailbox-tree";
 import { DesktopNotifications } from "./desktop-notifications";
 import { MaildockBrand } from "./maildock-brand";
 import { DraftList } from "./draft-list";
+import { initialInboxPollDelay } from "@/shared/application/initial-inbox-polling";
 import { GlobalSearchResults } from "./global-search-results";
 import type { SearchResult } from "@/modules/mail/application/search-service";
 import {
@@ -319,6 +320,16 @@ export function MailClient({
     [],
   );
   const folder = folders.find((item) => item.id === mailboxId);
+  const initialInboxPolling =
+    initialInboxPollDelay(
+      folder,
+      !allInboxes &&
+        !searchActive &&
+        !showDrafts &&
+        Boolean(accounts.find((item) => item.id === accountId)?.enabled),
+    ) === 2_000;
+  const initialInboxDeadline =
+    Date.parse(folder?.firstDiscoveredAt ?? "") + 60_000;
   const base = allInboxes
     ? "/api/mail/all-inboxes"
     : `/api/accounts/${accountId}/mailboxes/${mailboxId}/messages`;
@@ -1044,10 +1055,30 @@ export function MailClient({
     if (!allInboxes && (!accountId || !mailboxId)) return;
     let cancelled = false;
     let busy = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const plan = () => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        load,
+        initialInboxPolling && Date.now() < initialInboxDeadline
+          ? 2_000
+          : 20_000,
+      );
+    };
     const load = () => {
-      if (document.visibilityState !== "visible" || busy) return;
+      if (cancelled || busy) return;
+      if (document.visibilityState !== "visible") {
+        plan();
+        return;
+      }
+      if (timer) clearTimeout(timer);
       busy = true;
-      fetch(`${base}?pageSize=50`, { cache: "no-store" })
+      fetch(`${base}?pageSize=50`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
         .then(async (response) => {
           if (!response.ok) throw new Error("Messages could not be loaded.");
           return response.json() as Promise<MessagePage>;
@@ -1077,14 +1108,15 @@ export function MailClient({
         .finally(() => {
           busy = false;
           if (!cancelled) setLoadingMessages(false);
+          plan();
         });
     };
     load();
-    const timer = setInterval(load, 20_000);
     document.addEventListener("visibilitychange", load);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      controller.abort();
+      if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", load);
     };
   }, [
@@ -1095,6 +1127,10 @@ export function MailClient({
     allInboxes,
     conversationView,
     listReloadNonce,
+    initialInboxPolling,
+    initialInboxDeadline,
+    searchActive,
+    showDrafts,
   ]);
 
   useEffect(() => {

@@ -60,13 +60,32 @@ export class MailboxDiscoveryService {
         .where(eq(mailAccounts.id, accountId));
       if (this.messages) {
         const selectable = await this.mailboxes.listForAccount(accountId);
-        await Promise.allSettled(
-          selectable
-            .filter((mailbox) => mailbox.selectable)
+        const eligible = selectable.filter((mailbox) => mailbox.selectable);
+        const inbox = eligible.find(
+          (mailbox) => mailbox.remotePath.toUpperCase() === "INBOX",
+        );
+        const failures: unknown[] = [];
+        if (inbox) {
+          try {
+            await this.messages.requestSync(accountId, inbox.id);
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        const results = await Promise.allSettled(
+          eligible
+            .filter((mailbox) => mailbox.id !== inbox?.id)
             .map((mailbox) =>
               this.messages!.requestSync(accountId, mailbox.id),
             ),
         );
+        for (const result of results)
+          if (result.status === "rejected") failures.push(result.reason);
+        if (failures.length)
+          throw new AggregateError(
+            failures,
+            "Mailbox synchronization scheduling failed.",
+          );
       }
     } catch (error) {
       const failedAt = new Date();

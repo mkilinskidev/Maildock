@@ -26,6 +26,7 @@ import {
 } from "../../../shared/infrastructure/database/schema";
 import type { RecentSyncScheduler } from "./recent-sync-scheduler";
 import type { DeltaReason } from "./delta-sync-service";
+import { protectsInitialInbox } from "./initial-inbox-sync";
 
 export class MailboxNotSynchronizableError extends Error {
   constructor(message = "Mailbox is missing or not selectable.") {
@@ -192,18 +193,24 @@ export class MessageService {
     if (!this.scheduler)
       throw new Error("Recent sync scheduler is unavailable.");
     const now = new Date();
+    // Publish before enqueue: a fast consumer must never be overwritten by its producer.
+    await this.database
+      .update(mailboxes)
+      .set({
+        recentSyncStatus: "pending",
+        recentSyncError: null,
+        recentSyncRequestedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(mailboxes.id, mailboxId),
+          eq(mailboxes.recentSyncStatus, mailbox.recentSyncStatus),
+          sql`${mailboxes.recentSyncStatus} <> 'running'`,
+        ),
+      );
     try {
-      const scheduled = await this.scheduler.schedule(accountId, mailboxId);
-      await this.database
-        .update(mailboxes)
-        .set({
-          recentSyncStatus: "pending",
-          recentSyncError: null,
-          recentSyncRequestedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(mailboxes.id, mailboxId));
-      return scheduled;
+      return await this.scheduler.schedule(accountId, mailboxId);
     } catch (error) {
       await this.database
         .update(mailboxes)
@@ -213,9 +220,45 @@ export class MessageService {
             "Recent message synchronization could not be scheduled.",
           updatedAt: now,
         })
-        .where(eq(mailboxes.id, mailboxId));
+        .where(
+          and(
+            eq(mailboxes.id, mailboxId),
+            eq(mailboxes.recentSyncStatus, "pending"),
+            eq(mailboxes.recentSyncRequestedAt, now),
+            eq(mailboxes.updatedAt, now),
+          ),
+        );
       throw error;
     }
+  }
+
+  async shouldDeferInitialRecent(
+    accountId: string,
+    mailboxId: string,
+  ): Promise<boolean> {
+    const mailbox = await this.ownedMailbox(accountId, mailboxId);
+    if (
+      mailbox.remotePath.toUpperCase() === "INBOX" ||
+      mailbox.lastSuccessfulRecentSyncAt
+    )
+      return false;
+    const [account] = await this.database
+      .select({ enabled: mailAccounts.enabled })
+      .from(mailAccounts)
+      .where(eq(mailAccounts.id, accountId))
+      .limit(1);
+    if (!account?.enabled) return false;
+    const [inbox] = await this.database
+      .select()
+      .from(mailboxes)
+      .where(
+        and(
+          eq(mailboxes.accountId, accountId),
+          sql`upper(${mailboxes.remotePath}) = 'INBOX'`,
+        ),
+      )
+      .limit(1);
+    return protectsInitialInbox(inbox);
   }
 
   async runRecentSync(accountId: string, mailboxId: string): Promise<void> {

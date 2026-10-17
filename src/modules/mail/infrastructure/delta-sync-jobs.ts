@@ -4,7 +4,8 @@ import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnosti
 import { PgBoss } from "pg-boss";
 import { enqueueCoalescedSync } from "./coalesced-sync-job";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, ne, asc, sql } from "drizzle-orm";
+import { enqueueRecent } from "./recent-sync-jobs";
 
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { Database } from "../../../shared/infrastructure/database/database";
@@ -131,6 +132,39 @@ export class DeltaPoller {
     if (this.running) return;
     this.running = true;
     try {
+      // Reuse the existing poller: initial recent has durable mailbox state even
+      // if discovery enqueue failed or a worker died while deferring a folder.
+      // enqueueRecent preserves every live queued/retry/active job.
+      const initial = await this.database
+        .select({ accountId: mailboxes.accountId, mailboxId: mailboxes.id })
+        .from(mailboxes)
+        .innerJoin(mailAccounts, eq(mailAccounts.id, mailboxes.accountId))
+        .where(
+          and(
+            eq(mailAccounts.enabled, true),
+            eq(mailboxes.selectable, true),
+            eq(mailboxes.lifecycleStatus, "active"),
+            isNull(mailboxes.lastSuccessfulRecentSyncAt),
+            ne(mailboxes.recentSyncStatus, "success"),
+          ),
+        )
+        .orderBy(
+          sql`case when upper(${mailboxes.remotePath}) = 'INBOX' then 0 else 1 end`,
+          asc(mailboxes.firstDiscoveredAt),
+        );
+      const recoveryFailures: unknown[] = [];
+      for (const item of initial) {
+        try {
+          await enqueueRecent(
+            this.boss,
+            item.accountId,
+            item.mailboxId,
+            "repair",
+          );
+        } catch (error) {
+          recoveryFailures.push(error);
+        }
+      }
       const eligible = await this.database
         .select({ accountId: mailboxes.accountId, mailboxId: mailboxes.id })
         .from(mailboxes)
@@ -145,6 +179,11 @@ export class DeltaPoller {
         );
       for (const item of eligible)
         await enqueueDelta(this.boss, item.accountId, item.mailboxId, "poll");
+      if (recoveryFailures.length)
+        throw new AggregateError(
+          recoveryFailures,
+          "Initial recent recovery failed.",
+        );
     } finally {
       this.running = false;
     }

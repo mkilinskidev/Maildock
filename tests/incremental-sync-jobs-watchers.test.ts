@@ -31,7 +31,8 @@ const logger = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 function databaseRows<T>(rows: T[]): Database {
   const chain = {
     innerJoin: () => chain,
-    where: async () => rows,
+    where: () =>
+      Object.assign(Promise.resolve(rows), { orderBy: async () => [] }),
   };
   return { select: () => ({ from: () => chain }) } as unknown as Database;
 }
@@ -225,6 +226,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       await work();
     };
     const recent = {
+      shouldDeferInitialRecent: async () => false,
       runRecentSync: vi.fn(async () => undefined),
     } as unknown as MessageService;
     const delta = {

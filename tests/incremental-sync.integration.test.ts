@@ -1045,7 +1045,13 @@ describe("Phase 1E persisted delta state", () => {
     const boss = {
       getDb: () => ({
         beginTransaction: async () => ({
-          db: { executeSql: async () => ({ rows: [] }) },
+          db: {
+            executeSql: async (query: string) => ({
+              rows: query.includes("remote_path")
+                ? [{ remote_path: "Archive" }]
+                : [],
+            }),
+          },
           commit: async () => {},
           rollback: async () => {},
         }),
@@ -1059,7 +1065,10 @@ describe("Phase 1E persisted delta state", () => {
     const poller = new DeltaPoller(db, boss, 60);
     await poller.start();
     poller.stop();
-    expect(sent).toEqual([rows.find((row) => row.remotePath === "INBOX")!.id]);
+    expect(sent).toEqual([
+      archive.id,
+      rows.find((row) => row.remotePath === "INBOX")!.id,
+    ]);
     await db
       .update(mailboxes)
       .set({ recentSyncStatus: "success" })

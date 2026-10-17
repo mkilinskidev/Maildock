@@ -888,7 +888,8 @@ export class ImapSmtpMailProvider implements MailProvider {
       );
       if (found === false || found === undefined)
         throw new Error("Recent UID search failed.");
-      const uids = found;
+      // UID order reflects arrival in this folder, not INTERNALDATE.
+      const uids = [...found].sort((a, b) => b - a);
       let messageCount = 0;
       const query = {
         uid: true,
@@ -899,17 +900,31 @@ export class ImapSmtpMailProvider implements MailProvider {
         internalDate: true,
         size: true,
       } as const;
-      for (let offset = 0; offset < uids.length; offset += request.batchSize) {
-        const uidBatch = uids.slice(offset, offset + request.batchSize);
+      for (let offset = 0; offset < uids.length;) {
+        const size =
+          offset === 0 ? Math.min(25, request.batchSize) : request.batchSize;
+        const uidBatch = uids.slice(offset, offset + size);
         const normalized: RemoteMessageMetadata[] = [];
         for await (const message of client.fetch(uidBatch.join(","), query, {
           uid: true,
         })) {
           normalized.push(normalizeMessage(message));
         }
+        const fetched = new Set(normalized.map((item) => item.uid));
+        const missing = uidBatch.filter((uid) => !fetched.has(String(uid)));
+        if (missing.length) {
+          const present = await client.search(
+            { uid: missing.join(",") },
+            { uid: true },
+          );
+          if (present === false || present === undefined || present.length)
+            throw new Error("Recent UID missing from FETCH; retrying window.");
+        }
+        assertImapHealthy(client);
         // The FETCH iterator is fully consumed before the sink can perform database work.
         await sink.batch(normalized);
         messageCount += normalized.length;
+        offset += size;
       }
       assertImapHealthy(client);
       return { uidValidity, messageCount };
