@@ -223,3 +223,5 @@ files and `git diff --check`: clean.
 Safety: tests ran only in their own throw-away containers. The running
 `maildock-app` and `maildock-postgres` containers, their queues and database
 were not touched; no real IMAP/Gmail access.
+
+Branch: `codex/v1-dedup-safety`, commit `c8ea358` (message commit; later amendments none).
