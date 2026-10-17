@@ -213,6 +213,9 @@ export class ContentCollector {
       let uid: number | undefined,
         body = false,
         gotStructure = false;
+      // FETCH attributes are unordered. Gmail may put this response's body
+      // literal before its MIME header; only a prior FETCH rules out headers.
+      const offsetBeforeFetch = this.offset;
       for (let i = 0; i < fields.length; i += 2) {
         const key = fields[i],
           value = fields[i + 1],
@@ -245,7 +248,7 @@ export class ContentCollector {
             if (
               part !== expectedHeader ||
               this.headers ||
-              this.offset ||
+              offsetBeforeFetch ||
               bytes.length > CONTENT_LIMITS.header ||
               key?.partial
             )

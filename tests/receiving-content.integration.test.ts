@@ -269,6 +269,7 @@ describe("R11 owned content retrieval", () => {
       bodies?: Body[];
       mixed?: boolean;
       nested?: boolean;
+      gmailBodyFirst?: boolean;
       automatic?: boolean;
       maxBytes?: number;
       sliceDelayMs?: number;
@@ -388,9 +389,15 @@ describe("R11 owned content retrieval", () => {
                 /BODY\.PEEK\[([^\]]+)\](?:<(\d+)\.(\d+)>)?/g,
               ),
             ];
+            if (input.gmailBodyFirst)
+              matches.sort(
+                (a, b) =>
+                  Number(/HEADER|\.MIME/i.test(a[1])) -
+                  Number(/HEADER|\.MIME/i.test(b[1])),
+              );
             expect(matches.length).toBeGreaterThan(0);
             p.send(
-              `* 1 FETCH (UID ${input.corrupt === "uid" ? 99 : 1} RFC822.SIZE 99999999`,
+              `* 1 FETCH (${input.gmailBodyFirst ? "X-GM-MSGID 1234567890123456789 " : ""}UID ${input.corrupt === "uid" ? 99 : 1} RFC822.SIZE 99999999`,
               c,
             );
             for (const match of matches) {
@@ -450,7 +457,7 @@ describe("R11 owned content retrieval", () => {
       },
       {},
       "OK",
-      "IMAP4rev1 AUTH=PLAIN BINARY",
+      `IMAP4rev1 AUTH=PLAIN BINARY${input.gmailBodyFirst ? " X-GM-EXT-1" : ""}`,
     );
     cleanup.push(async () => {
       if (input.maxBytes === DISPLAY_CONTENT_BYTES)
@@ -552,6 +559,23 @@ describe("R11 owned content retrieval", () => {
       counters: () => ({ reads, stores, bytes, committedBeforeClient }),
     };
   }
+
+  it.each([100, 40000])(
+    "accepts Gmail body-before-header FETCH ordering for %i bytes",
+    async (length) => {
+      await request();
+      const h = await harness({
+        gmailBodyFirst: true,
+        bodies: [plain("x".repeat(length))],
+      });
+      await h.submit();
+      expect(await contentRow()).toMatchObject({
+        status: "ready",
+        plain_text: "x".repeat(length),
+      });
+      expect(h.counters().stores).toBe(0);
+    },
+  );
 
   it.each(["plain", "html", "alternative", "mixed", "nested"])(
     "retrieves %s through durable intent and the established reader API",

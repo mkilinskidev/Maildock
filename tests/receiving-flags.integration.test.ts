@@ -245,6 +245,7 @@ describe("R10 owned flag execution", () => {
   async function harness(
     input: {
       condstore?: boolean;
+      identity?: "gmail" | "objectid";
       conflict?: "OK" | "NO";
       disconnect?: boolean;
       automatic?: boolean;
@@ -290,7 +291,17 @@ describe("R10 owned flag execution", () => {
             p.socket.destroy();
             return true;
           }
-          const response = `* 1 FETCH (UID ${input.corrupt === "wrong-uid" ? 99 : 1}${input.corrupt === "missing-flags" ? "" : ` FLAGS (${[...flags].join(" ")})`}${input.condstore ? ` MODSEQ (${modseq})` : ""})\r\n`;
+          const identity =
+            input.identity === "gmail"
+              ? "X-GM-MSGID 1234567890123456789 "
+              : input.identity === "objectid"
+                ? "EMAILID (fixture-email-id) "
+                : "";
+          if (input.identity)
+            expect(c.command).toContain(
+              input.identity === "gmail" ? "X-GM-MSGID" : "EMAILID",
+            );
+          const response = `* 1 FETCH (${identity}UID ${input.corrupt === "wrong-uid" ? 99 : 1}${input.corrupt === "missing-flags" ? "" : ` FLAGS (${[...flags].join(" ")})`}${input.condstore ? ` MODSEQ (${modseq})` : ""})\r\n`;
           p.send(response, c);
           if (input.corrupt === "duplicate") p.send(response, c);
           if (input.corrupt === "no-completion") p.socket.destroy();
@@ -327,7 +338,7 @@ describe("R10 owned flag execution", () => {
       },
       {},
       "OK",
-      `IMAP4rev1 AUTH=PLAIN${input.condstore ? " ENABLE CONDSTORE" : ""}`,
+      `IMAP4rev1 AUTH=PLAIN${input.condstore ? " ENABLE CONDSTORE" : ""}${input.identity === "gmail" ? " X-GM-EXT-1" : input.identity === "objectid" ? " OBJECTID" : ""}`,
     );
     cleanup.push(peer.cleanup);
     const connection = {
@@ -446,6 +457,21 @@ describe("R10 owned flag execution", () => {
       });
     },
   );
+  it.each(["gmail", "objectid"] as const)(
+    "accepts ImapFlow's automatic %s identity through STORE preflight and readback",
+    async (identity) => {
+      const id = await create();
+      const f = await harness({ condstore: true, identity });
+      await f.submit(id);
+      expect(await row(id)).toMatchObject({
+        status: "succeeded",
+        modseq: "11",
+      });
+      expect(f.counters().stores).toBe(1);
+      expect(f.counters().reads).toBe(2);
+    },
+  );
+
   it("uses correctly evidenced CONDSTORE with the fresh MODSEQ", async () => {
     const id = await create();
     const f = await harness({ condstore: true });

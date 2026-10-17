@@ -159,6 +159,9 @@ export class FlagCollector {
           if (!Array.isArray(list) || list.length !== 1)
             throw new Error("Malformed MODSEQ");
           modseq = number(list[0]);
+        } else if (["EMAILID", "X-GM-MSGID"].includes(key)) {
+          // ImapFlow requests these automatically for OBJECTID/Gmail servers.
+          // They never supply our frozen UID/UIDVALIDITY or flag evidence.
         } else throw new Error("Unexpected flag FETCH field");
       }
       // Unsolicited flag-only updates cannot supply exact UID evidence.
