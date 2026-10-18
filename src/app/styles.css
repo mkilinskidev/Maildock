@@ -2499,6 +2499,14 @@ label.checkbox input {
   justify-content: flex-end;
   flex-wrap: wrap;
 }
+/* Long labels wrap inside narrow cards instead of overflowing leftwards
+   (flex-end) beneath the settings navigation. */
+.mfa-card-actions .button,
+.mfa-dialog-actions .button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+}
 .mfa-management-dialog {
   width: min(460px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
