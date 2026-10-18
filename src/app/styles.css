@@ -448,7 +448,8 @@
   grid-template-columns: 180px minmax(0, 1fr);
   gap: 10px 20px;
   font-size: 13px;
-  margin-bottom: 24px;
+  margin-bottom: 0px;
+  margin-top: 12px;
 }
 .settings-facts dt {
   color: var(--muted);
@@ -2379,17 +2380,27 @@ label.checkbox input {
   padding: 0;
 }
 .application-log-list > li {
-  padding: 1.25rem 0;
+  padding: 0.75rem 0;
   border-bottom: 1px solid var(--border);
   overflow-wrap: anywhere;
 }
 .application-log-list p {
-  margin: 0.5rem 0;
+  margin: 0.35rem 0;
 }
+/* One line on wide screens; wraps gracefully on narrow ones. */
 .application-log-heading {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  font-size: 1rem;
+}
+.application-log-message {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+.application-log-level {
+  margin-left: auto;
 }
 .application-log-level.error {
   color: #d33b3b;
@@ -2401,7 +2412,30 @@ label.checkbox input {
   color: #3679bb;
 }
 .application-log-list summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  list-style: none;
   cursor: pointer;
+}
+.application-log-list summary::-webkit-details-marker {
+  display: none;
+}
+.application-log-list summary::before {
+  content: "▸";
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.application-log-list details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.application-log-list .application-log-heading {
+  flex: 1;
+  min-width: 0;
+}
+.application-log-list details > :not(summary) {
+  margin-left: 1.4rem;
 }
 /* Phase 3H: shared identity and compact desktop controls. */
 .maildock-brand {
@@ -2707,7 +2741,7 @@ label.checkbox input {
   gap: 8px 24px;
 }
 .settings-pane details {
-  margin-bottom: 16px;
+  margin-bottom: 0px;
 }
 .composer-send-hint {
   margin: 0 0 8px;

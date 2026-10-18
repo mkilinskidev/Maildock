@@ -173,27 +173,28 @@ export function ApplicationLogs({
       <ol className="application-log-list">
         {events.map((e) => (
           <li key={e.id}>
-            <div className="application-log-heading">
-              <time dateTime={e.createdAt}>
-                {new Date(e.createdAt).toLocaleString()}
-              </time>
-              <strong className={`application-log-level ${e.level}`}>
-                {e.level.toUpperCase()}
-              </strong>
-            </div>
-            <p className="muted">
-              {[e.accountName, e.mailboxPath, e.area.toUpperCase()]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-            <p>
-              <strong>{e.message}</strong>
-            </p>
-            {e.details.category === "authentication_rejected" ? (
-              <p>The mail server rejected the stored credentials.</p>
-            ) : null}
             <details>
-              <summary>Technical details</summary>
+              <summary>
+                <div className="application-log-heading">
+                  <time dateTime={e.createdAt}>
+                    {new Date(e.createdAt).toLocaleString()}
+                  </time>
+                  <span className="application-log-source muted">
+                    {[e.accountName, e.mailboxPath, e.area.toUpperCase()]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                  <strong className="application-log-message">
+                    {e.message}
+                  </strong>
+                  <strong className={`application-log-level ${e.level}`}>
+                    {e.level.toUpperCase()}
+                  </strong>
+                </div>
+              </summary>
+              {e.details.category === "authentication_rejected" ? (
+                <p>The mail server rejected the stored credentials.</p>
+              ) : null}
               <dl className="settings-facts">
                 <dt>Event</dt>
                 <dd>{e.event}</dd>
