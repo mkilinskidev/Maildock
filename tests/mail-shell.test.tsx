@@ -267,15 +267,17 @@ async function click(text: string) {
   expect(button).toBeDefined();
   await act(async () => button.click());
 }
-it("shows every account, collapses independently, preserves selection and header Compose", async () => {
+it("shows every account, collapses independently, preserves selection and sidebar Compose", async () => {
   await mount(false, false, false, {
     accountId: "a",
     mailboxId: "a-inbox",
     messageId: "",
   });
   expect(host.querySelector('select[aria-label="Account"]')).toBeNull();
-  expect(host.querySelector(".app-bar")?.textContent).toContain("New message");
-  expect(host.querySelector(".mail-sidebar")?.textContent).not.toContain(
+  expect(host.querySelector(".mail-sidebar")?.textContent).toContain(
+    "New message",
+  );
+  expect(host.querySelector(".app-bar")?.textContent).not.toContain(
     "New message",
   );
   const a = host.querySelector('[aria-label="Account a"]')!;

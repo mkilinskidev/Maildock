@@ -27,8 +27,22 @@ import {
 import type { DraftView } from "@/modules/mail/domain/draft";
 
 import Link from "next/link";
-import { MailOpen, Plus, RefreshCw, Settings2, Search, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  MailOpen,
+  Plus,
+  RefreshCw,
+  Settings2,
+  Search,
+  X,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
@@ -247,6 +261,12 @@ export function MailClient({
   const [normalSelectedId, setSelectedId] = useState(
     initialNotification?.messageId ?? "",
   );
+  // The workspace shows the list until a message is opened; Back returns to it.
+  const [readerOpen, setReaderOpen] = useState(
+    Boolean(initialNotification?.messageId),
+  );
+  const listScroll = useRef(0);
+  const listPaneRef = useRef<HTMLElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSelection, setSearchSelection] = useState<SearchResult>();
   const [searchRefresh, setSearchRefresh] = useState(0);
@@ -352,6 +372,7 @@ export function MailClient({
       ? memberSelection.message
       : undefined;
   function selectMessage(message: MessageListItem, placementMailboxId: string) {
+    setReaderOpen(true);
     if (
       selectedId === message.id &&
       (selectedMember?.mailboxId ?? mailboxId) === placementMailboxId
@@ -462,6 +483,9 @@ export function MailClient({
       : undefined;
   const moveAvailable = (action: "archive" | "trash") =>
     Boolean(openedTarget && canMove(openedTarget, action));
+  const showingReader =
+    readerOpen && Boolean(selectedId) && (!showDrafts || searchActive);
+  const listVisible = !composing && !showingReader;
 
   async function act(
     action: MessageAction,
@@ -693,6 +717,8 @@ export function MailClient({
   const loadedTargets = loadedRows
     .map(rowTarget)
     .filter((item): item is ActionTarget => Boolean(item));
+  // Bulk actions belong to the list; an open reader acts on its own message.
+  const bulkMode = listVisible && selectedTargets.length > 0;
   function toggleSelection(message: MessageListItem) {
     const target = rowTarget(message);
     if (!target) return;
@@ -739,7 +765,7 @@ export function MailClient({
   });
   const attemptedAutoRead = useRef("");
   const openKey =
-    !composing && !showDrafts && openedTarget
+    !composing && showingReader && openedTarget
       ? `${selectionLocation}:${targetKey(openedTarget)}`
       : "";
   const autoReadSeen = openedTarget?.seen;
@@ -787,13 +813,12 @@ export function MailClient({
       const key = event.key.toLowerCase();
       if (key === "c" && accounts.some(sendingAccountAvailable)) {
         event.preventDefault();
-        preparationGeneration.current++;
-        setPreparing(false);
-        setDraft(undefined);
-        setPrefill(undefined);
-        setComposing(true);
+        startCompose();
+      } else if (event.key === "Escape" && showingReader) {
+        event.preventDefault();
+        closeReader();
       } else if (
-        !selectedTargets.length &&
+        showingReader &&
         openedTarget &&
         ["r", "a", "f"].includes(key)
       ) {
@@ -803,12 +828,12 @@ export function MailClient({
         );
       } else if (
         event.key === "Delete" &&
-        (selectedTargets.length
+        (bulkMode
           ? selectedTargets.every((item) => canMove(item, "trash"))
-          : moveAvailable("trash"))
+          : showingReader && moveAvailable("trash"))
       ) {
         event.preventDefault();
-        void (selectedTargets.length ? bulkAct("trash") : act("trash"));
+        void (bulkMode ? bulkAct("trash") : act("trash"));
       }
     }
     document.addEventListener("keydown", shortcut);
@@ -1328,7 +1353,30 @@ export function MailClient({
     }
   }
 
+  function startCompose() {
+    preparationGeneration.current++;
+    setPreparing(false);
+    setDraft(undefined);
+    setPrefill(undefined);
+    setComposing(true);
+  }
+  function closeComposer() {
+    setComposing(false);
+    setDraft(undefined);
+    setDraftListGeneration((n) => n + 1);
+  }
+  // Sidebar and search navigation always reveal the list. An open composer
+  // unmounts, which flushes its draft through the existing autosave path.
+  function showList() {
+    listScroll.current = 0;
+    setReaderOpen(false);
+    if (composing) closeComposer();
+  }
+  function closeReader() {
+    setReaderOpen(false);
+  }
   function navigate(nextAccountId: string, nextMailboxId: string, all = false) {
+    showList();
     setSearchQuery("");
     setSearchSelection(undefined);
     setShowDrafts(false);
@@ -1360,6 +1408,20 @@ export function MailClient({
     setMailboxId(nextMailboxId);
     setAllInboxes(all);
   }
+  // Returning from the reader or composer restores the list where it was left.
+  useLayoutEffect(() => {
+    if (!listVisible) return;
+    const rows = listPaneRef.current?.querySelector<HTMLElement>(".mail-rows");
+    if (rows && rows.scrollTop !== listScroll.current)
+      rows.scrollTop = listScroll.current;
+  }, [listVisible]);
+  const listTitle = searchActive
+    ? "Search results"
+    : showDrafts
+      ? "Maildock drafts"
+      : allInboxes
+        ? "All Inboxes"
+        : (folder?.name ?? "Mail");
   function unread(item: MailboxView) {
     if (item.unseenCount === null) return null;
     const projected =
@@ -1385,25 +1447,15 @@ export function MailClient({
             setDetail(null);
             setReaderError("");
             setLoadingDetail(true);
+            setReaderOpen(true);
             setListReloadNonce((value) => value + 1);
           }}
         />
       ) : null}
       <header className="app-bar">
-        <button
-          className="button compose-action"
-          disabled={composing || !accounts.some(sendingAccountAvailable)}
-          onClick={() => {
-            preparationGeneration.current++;
-            setPreparing(false);
-            setDraft(undefined);
-            setPrefill(undefined);
-            setComposing(true);
-          }}
-        >
-          <Plus size={15} />
-          New message
-        </button>
+        <div className="app-bar-brand">
+          <MaildockBrand />
+        </div>
         <div className="global-search-input">
           <Search size={16} aria-hidden="true" />
           <input
@@ -1412,6 +1464,7 @@ export function MailClient({
             maxLength={256}
             value={searchQuery}
             onChange={(event) => {
+              showList();
               setSearchQuery(event.target.value);
               setSearchSelection(undefined);
               if (searchActive || event.target.value.trim()) setDetail(null);
@@ -1429,6 +1482,7 @@ export function MailClient({
               className="icon-button"
               aria-label="Clear search"
               onClick={() => {
+                showList();
                 setSearchQuery("");
                 setSearchSelection(undefined);
                 if (searchActive) setDetail(null);
@@ -1447,9 +1501,14 @@ export function MailClient({
         </div>
       </header>
       <aside className="mail-sidebar">
-        <div className="sidebar-brand">
-          <MaildockBrand />
-        </div>
+        <button
+          className="button compose-action"
+          disabled={composing || !accounts.some(sendingAccountAvailable)}
+          onClick={startCompose}
+        >
+          <Plus size={16} />
+          New message
+        </button>
         <MailboxTree
           accounts={accounts}
           boxes={liveMailboxesByAccount}
@@ -1462,16 +1521,14 @@ export function MailClient({
           unread={unread}
           onSelect={navigate}
           onDrafts={() => {
+            showList();
             setSearchQuery("");
             setSearchSelection(undefined);
             setShowDrafts(true);
-            if (!composing) {
-              setSelectedId("");
-              setMemberSelection(undefined);
-              setDetail(null);
-              setReaderError("");
-              setLoadingDetail(false);
-            }
+            setSelectedId("");
+            setMemberSelection(undefined);
+            setDetail(null);
+            setLoadingDetail(false);
             setReaderError("");
             setError("");
             setDraftListGeneration((n) => n + 1);
@@ -1494,323 +1551,337 @@ export function MailClient({
           <LogoutButton />
         </div>
       </aside>
-      <section className="mail-list-pane" aria-label="Messages">
-        <header className="mail-pane-header">
-          <div>
-            <h1>
-              {searchActive
-                ? "Search results"
-                : showDrafts
-                  ? "Maildock drafts"
-                  : allInboxes
-                    ? "All Inboxes"
-                    : (folder?.name ?? "Mail")}
-            </h1>
-            <small>
-              {searchActive
-                ? "All accounts · All mailboxes"
-                : showDrafts
-                  ? "Saved in Maildock · Not synced to your email provider"
-                  : allInboxes
-                    ? "Enabled accounts · Inbox mailboxes"
-                    : folder
-                      ? formatCount(folder.synchronizedMessageCount) +
-                        " synchronized messages"
-                      : "Select a mailbox"}
-            </small>
-          </div>
-          <div className="mail-pane-controls">
-            {!searchActive && !showDrafts ? (
-              <label
-                className="mail-select-all"
-                title="Select all loaded messages"
+      <div className="mail-workspace">
+        <section
+          className="mail-list-pane"
+          aria-label="Messages"
+          hidden={!listVisible}
+          ref={listPaneRef}
+          onScrollCapture={(event) => {
+            const target = event.target as HTMLElement;
+            if (target.classList.contains("mail-rows"))
+              listScroll.current = target.scrollTop;
+          }}
+        >
+          <header className="mail-pane-header">
+            <div>
+              <h1>{listTitle}</h1>
+              <small>
+                {searchActive
+                  ? "All accounts · All mailboxes"
+                  : showDrafts
+                    ? "Saved in Maildock · Not synced to your email provider"
+                    : allInboxes
+                      ? "Enabled accounts · Inbox mailboxes"
+                      : folder
+                        ? formatCount(folder.synchronizedMessageCount) +
+                          " synchronized messages"
+                        : "Select a mailbox"}
+              </small>
+            </div>
+            <div className="mail-pane-controls">
+              {!searchActive && !showDrafts ? (
+                <label
+                  className="mail-select-all"
+                  title="Select all loaded messages"
+                >
+                  <input
+                    type="checkbox"
+                    aria-label="Select all loaded messages"
+                    disabled={!loadedTargets.length}
+                    checked={
+                      Boolean(loadedTargets.length) &&
+                      loadedTargets.every((target) =>
+                        selectedTargets.some(
+                          (item) => targetKey(item) === targetKey(target),
+                        ),
+                      )
+                    }
+                    onChange={(event) =>
+                      setBulkSelection(
+                        event.target.checked ? loadedTargets : [],
+                      )
+                    }
+                  />
+                </label>
+              ) : null}
+              <button
+                className="icon-button"
+                onClick={() => void refresh()}
+                disabled={
+                  searchActive ||
+                  showDrafts ||
+                  refreshing ||
+                  !mailboxId ||
+                  allInboxes
+                }
+                title="Sync mailbox"
+                aria-label="Sync mailbox"
               >
-                <input
-                  type="checkbox"
-                  aria-label="Select all loaded messages"
-                  disabled={!loadedTargets.length}
-                  checked={
-                    Boolean(loadedTargets.length) &&
-                    loadedTargets.every((target) =>
-                      selectedTargets.some(
-                        (item) => targetKey(item) === targetKey(target),
-                      ),
-                    )
-                  }
-                  onChange={(event) =>
-                    setBulkSelection(event.target.checked ? loadedTargets : [])
+                <RefreshCw
+                  size={17}
+                  className={refreshing ? "animate-spin" : ""}
+                />
+              </button>
+            </div>
+          </header>
+          {bulkMode ? (
+            <MailToolbar
+              count={selectedTargets.length}
+              preparing={preparing}
+              prepare={prepare}
+              act={bulkAct}
+              moveAvailable={(action) =>
+                selectedTargets.every((item) => canMove(item, action))
+              }
+            />
+          ) : null}
+          {error || actionError ? (
+            <p className="mail-error error" role="alert">
+              {actionError || error}
+            </p>
+          ) : null}
+          {searchActive ? (
+            <GlobalSearchResults
+              key={searchQuery}
+              query={searchQuery}
+              selectedId={selectedId}
+              refreshKey={searchRefresh + folderReloadNonce}
+              onSelect={(item) => {
+                setReaderOpen(true);
+                if (
+                  searchSelection?.id === item.id &&
+                  searchSelection.accountId === item.accountId &&
+                  searchSelection.mailboxId === item.mailboxId
+                )
+                  return;
+                setSearchSelection(item);
+                setDetail(null);
+                setReaderError("");
+                setLoadingDetail(true);
+                setError("");
+              }}
+            />
+          ) : showDrafts ? (
+            <DraftList
+              disabled={composing}
+              accounts={accounts}
+              refreshKey={draftListGeneration}
+              onResume={(value) => {
+                if (composing) return;
+                setDraft(value);
+                setPrefill(undefined);
+                setComposing(true);
+              }}
+            />
+          ) : (
+            <div className="mail-rows" ref={listRef}>
+              {loadingMessages && (mailboxId || allInboxes) ? (
+                Array.from({ length: 5 }, (_, index) => (
+                  <div className="skeleton-row" key={index}>
+                    <div
+                      className="skeleton"
+                      style={{ width: "55%", height: 12 }}
+                    />
+                    <div
+                      className="skeleton"
+                      style={{ width: "80%", height: 10 }}
+                    />
+                    <div
+                      className="skeleton"
+                      style={{ width: "35%", height: 9 }}
+                    />
+                  </div>
+                ))
+              ) : conversationView ? (
+                <ConversationMessageList
+                  key={location}
+                  accountId={accountId}
+                  mailboxId={mailboxId}
+                  messages={messages}
+                  selectedId={selectedId}
+                  onLoaded={registerConversationRows}
+                  checkedIds={selectedTargets.map(targetKey)}
+                  onToggle={toggleSelection}
+                  refreshKey={retryNonce + folderReloadNonce + listReloadNonce}
+                  onSelect={(message) =>
+                    selectMessage(message, message.mailboxId ?? mailboxId)
                   }
                 />
-              </label>
-            ) : null}
-            <button
-              className="icon-button"
-              onClick={() => void refresh()}
-              disabled={
-                searchActive ||
-                showDrafts ||
-                refreshing ||
-                !mailboxId ||
-                allInboxes
-              }
-              title="Sync mailbox"
-              aria-label="Sync mailbox"
-            >
-              <RefreshCw
-                size={17}
-                className={refreshing ? "animate-spin" : ""}
-              />
-            </button>
-          </div>
-        </header>
-        {error || actionError ? (
-          <p className="mail-error error" role="alert">
-            {actionError || error}
-          </p>
-        ) : null}
-        {searchActive ? (
-          <GlobalSearchResults
-            key={searchQuery}
-            query={searchQuery}
-            selectedId={selectedId}
-            refreshKey={searchRefresh + folderReloadNonce}
-            onSelect={(item) => {
-              if (
-                searchSelection?.id === item.id &&
-                searchSelection.accountId === item.accountId &&
-                searchSelection.mailboxId === item.mailboxId
-              )
-                return;
-              setSearchSelection(item);
-              setDetail(null);
-              setReaderError("");
-              setLoadingDetail(true);
-              setError("");
-            }}
-          />
-        ) : showDrafts ? (
-          <DraftList
-            disabled={composing}
-            accounts={accounts}
-            refreshKey={draftListGeneration}
-            onResume={(value) => {
-              if (composing) return;
-              setDraft(value);
-              setPrefill(undefined);
-              setComposing(true);
-            }}
-          />
-        ) : (
-          <div className="mail-rows" ref={listRef}>
-            {loadingMessages && (mailboxId || allInboxes) ? (
-              Array.from({ length: 5 }, (_, index) => (
-                <div className="skeleton-row" key={index}>
-                  <div
-                    className="skeleton"
-                    style={{ width: "55%", height: 12 }}
-                  />
-                  <div
-                    className="skeleton"
-                    style={{ width: "80%", height: 10 }}
-                  />
-                  <div
-                    className="skeleton"
-                    style={{ width: "35%", height: 9 }}
-                  />
-                </div>
-              ))
-            ) : conversationView ? (
-              <ConversationMessageList
-                key={location}
-                accountId={accountId}
-                mailboxId={mailboxId}
-                messages={messages}
-                selectedId={selectedId}
-                onLoaded={registerConversationRows}
-                checkedIds={selectedTargets.map(targetKey)}
-                onToggle={toggleSelection}
-                refreshKey={retryNonce + folderReloadNonce + listReloadNonce}
-                onSelect={(message) =>
-                  selectMessage(message, message.mailboxId ?? mailboxId)
-                }
-              />
-            ) : (
-              <FlatMessageList
-                checkedIds={selectedTargets.map((item) => item.id)}
-                onToggle={toggleSelection}
-                messages={messages}
-                selectedId={selectedId}
-                onSelect={(message) =>
-                  selectMessage(message, message.mailboxId ?? mailboxId)
-                }
-              />
-            )}
+              ) : (
+                <FlatMessageList
+                  checkedIds={selectedTargets.map((item) => item.id)}
+                  onToggle={toggleSelection}
+                  messages={messages}
+                  selectedId={selectedId}
+                  onSelect={(message) =>
+                    selectMessage(message, message.mailboxId ?? mailboxId)
+                  }
+                />
+              )}
 
-            {!loadingMessages && nextCursor ? (
-              <div
-                className="mail-load-more"
-                ref={loadMoreRef}
-                aria-live="polite"
-              >
-                {paginationError ? (
-                  <>
-                    <span>{paginationError}</span>
-                    <button
-                      className="button secondary"
-                      onClick={() => setPaginationError("")}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : loadingMore ? (
-                  <span>Loading older messages…</span>
-                ) : (
-                  <span>Scroll for older messages</span>
-                )}
-              </div>
-            ) : null}
-            {!loadingMessages && !messages.length && !error ? (
-              <div className="pane-empty">
-                <MailOpen size={26} strokeWidth={1.5} />
-                <strong>
-                  {!accounts.length ||
-                  !accounts.some((a) => a.enabled) ||
-                  mailboxId ||
-                  allInboxes
-                    ? !accounts.length
-                      ? "Add your first email account"
-                      : !accounts.some((a) => a.enabled)
-                        ? "All accounts are disabled"
-                        : folder &&
-                            [
-                              folder.recentSync?.status,
-                              folder.deltaSync?.status,
-                            ].includes("failed")
-                          ? "Mail could not be synchronized"
+              {!loadingMessages && nextCursor ? (
+                <div
+                  className="mail-load-more"
+                  ref={loadMoreRef}
+                  aria-live="polite"
+                >
+                  {paginationError ? (
+                    <>
+                      <span>{paginationError}</span>
+                      <button
+                        className="button secondary"
+                        onClick={() => setPaginationError("")}
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : loadingMore ? (
+                    <span>Loading older messages…</span>
+                  ) : (
+                    <span>Scroll for older messages</span>
+                  )}
+                </div>
+              ) : null}
+              {!loadingMessages && !messages.length && !error ? (
+                <div className="pane-empty">
+                  <MailOpen size={26} strokeWidth={1.5} />
+                  <strong>
+                    {!accounts.length ||
+                    !accounts.some((a) => a.enabled) ||
+                    mailboxId ||
+                    allInboxes
+                      ? !accounts.length
+                        ? "Add your first email account"
+                        : !accounts.some((a) => a.enabled)
+                          ? "All accounts are disabled"
                           : folder &&
-                              !folder.recentSync?.lastSuccessfulAt &&
-                              !folder.deltaSync?.lastSuccessfulAt
-                            ? "Waiting for mail to sync"
-                            : "No messages"
-                    : "No mailbox selected"}
-                </strong>
-                <p>
-                  {!accounts.length ||
-                  !accounts.some((a) => a.enabled) ||
-                  mailboxId ||
-                  allInboxes
-                    ? !accounts.length
-                      ? "Add an account in Settings to start reading and sending mail."
-                      : !accounts.some((a) => a.enabled)
-                        ? "Enable an account in Settings to synchronize mail."
-                        : folder &&
-                            [
-                              folder.recentSync?.status,
-                              folder.deltaSync?.status,
-                            ].includes("failed")
-                          ? "Check account Diagnostics in Settings, then request sync again."
+                              [
+                                folder.recentSync?.status,
+                                folder.deltaSync?.status,
+                              ].includes("failed")
+                            ? "Mail could not be synchronized"
+                            : folder &&
+                                !folder.recentSync?.lastSuccessfulAt &&
+                                !folder.deltaSync?.lastSuccessfulAt
+                              ? "Waiting for mail to sync"
+                              : "No messages"
+                      : "No mailbox selected"}
+                  </strong>
+                  <p>
+                    {!accounts.length ||
+                    !accounts.some((a) => a.enabled) ||
+                    mailboxId ||
+                    allInboxes
+                      ? !accounts.length
+                        ? "Add an account in Settings to start reading and sending mail."
+                        : !accounts.some((a) => a.enabled)
+                          ? "Enable an account in Settings to synchronize mail."
                           : folder &&
-                              !folder.recentSync?.lastSuccessfulAt &&
-                              !folder.deltaSync?.lastSuccessfulAt
-                            ? "Messages will appear as synchronization completes."
-                            : "This mailbox has no messages to display."
-                    : "Choose a mailbox from the sidebar."}
-                </p>
-                {!accounts.length ? (
-                  <Link className="button-link" href="/accounts?add=1">
-                    Add account
-                  </Link>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        )}
-      </section>
-      <section
-        className={`mail-detail-pane${!composing && detail ? " mail-reader" : ""}`}
-        aria-label="Message detail"
-      >
-        {!composing && (selectedTargets.length || openedTarget) ? (
-          <MailToolbar
-            count={selectedTargets.length}
-            seen={openedTarget?.seen}
-            flagged={openedTarget?.flagged}
-            preparing={preparing}
-            prepare={prepare}
-            act={(action) =>
-              selectedTargets.length ? bulkAct(action) : act(action)
-            }
-            moveAvailable={(action) =>
-              selectedTargets.length
-                ? selectedTargets.every((item) => canMove(item, action))
-                : moveAvailable(action)
-            }
-          />
-        ) : null}
+                              [
+                                folder.recentSync?.status,
+                                folder.deltaSync?.status,
+                              ].includes("failed")
+                            ? "Check account Diagnostics in Settings, then request sync again."
+                            : folder &&
+                                !folder.recentSync?.lastSuccessfulAt &&
+                                !folder.deltaSync?.lastSuccessfulAt
+                              ? "Messages will appear as synchronization completes."
+                              : "This mailbox has no messages to display."
+                      : "Choose a mailbox from the sidebar."}
+                  </p>
+                  {!accounts.length ? (
+                    <Link className="button-link" href="/accounts?add=1">
+                      Add account
+                    </Link>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </section>
         {composing ? (
-          <MailComposer
-            key={draft?.id ?? "compose"}
-            draft={draft}
-            accounts={accounts}
-            accountId={prefill?.accountId ?? accountId}
-            prefill={prefill}
-            onSaved={() => setDraftListGeneration((n) => n + 1)}
-            onClose={() => {
-              setComposing(false);
-              setDraft(undefined);
-              setDraftListGeneration((n) => n + 1);
-            }}
-            onQueued={(id) => {
-              setOutgoing((current) => ({
-                ...current,
-                [id]: { status: "queued" },
-              }));
-              setComposing(false);
-              setDraft(undefined);
-              setDraftListGeneration((n) => n + 1);
-            }}
-          />
-        ) : (
-          <MessageReader
-            hideActions
-            emptyTitle={showDrafts ? "Select a draft" : undefined}
-            emptyDescription={
-              showDrafts
-                ? "Choose a Maildock draft to continue writing."
-                : undefined
-            }
-            readerError={readerError}
-            retryMessage={() => {
-              setReaderError("");
-              setLoadingDetail(true);
-              setRetryNonce((n) => n + 1);
-            }}
-            providerDrafts={
-              !searchActive &&
-              !showDrafts &&
-              liveRolesByAccount[accountId]?.some(
-                (role) =>
-                  role.role === "drafts" &&
-                  role.available &&
-                  role.mailboxId === mailboxId,
-              )
-            }
-            contentPollIntervalMs={contentPollIntervalMs}
-            renderUrl={`${messageBase}/${selectedId}/render`}
-            selectedId={showDrafts && !searchActive ? "" : selectedId}
-            detail={showDrafts && !searchActive ? null : detail}
-            loadingDetail={showDrafts && !searchActive ? false : loadingDetail}
-            selectedMessage={selectedMessage}
-            preparing={preparing}
-            prepareError={prepareError}
-            retrying={retrying}
-            prepare={prepare}
-            act={act}
-            moveAvailable={moveAvailable}
-            retryContent={retryContent}
-          />
-        )}
-      </section>
+          <section
+            className="mail-detail-pane mail-compose-pane"
+            aria-label="Compose"
+          >
+            <MailComposer
+              key={draft?.id ?? "compose"}
+              draft={draft}
+              accounts={accounts}
+              accountId={prefill?.accountId ?? accountId}
+              prefill={prefill}
+              onSaved={() => setDraftListGeneration((n) => n + 1)}
+              onClose={closeComposer}
+              onQueued={(id) => {
+                setOutgoing((current) => ({
+                  ...current,
+                  [id]: { status: "queued" },
+                }));
+                closeComposer();
+              }}
+            />
+          </section>
+        ) : showingReader ? (
+          <section
+            className={`mail-detail-pane${detail ? " mail-reader" : ""}`}
+            aria-label="Message detail"
+          >
+            <div className="reader-bar">
+              <button
+                className="reader-back"
+                onClick={closeReader}
+                title="Back to the message list (Esc)"
+              >
+                <ArrowLeft size={17} aria-hidden="true" />
+                Back to {listTitle}
+              </button>
+              {openedTarget ? (
+                <MailToolbar
+                  count={0}
+                  seen={openedTarget.seen}
+                  flagged={openedTarget.flagged}
+                  preparing={preparing}
+                  prepare={prepare}
+                  act={(action) => act(action)}
+                  moveAvailable={moveAvailable}
+                />
+              ) : null}
+            </div>
+            <MessageReader
+              hideActions
+              readerError={readerError}
+              retryMessage={() => {
+                setReaderError("");
+                setLoadingDetail(true);
+                setRetryNonce((n) => n + 1);
+              }}
+              providerDrafts={
+                !searchActive &&
+                liveRolesByAccount[accountId]?.some(
+                  (role) =>
+                    role.role === "drafts" &&
+                    role.available &&
+                    role.mailboxId === mailboxId,
+                )
+              }
+              contentPollIntervalMs={contentPollIntervalMs}
+              renderUrl={`${messageBase}/${selectedId}/render`}
+              selectedId={selectedId}
+              detail={detail}
+              loadingDetail={loadingDetail}
+              selectedMessage={selectedMessage}
+              preparing={preparing}
+              prepareError={prepareError}
+              retrying={retrying}
+              prepare={prepare}
+              act={act}
+              moveAvailable={moveAvailable}
+              retryContent={retryContent}
+            />
+          </section>
+        ) : null}
+      </div>
     </main>
   );
 }

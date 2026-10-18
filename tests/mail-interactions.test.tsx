@@ -260,8 +260,16 @@ async function click(text: string) {
   await act(async () => button!.click());
 }
 async function open(index = 0) {
+  expect(host.querySelector(".mail-list-pane")!.hasAttribute("hidden")).toBe(
+    false,
+  );
   await act(async () =>
     host.querySelectorAll<HTMLButtonElement>(".mail-list-row")[index].click(),
+  );
+}
+async function back() {
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>(".reader-back")!.click(),
   );
 }
 async function selectAll() {
@@ -304,6 +312,7 @@ it("cancels the old timer on selection change and preserves All Inboxes context"
   await mount({ all: true });
   await open();
   await tick(1000);
+  await back();
   await open(1);
   await tick(1000);
   expect(mutations()).toHaveLength(0);
@@ -427,7 +436,14 @@ it("selection is independent of opening and clears on mailbox, search and draft 
   await mount({ all: true, auto: manual });
   await selectAll();
   await open();
-  expect(host.textContent).toContain("2 selected");
+  expect(
+    host.querySelector('[aria-label="Selected message actions"]'),
+  ).toBeNull();
+  expect(host.querySelector('[aria-label="Message actions"]')).not.toBeNull();
+  await back();
+  expect(
+    host.querySelector('[aria-label="Selected message actions"]')?.textContent,
+  ).toContain("2 selected");
   await act(async () =>
     host
       .querySelector<HTMLButtonElement>('[aria-label="a"] [title="INBOX"]')!
@@ -458,6 +474,8 @@ it("toolbar switches between open and selected messages and reuses preparation",
   await open();
   const toolbar = host.querySelector('[role="toolbar"]')!;
   expect(toolbar.querySelector('[aria-label="Reply All"]')).not.toBeNull();
+  await back();
+  expect(host.querySelector('[role="toolbar"]')).toBeNull();
   await act(async () =>
     host
       .querySelector<HTMLInputElement>('[aria-label="Select second"]')!
@@ -474,6 +492,7 @@ it("toolbar switches between open and selected messages and reuses preparation",
       .querySelector<HTMLInputElement>('[aria-label="Select second"]')!
       .click(),
   );
+  await open();
   await click("Forward");
   expect(
     fetcher.mock.calls.some(
@@ -725,4 +744,70 @@ it("uses the same selection-mode presentation for conversation members", async (
   expect(list.classList.contains("selection-mode")).toBe(true);
   await selectAll();
   expect(list.classList.contains("selection-mode")).toBe(false);
+});
+
+it("opens the reader in the workspace and Back or Escape returns to the same list", async () => {
+  await mount({ auto: manual });
+  const list = host.querySelector(".mail-list-pane")!;
+  expect(host.querySelector("[data-reader]")).toBeNull();
+  await open();
+  expect(list.hasAttribute("hidden")).toBe(true);
+  expect(host.querySelector(".mail-detail-pane [data-reader]")).not.toBeNull();
+  expect(host.querySelector(".reader-back")?.textContent).toContain("Back to");
+  await back();
+  expect(list.hasAttribute("hidden")).toBe(false);
+  expect(host.querySelector("[data-reader]")).toBeNull();
+  expect(host.querySelector(".mail-list-row.selected")?.textContent).toContain(
+    "first",
+  );
+  await open();
+  await key("Escape");
+  expect(list.hasAttribute("hidden")).toBe(false);
+  expect(host.querySelector("[data-reader]")).toBeNull();
+});
+it("restores the list scroll position after reading a message", async () => {
+  await mount({ auto: manual, count: 30 });
+  const rows = host.querySelector<HTMLElement>(".mail-list-pane .mail-rows")!;
+  let top = 0;
+  Object.defineProperty(rows, "scrollTop", {
+    configurable: true,
+    get: () => top,
+    set: (value: number) => {
+      top = value;
+    },
+  });
+  top = 480;
+  await act(async () => rows.dispatchEvent(new Event("scroll")));
+  await open(12);
+  // A hidden list can lose its offset; returning must restore it.
+  top = 0;
+  await back();
+  expect(top).toBe(480);
+});
+it("leaving the reader cancels a pending auto-read", async () => {
+  await mount();
+  await open();
+  await tick(1000);
+  await back();
+  await tick(3000);
+  expect(mutations()).toHaveLength(0);
+});
+it("New message and Reply replace the workspace with the composer", async () => {
+  await mount({ auto: manual });
+  const list = host.querySelector(".mail-list-pane")!;
+  await click("New message");
+  expect(
+    host.querySelector(".mail-compose-pane .mail-composer"),
+  ).not.toBeNull();
+  expect(list.hasAttribute("hidden")).toBe(true);
+  await click("All Inboxes");
+  expect(host.querySelector(".mail-composer")).toBeNull();
+  expect(list.hasAttribute("hidden")).toBe(false);
+  await open();
+  await click("Reply");
+  expect(
+    host.querySelector(".mail-compose-pane .mail-composer"),
+  ).not.toBeNull();
+  expect(host.querySelector("[data-reader]")).toBeNull();
+  expect(list.hasAttribute("hidden")).toBe(true);
 });

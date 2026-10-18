@@ -71,6 +71,10 @@ export function MailComposer({
   const [to, setTo] = useState(draft?.to ?? prefill?.to ?? "");
   const [cc, setCc] = useState(draft?.cc ?? prefill?.cc ?? "");
   const [bcc, setBcc] = useState(draft?.bcc ?? "");
+  // Cc and Bcc each stay collapsed until requested or already filled in.
+  const [ccShown, setCcShown] = useState(Boolean(cc));
+  const [bccShown, setBccShown] = useState(Boolean(bcc));
+  const [requestedCopy, setRequestedCopy] = useState<"cc" | "bcc">();
   const [subject, setSubject] = useState(
     draft?.subject ?? prefill?.subject ?? "",
   );
@@ -571,7 +575,7 @@ export function MailComposer({
             )}
           </select>
         </label>
-        <label>
+        <label className={ccShown && bccShown ? undefined : "composer-to"}>
           To
           <input
             aria-label="To"
@@ -580,25 +584,61 @@ export function MailComposer({
             maxLength={8000}
             placeholder="Name <email@example.com>"
           />
+          {!ccShown || !bccShown ? (
+            <span className="composer-copies">
+              {!ccShown ? (
+                <button
+                  type="button"
+                  className="composer-copies-toggle"
+                  title="Add Cc recipients"
+                  onClick={() => {
+                    setRequestedCopy("cc");
+                    setCcShown(true);
+                  }}
+                >
+                  Cc
+                </button>
+              ) : null}
+              {!bccShown ? (
+                <button
+                  type="button"
+                  className="composer-copies-toggle"
+                  title="Add Bcc recipients"
+                  onClick={() => {
+                    setRequestedCopy("bcc");
+                    setBccShown(true);
+                  }}
+                >
+                  Bcc
+                </button>
+              ) : null}
+            </span>
+          ) : null}
         </label>
-        <label>
-          Cc
-          <input
-            aria-label="Cc"
-            value={cc}
-            onChange={(event) => setCc(event.target.value)}
-            maxLength={8000}
-          />
-        </label>
-        <label>
-          Bcc
-          <input
-            aria-label="Bcc"
-            value={bcc}
-            onChange={(event) => setBcc(event.target.value)}
-            maxLength={8000}
-          />
-        </label>
+        {ccShown ? (
+          <label>
+            Cc
+            <input
+              aria-label="Cc"
+              value={cc}
+              onChange={(event) => setCc(event.target.value)}
+              maxLength={8000}
+              autoFocus={requestedCopy === "cc"}
+            />
+          </label>
+        ) : null}
+        {bccShown ? (
+          <label>
+            Bcc
+            <input
+              aria-label="Bcc"
+              value={bcc}
+              onChange={(event) => setBcc(event.target.value)}
+              maxLength={8000}
+              autoFocus={requestedCopy === "bcc"}
+            />
+          </label>
+        ) : null}
         <label>
           Subject
           <input

@@ -2,6 +2,7 @@
 import { messageDate } from "@/shared/application/message-date";
 import { useEffect, useState } from "react";
 import { Search, LoaderCircle, Flag, Paperclip } from "lucide-react";
+import { SenderAvatar, senderLabel } from "./message-row";
 import type {
   SearchPage,
   SearchResult,
@@ -101,27 +102,27 @@ export function GlobalSearchResults({
                     <span className="unread-dot" aria-label="Unread" />
                   ) : null}
                 </span>
-                <strong>
-                  {item.from[0]?.name ||
-                    item.from[0]?.address ||
-                    "Unknown sender"}
-                </strong>
+                <SenderAvatar sender={senderLabel(item.from)} />
+                <strong>{senderLabel(item.from)}</strong>
                 <time dateTime={item.date} title={messageDate(item.date).title}>
                   {messageDate(item.date).text}
                 </time>
               </span>
-              <span className="mail-row-subject">
-                {item.subject || "(No subject)"}
-              </span>
-              <span className="mail-row-snippet search-snippet">
-                {item.snippet}
+              <span className="mail-row-text">
+                <span className="mail-row-subject">
+                  {item.subject || "(No subject)"}
+                </span>
+                <span className="mail-row-snippet search-snippet">
+                  {item.snippet}
+                </span>
               </span>
               <span className="mail-row-bottom">
                 {item.accountName} · {item.mailboxName}
                 {item.flagged ? <Flag size={12} aria-label="Flagged" /> : null}
                 {item.hasAttachments ? (
                   <>
-                    <Paperclip size={12} aria-hidden="true" /> Attachment
+                    <Paperclip size={12} aria-hidden="true" />
+                    <span className="mail-row-label">Attachment</span>
                   </>
                 ) : null}
               </span>
