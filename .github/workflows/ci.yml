@@ -2,16 +2,16 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release_*"]
   push:
-    branches: [main]
+    branches: [main, "release_*"]
   workflow_dispatch:
 
 # Least privilege: CI only reads the repository. No secrets are referenced.
 permissions:
   contents: read
 
-# Supersede outdated runs of the same PR; never cancel runs on main.
+# Supersede outdated runs of the same PR; never cancel runs on main or release branches.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
