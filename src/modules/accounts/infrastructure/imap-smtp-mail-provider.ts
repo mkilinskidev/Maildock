@@ -20,6 +20,7 @@ import {
   MailProviderOperationError,
   MailboxEpochChangedError,
   relevantImapCapabilities,
+  type SyncPhase,
   type ConnectionFailureCategory,
   type DisplayContentRequest,
   type DisplayContentResult,
@@ -29,6 +30,7 @@ import {
   type ProtocolConnectionResult,
   type ProviderAccount,
   type ProviderConnection,
+  type ProviderFailureDiagnostics,
   type ProviderImapAccount,
   type RemoteMailbox,
   type RelevantImapCapability,
@@ -235,6 +237,110 @@ export function smtpOptions(
   };
 }
 
+// RFC 5530 response codes and ImapFlow error codes used for classification.
+const AUTH_RESPONSE_CODES = new Set([
+  "AUTHENTICATIONFAILED",
+  "AUTHORIZATIONFAILED",
+  "EXPIRED",
+]);
+const UNAVAILABLE_RESPONSE_CODES = new Set([
+  "UNAVAILABLE",
+  "LIMIT",
+  "THROTTLED",
+  "INUSE",
+  "SERVERBUG",
+]);
+const CONNECTION_GONE_CODES = new Set([
+  "NoConnection",
+  "EConnectionClosed",
+  "StateLogout",
+  "ClosedAfterConnectTLS",
+  "ClosedAfterConnectText",
+  "ECONNRESET",
+  "EPIPE",
+]);
+const TIMEOUT_CODES = new Set([
+  "ETIMEDOUT",
+  "ETIMEOUT",
+  "CONNECT_TIMEOUT",
+  "GREETING_TIMEOUT",
+  "UPGRADE_TIMEOUT",
+]);
+
+/**
+ * Reads only fixed protocol tokens from a dependency error: the IMAP tagged
+ * status, the bracketed RFC 5530 response code and the library error code.
+ * Response text and messages are ignored because they can contain private data.
+ */
+export function providerFailureDiagnostics(
+  error: unknown,
+): ProviderFailureDiagnostics {
+  const candidate = error as {
+    code?: unknown;
+    responseStatus?: unknown;
+    serverResponseCode?: unknown;
+  } | null;
+  const status =
+    typeof candidate?.responseStatus === "string"
+      ? candidate.responseStatus.toUpperCase()
+      : "";
+  const responseCode =
+    typeof candidate?.serverResponseCode === "string"
+      ? candidate.serverResponseCode.toUpperCase()
+      : "";
+  const code = typeof candidate?.code === "string" ? candidate.code : "";
+  return {
+    ...(status === "NO" || status === "BAD" ? { imapStatus: status } : {}),
+    ...(/^[A-Z][A-Z0-9-]{0,39}$/.test(responseCode)
+      ? { imapResponseCode: responseCode }
+      : {}),
+    ...(/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(code) ? { errorCode: code } : {}),
+  };
+}
+
+/** Wraps a sink so failures inside it are attributed to local saving. */
+function trackSink<T extends object>(
+  sink: T,
+  phase: { current: SyncPhase },
+): T {
+  return new Proxy(sink, {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        const previous = phase.current;
+        phase.current = "save";
+        const result = await (
+          value as (...input: unknown[]) => Promise<unknown>
+        ).apply(target, args);
+        phase.current = previous;
+        return result;
+      };
+    },
+  });
+}
+
+function syncOperationError(error: unknown, phase: SyncPhase): Error {
+  if (
+    error instanceof MailProviderOperationError ||
+    error instanceof MailboxEpochChangedError
+  )
+    return error;
+  if (phase === "save")
+    return new MailProviderOperationError(
+      {
+        success: false,
+        category: "internal_error",
+        message: "Saving synchronized messages failed.",
+      },
+      { phase },
+    );
+  return new MailProviderOperationError(sanitizeError(error, "IMAP"), {
+    ...providerFailureDiagnostics(error),
+    phase,
+  });
+}
+
 function sanitizeError(
   error: unknown,
   protocol: "IMAP" | "SMTP",
@@ -250,10 +356,29 @@ function sanitizeError(
     typeof candidate?.message === "string"
       ? candidate.message.toLowerCase()
       : "";
+  const { imapStatus, imapResponseCode, errorCode } =
+    providerFailureDiagnostics(error);
   let category: ConnectionFailureCategory = "internal_error";
 
-  if (code === "EAUTH" || /auth|credential|login|password/.test(message)) {
+  if (
+    code === "EAUTH" ||
+    AUTH_RESPONSE_CODES.has(imapResponseCode ?? "") ||
+    /auth|credential|login|password/.test(message)
+  ) {
     category = "authentication_rejected";
+  } else if (
+    protocol === "IMAP" &&
+    CONNECTION_GONE_CODES.has(errorCode ?? "")
+  ) {
+    category = "connection_lost";
+  } else if (
+    protocol === "IMAP" &&
+    (errorCode === "ETHROTTLE" ||
+      UNAVAILABLE_RESPONSE_CODES.has(imapResponseCode ?? ""))
+  ) {
+    category = "server_unavailable";
+  } else if (protocol === "IMAP" && imapResponseCode === "NONEXISTENT") {
+    category = "mailbox_unavailable";
   } else if (/starttls/.test(message)) {
     category = "starttls_unavailable";
   } else if (
@@ -266,7 +391,10 @@ function sanitizeError(
     /certificate|tls|ssl/.test(message)
   ) {
     category = "tls_certificate_failure";
-  } else if (code === "ETIMEDOUT" || /timed? out|timeout/.test(message)) {
+  } else if (
+    TIMEOUT_CODES.has(errorCode ?? "") ||
+    /timed? out|timeout/.test(message)
+  ) {
     category = "connection_timeout";
   } else if (
     [
@@ -280,6 +408,8 @@ function sanitizeError(
     category = "dns_or_host_unreachable";
   } else if (protocol === "SMTP") {
     category = "verification_failed";
+  } else if (imapStatus) {
+    category = "server_rejected";
   }
 
   const descriptions: Record<ConnectionFailureCategory, string> = {
@@ -289,6 +419,10 @@ function sanitizeError(
     authentication_rejected: `${protocol} authentication was rejected.`,
     starttls_unavailable: `${protocol} did not provide the required STARTTLS upgrade.`,
     verification_failed: "SMTP verification failed.",
+    server_rejected: `The ${protocol} server rejected the request.`,
+    server_unavailable: `The ${protocol} server is temporarily unavailable or limiting requests.`,
+    connection_lost: `The ${protocol} connection closed unexpectedly.`,
+    mailbox_unavailable: "The mailbox does not exist on the server.",
     internal_error: `${protocol} connection failed.`,
   };
   if (
@@ -802,7 +936,10 @@ export class ImapSmtpMailProvider implements MailProvider {
         error instanceof MailProviderOperationError
       )
         throw error;
-      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+      throw new MailProviderOperationError(
+        sanitizeError(error, "IMAP"),
+        providerFailureDiagnostics(error),
+      );
     } finally {
       if (selected)
         try {
@@ -852,7 +989,10 @@ export class ImapSmtpMailProvider implements MailProvider {
         mailboxes: listed.map(normalizeMailbox),
       };
     } catch (error) {
-      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+      throw new MailProviderOperationError(
+        sanitizeError(error, "IMAP"),
+        providerFailureDiagnostics(error),
+      );
     } finally {
       if (connected) {
         try {
@@ -868,20 +1008,24 @@ export class ImapSmtpMailProvider implements MailProvider {
   async synchronizeRecentMailbox(
     account: ProviderImapAccount,
     request: RecentMailboxSyncRequest,
-    sink: RecentMailboxSyncSink,
+    rawSink: RecentMailboxSyncSink,
   ): Promise<RecentMailboxSyncResult> {
     const client = this.createImap(imapOptions(account.imap));
+    const phase: { current: SyncPhase } = { current: "connect" };
+    const sink = trackSink(rawSink, phase);
     let connected = false;
     let selected = false;
     try {
       await client.connect();
       connected = true;
+      phase.current = "open_mailbox";
       const mailbox = await client.mailboxOpen(request.remotePath, {
         readOnly: true,
       });
       selected = true;
       const uidValidity = mailbox.uidValidity.toString(10);
       await sink.selected(uidValidity);
+      phase.current = "search";
       const found = await client.search(
         { since: request.cutoff },
         { uid: true },
@@ -905,6 +1049,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           offset === 0 ? Math.min(25, request.batchSize) : request.batchSize;
         const uidBatch = uids.slice(offset, offset + size);
         const normalized: RemoteMessageMetadata[] = [];
+        phase.current = "fetch";
         for await (const message of client.fetch(uidBatch.join(","), query, {
           uid: true,
         })) {
@@ -929,12 +1074,7 @@ export class ImapSmtpMailProvider implements MailProvider {
       assertImapHealthy(client);
       return { uidValidity, messageCount };
     } catch (error) {
-      if (
-        error instanceof MailProviderOperationError ||
-        error instanceof MailboxEpochChangedError
-      )
-        throw error;
-      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+      throw syncOperationError(error, phase.current);
     } finally {
       if (selected) {
         try {
@@ -957,14 +1097,17 @@ export class ImapSmtpMailProvider implements MailProvider {
   async synchronizeBackfillMailbox(
     account: ProviderImapAccount,
     request: BackfillMailboxSyncRequest,
-    sink: BackfillMailboxSyncSink,
+    rawSink: BackfillMailboxSyncSink,
   ): Promise<void> {
     const client = this.createImap(imapOptions(account.imap));
+    const phase: { current: SyncPhase } = { current: "connect" };
+    const sink = trackSink(rawSink, phase);
     let connected = false;
     let selected = false;
     try {
       await client.connect();
       connected = true;
+      phase.current = "open_mailbox";
       const mailbox = await client.mailboxOpen(request.remotePath, {
         readOnly: true,
       });
@@ -1016,6 +1159,7 @@ export class ImapSmtpMailProvider implements MailProvider {
       // between committed sub-ranges, and ends the call normally.
       for (let upper = frontier; ;) {
         const lower = upper - step + 1n > floor ? upper - step + 1n : floor;
+        phase.current = "search";
         const found = await uidSearch.call(
           client,
           { uid: `${lower}:${upper}` },
@@ -1028,6 +1172,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         );
         const messages: RemoteMessageMetadata[] = [];
         if (uids.length) {
+          phase.current = "fetch";
           for await (const item of client.fetch(uids.join(","), query, {
             uid: true,
           }))
@@ -1058,12 +1203,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         if (await sink.shouldYield?.()) break;
       }
     } catch (error) {
-      if (
-        error instanceof MailboxEpochChangedError ||
-        error instanceof MailProviderOperationError
-      )
-        throw error;
-      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+      throw syncOperationError(error, phase.current);
     } finally {
       if (selected) {
         try {
@@ -1087,14 +1227,17 @@ export class ImapSmtpMailProvider implements MailProvider {
     account: ProviderImapAccount,
     remotePath: string,
     batchSize: number,
-    sink: DeltaMailboxSyncSink,
+    rawSink: DeltaMailboxSyncSink,
   ): Promise<void> {
     const client = this.createImap(imapOptions(account.imap));
+    const phase: { current: SyncPhase } = { current: "connect" };
+    const sink = trackSink(rawSink, phase);
     let connected = false;
     let selected = false;
     try {
       await client.connect();
       connected = true;
+      phase.current = "open_mailbox";
       const mailbox = await client.mailboxOpen(remotePath, { readOnly: true });
       selected = true;
       const snapshot = await sink.selected(mailbox.uidValidity.toString());
@@ -1103,6 +1246,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         // Preserve the recent-window boundary when Phase 1C found no placements.
         // SELECT's UIDNEXT is a frontier, not evidence that any individual UID exists.
         const frontier = BigInt((mailbox.uidNext ?? 1) - 1);
+        phase.current = "search";
         const found = await client.search(
           { since: snapshot.emptyBootstrapCutoff },
           { uid: true },
@@ -1126,6 +1270,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         for (let offset = 0; offset < recent.length; offset += batchSize) {
           const group = recent.slice(offset, offset + batchSize);
           const messages = [];
+          phase.current = "fetch";
           for await (const item of client.fetch(group.join(","), query, {
             uid: true,
           }))
@@ -1150,6 +1295,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         options: { uid: true },
       ) => Promise<number[] | false | undefined>;
       {
+        phase.current = "search";
         const found = await uidSearch.call(
           client,
           { uid: `${lastSeen + 1n}:*` },
@@ -1177,6 +1323,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         for (let offset = 0; offset < uids.length; offset += batchSize) {
           const group = uids.slice(offset, offset + batchSize);
           const messages = [];
+          phase.current = "fetch";
           for await (const item of client.fetch(group.join(","), query, {
             uid: true,
           }))
@@ -1205,6 +1352,7 @@ export class ImapSmtpMailProvider implements MailProvider {
           client.enabled.has("CONDSTORE")) &&
         !mailbox.noModseq &&
         mailbox.highestModseq !== undefined;
+      phase.current = "flags";
       if (condstore && snapshot.highestModseq !== null) {
         const changes = [];
         for await (const item of client.fetch(
@@ -1254,6 +1402,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         offset += batchSize
       ) {
         const group = snapshot.localUids.slice(offset, offset + batchSize);
+        phase.current = "search";
         const found = await uidSearch.call(
           client,
           { uid: group.join(",") },
@@ -1265,6 +1414,7 @@ export class ImapSmtpMailProvider implements MailProvider {
         const missing = group.filter((uid) => !present.has(Number(uid)));
         if (missing.length) await sink.removed(missing);
       }
+      phase.current = "status";
       const status = await client.status?.(remotePath, {
         messages: true,
         unseen: true,
@@ -1286,12 +1436,7 @@ export class ImapSmtpMailProvider implements MailProvider {
       });
       assertImapHealthy(client);
     } catch (error) {
-      if (
-        error instanceof MailProviderOperationError ||
-        error instanceof MailboxEpochChangedError
-      )
-        throw error;
-      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+      throw syncOperationError(error, phase.current);
     } finally {
       if (selected) await client.mailboxClose().catch(() => false);
       if (connected) await client.logout().catch(() => undefined);
@@ -1507,7 +1652,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     } catch (error) {
       if (error instanceof MailProviderOperationError) throw error;
       // Avoid leaking server text, paths, or message data through job failures.
-      throw new MailProviderOperationError(sanitizeError(error, "IMAP"));
+      throw new MailProviderOperationError(
+        sanitizeError(error, "IMAP"),
+        providerFailureDiagnostics(error),
+      );
     } finally {
       if (selected) {
         try {

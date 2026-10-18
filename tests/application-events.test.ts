@@ -33,3 +33,25 @@ it("accepts only bounded protocol metadata and strips sensitive fields", () => {
   ])
     expect(safeDiagnosticDetails(input)).toEqual({});
 });
+it("accepts provider failure tokens and rejects free-form values", () => {
+  const tokens = {
+    category: "server_unavailable",
+    mailboxPath: "[Gmail]/All Mail",
+    phase: "fetch",
+    reason: "poll",
+    imapStatus: "NO",
+    imapResponseCode: "UNAVAILABLE",
+    errorCode: "ETHROTTLE",
+  };
+  expect(safeDiagnosticDetails({ ...tokens, responseText: "SECRET" })).toEqual(
+    tokens,
+  );
+  for (const input of [
+    { phase: "SECRET" },
+    { reason: "SECRET" },
+    { imapStatus: "OK" },
+    { imapResponseCode: "owner@example.com" },
+    { errorCode: "Command failed: SECRET" },
+  ])
+    expect(safeDiagnosticDetails(input)).toEqual({});
+});
