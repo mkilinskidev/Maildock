@@ -263,8 +263,10 @@ export class MessageService {
     if (!this.accounts || !this.provider || !this.config)
       throw new Error("Recent sync worker dependencies are unavailable.");
     const startedAt = new Date();
+    let mailboxPath: string | undefined;
     try {
       const mailbox = await this.ownedMailbox(accountId, mailboxId);
+      mailboxPath = mailbox.remotePath;
       if (!mailbox.selectable || mailbox.lifecycleStatus !== "active")
         throw new MailboxNotSynchronizableError();
       await this.database
@@ -395,10 +397,10 @@ export class MessageService {
         accountId,
         mailboxId,
         details: {
-          category:
-            error instanceof MailProviderOperationError
-              ? error.category
-              : "internal_error",
+          mailboxPath,
+          ...(error instanceof MailProviderOperationError
+            ? { category: error.category, ...error.diagnostics }
+            : { category: "internal_error" as const }),
         },
       });
       throw error;

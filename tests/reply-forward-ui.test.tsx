@@ -230,10 +230,10 @@ describe("reader reply and forward actions", () => {
     expect(host.querySelector(".flat-message-list")).not.toBeNull();
     expect(host.querySelector(".conversation-message-list")).toBeNull();
   });
-  it("conversation headers only expand/collapse in the middle pane, with chronological children and one reader", async () => {
+  it("conversation headers only expand/collapse in the list, with chronological children and one reader", async () => {
     const fetch = await render(async (mode) => ready(mode), true, false, false);
     const middle = host.querySelector(".mail-list-pane")!;
-    const reader = host.querySelector(".mail-detail-pane")!;
+    const reader = () => host.querySelector(".mail-detail-pane")!;
     const header = middle.querySelector<HTMLButtonElement>(
       ".conversation-group-header",
     )!;
@@ -243,7 +243,8 @@ describe("reader reply and forward actions", () => {
     );
     expect(header.getAttribute("aria-expanded")).toBe("false");
     expect(middle.querySelectorAll(".conversation-child")).toHaveLength(0);
-    expect(reader.textContent).toContain("Select a message");
+    expect(reader()).toBeNull();
+    expect(middle.hasAttribute("hidden")).toBe(false);
     await act(async () => header.click());
     expect(header.getAttribute("aria-expanded")).toBe("true");
     const children = middle.querySelectorAll<HTMLButtonElement>(
@@ -257,7 +258,7 @@ describe("reader reply and forward actions", () => {
     ).toEqual(["2025-12-31T00:00:00Z", message.date]);
     expect(children[0].classList.contains("unread")).toBe(false);
     expect(children[1].classList.contains("unread")).toBe(true);
-    expect(reader.querySelector(".mail-body")).toBeNull();
+    expect(host.querySelector(".mail-body")).toBeNull();
     expect(
       fetch.mock.calls
         .filter(([url]) => String(url).includes("/conversations/"))
@@ -266,16 +267,24 @@ describe("reader reply and forward actions", () => {
     await act(async () => children[0].click());
     expect(children[0].classList.contains("selected")).toBe(true);
     expect(children[0].getAttribute("aria-current")).toBe("true");
-    expect(reader.querySelectorAll(".mail-body")).toHaveLength(1);
-    expect(reader.textContent).toContain("Earlier body");
-    expect(reader.querySelector(".conversation-message-list")).toBeNull();
-    expect(reader.querySelector(".conversation-history")).toBeNull();
-    expect(reader.textContent).not.toContain("Open message and actions");
-    expect(reader.textContent).not.toContain("Selected");
+    expect(middle.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelectorAll(".mail-detail-pane")).toHaveLength(1);
+    expect(reader().querySelectorAll(".mail-body")).toHaveLength(1);
+    expect(reader().textContent).toContain("Earlier body");
+    expect(reader().querySelector(".conversation-message-list")).toBeNull();
+    expect(reader().querySelector(".conversation-history")).toBeNull();
+    expect(reader().textContent).not.toContain("Open message and actions");
+    expect(reader().textContent).not.toContain("Selected");
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>(".reader-back")!.click(),
+    );
+    expect(reader()).toBeNull();
+    expect(middle.hasAttribute("hidden")).toBe(false);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(children[0].classList.contains("selected")).toBe(true);
     await act(async () => header.click());
     expect(header.getAttribute("aria-expanded")).toBe("false");
     expect(middle.querySelectorAll(".conversation-child")).toHaveLength(0);
-    expect(reader.textContent).toContain("Earlier body");
   });
   it("Inbox expands to include Sent messages while Sent-only groups appear only in Sent", async () => {
     const fetch = await render(async (mode) => ready(mode), true);
@@ -311,7 +320,7 @@ describe("reader reply and forward actions", () => {
       "Sent-only conversation",
     );
   });
-  it("switching the presentation swaps list components without requesting a rethread or losing the single reader", async () => {
+  it("switching the presentation swaps list components without requesting a rethread and returns to the list", async () => {
     const fetch = await render(async (mode) => ready(mode), true);
     await act(async () =>
       globalThis.fetch("/api/settings/conversation-view", {
@@ -333,7 +342,10 @@ describe("reader reply and forward actions", () => {
     );
     expect(host.querySelector(".flat-message-list")).not.toBeNull();
     expect(host.querySelector(".conversation-message-list")).toBeNull();
-    expect(host.querySelectorAll(".mail-detail-pane")).toHaveLength(1);
+    expect(host.querySelectorAll(".mail-detail-pane")).toHaveLength(0);
+    expect(host.querySelector(".mail-list-pane")!.hasAttribute("hidden")).toBe(
+      false,
+    );
     expect(
       fetch.mock.calls.filter(
         ([url, init]) =>
@@ -469,8 +481,14 @@ describe("reader reply and forward actions", () => {
           host.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement
         ).click();
       });
-      expect(host.querySelector(".mail-composer")).not.toBeNull();
+      expect(
+        host.querySelector(".mail-compose-pane .mail-composer"),
+      ).not.toBeNull();
       expect(host.querySelector(".mail-body")).toBeNull();
+      expect(host.querySelector(".reader-back")).toBeNull();
+      expect(
+        host.querySelector(".mail-list-pane")!.hasAttribute("hidden"),
+      ).toBe(true);
       const compose = [...host.querySelectorAll("button")].find(
         (button) => button.textContent === "New message",
       )!;

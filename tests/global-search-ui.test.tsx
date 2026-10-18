@@ -210,14 +210,35 @@ describe("global header search overlay", () => {
     expect(host.querySelector("[data-reader-url]")?.textContent).toContain(
       "Cross account subject",
     );
+    const searches = () =>
+      fetcher.mock.calls.filter(([url]) =>
+        String(url).startsWith("/api/search"),
+      ).length;
+    const before = searches();
+    await click("Back to Search results");
+    expect(host.querySelector("[data-reader-url]")).toBeNull();
+    expect(host.querySelector(".mail-list-pane")?.hasAttribute("hidden")).toBe(
+      false,
+    );
+    expect(
+      host.querySelector(".global-search-results .mail-list-row.selected")
+        ?.textContent,
+    ).toContain("Cross account subject");
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(searches()).toBe(before);
     await click("Clear search");
     expect(host.textContent).toContain("Normal mailbox subject");
+    expect(host.querySelector("[data-reader-url]")).toBeNull();
     expect(
-      host.querySelector("[data-reader-url]")?.getAttribute("data-reader-url"),
-    ).toBe("/api/accounts/a/mailboxes/inbox/messages/normal/render");
+      host.querySelector(".mail-list-row.selected")?.textContent,
+    ).toContain("Normal mailbox subject");
     expect(host.querySelector(".mail-pane-header h1")?.textContent).toBe(
       "Inbox",
     );
+    await click("Normal mailbox subject");
+    expect(
+      host.querySelector("[data-reader-url]")?.getAttribute("data-reader-url"),
+    ).toBe("/api/accounts/a/mailboxes/inbox/messages/normal/render");
   });
   it.each(["empty", "error"] as const)(
     "shows %s state and clearing preserves normal list",

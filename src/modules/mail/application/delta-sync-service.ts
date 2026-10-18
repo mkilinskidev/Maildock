@@ -332,15 +332,16 @@ export class DeltaSyncService {
           updatedAt: failedAt,
         })
         .where(eq(mailboxes.id, mailboxId));
+      const failure =
+        error instanceof MailProviderOperationError
+          ? { category: error.category, ...error.diagnostics }
+          : { category: "internal_error" as const };
       this.logger?.warn(
         {
           event: "mail.delta_sync_failed",
           ...context,
           reason,
-          category:
-            error instanceof MailProviderOperationError
-              ? error.category
-              : "internal_error",
+          ...failure,
         },
         "Mailbox delta synchronization failed",
       );
@@ -353,10 +354,8 @@ export class DeltaSyncService {
           mailboxId,
           details: {
             mailboxPath: mailbox.remotePath,
-            category:
-              error instanceof MailProviderOperationError
-                ? error.category
-                : "internal_error",
+            reason,
+            ...failure,
           },
         });
       throw error;

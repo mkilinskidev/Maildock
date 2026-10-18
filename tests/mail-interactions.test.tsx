@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MailClient } from "@/components/mail-client";
+import { AppToaster } from "@/components/app-toaster";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { AutoReadPreference } from "@/modules/mail/domain/mail-interactions";
@@ -126,6 +127,10 @@ beforeEach(() => {
   submitted.mockClear();
 });
 afterEach(async () => {
+  // Let in-flight work finish so its toasts cannot leak into the next test.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
   await act(async () => root.unmount());
   document.body.innerHTML = "";
   vi.useRealTimers();
@@ -227,16 +232,19 @@ async function mount(
   vi.stubGlobal("fetch", fetcher);
   await act(async () =>
     root.render(
-      <MailClient
-        initialNotification={
-          options.all ? undefined : { accountId: "a", mailboxId: "a-inbox" }
-        }
-        accounts={accounts}
-        mailboxesByAccount={boxes}
-        rolesByAccount={roles}
-        initialConversationView={options.conversation}
-        initialAutoRead={options.auto}
-      />,
+      <>
+        <MailClient
+          initialNotification={
+            options.all ? undefined : { accountId: "a", mailboxId: "a-inbox" }
+          }
+          accounts={accounts}
+          mailboxesByAccount={boxes}
+          rolesByAccount={roles}
+          initialConversationView={options.conversation}
+          initialAutoRead={options.auto}
+        />
+        <AppToaster />
+      </>,
     ),
   );
   if (options.all) await click("All Inboxes");
@@ -252,8 +260,16 @@ async function click(text: string) {
   await act(async () => button!.click());
 }
 async function open(index = 0) {
+  expect(host.querySelector(".mail-list-pane")!.hasAttribute("hidden")).toBe(
+    false,
+  );
   await act(async () =>
     host.querySelectorAll<HTMLButtonElement>(".mail-list-row")[index].click(),
+  );
+}
+async function back() {
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>(".reader-back")!.click(),
   );
 }
 async function selectAll() {
@@ -268,6 +284,12 @@ async function selectAll() {
 async function tick(ms: number) {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+// Sonner publishes toasts on a zero-delay timeout.
+async function flushToasts() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
   });
 }
 const mutations = () =>
@@ -290,6 +312,7 @@ it("cancels the old timer on selection change and preserves All Inboxes context"
   await mount({ all: true });
   await open();
   await tick(1000);
+  await back();
   await open(1);
   await tick(1000);
   expect(mutations()).toHaveLength(0);
@@ -352,6 +375,7 @@ it("bulk read keeps each All Inboxes account and mailbox and reports confirmed c
   ]);
   expect(host.textContent).not.toContain("2 messages marked as read");
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain("2 messages marked as read");
 });
 it("rolls back only a failed enqueue and preserves the successful optimistic row", async () => {
@@ -363,6 +387,7 @@ it("rolls back only a failed enqueue and preserves the successful optimistic row
   expect(rows[0].classList.contains("unread")).toBe(false);
   expect(rows[1].classList.contains("unread")).toBe(true);
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain(
     "Message marked as read · 1 message action failed",
   );
@@ -374,6 +399,7 @@ it("reconciles partial remote failures across accounts without claiming all succ
   await selectAll();
   await click("Mark read");
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain("Remote failed");
   expect(host.textContent).toContain(
     "Message marked as read · 1 message action failed",
@@ -390,6 +416,7 @@ it("restores only the failed archived row", async () => {
   expect(host.querySelectorAll(".mail-list-row")).toHaveLength(1);
   expect(host.querySelector(".mail-list-row")?.textContent).toContain("second");
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain(
     "Message archived · 1 message action failed",
   );
@@ -409,7 +436,14 @@ it("selection is independent of opening and clears on mailbox, search and draft 
   await mount({ all: true, auto: manual });
   await selectAll();
   await open();
-  expect(host.textContent).toContain("2 selected");
+  expect(
+    host.querySelector('[aria-label="Selected message actions"]'),
+  ).toBeNull();
+  expect(host.querySelector('[aria-label="Message actions"]')).not.toBeNull();
+  await back();
+  expect(
+    host.querySelector('[aria-label="Selected message actions"]')?.textContent,
+  ).toContain("2 selected");
   await act(async () =>
     host
       .querySelector<HTMLButtonElement>('[aria-label="a"] [title="INBOX"]')!
@@ -440,6 +474,8 @@ it("toolbar switches between open and selected messages and reuses preparation",
   await open();
   const toolbar = host.querySelector('[role="toolbar"]')!;
   expect(toolbar.querySelector('[aria-label="Reply All"]')).not.toBeNull();
+  await back();
+  expect(host.querySelector('[role="toolbar"]')).toBeNull();
   await act(async () =>
     host
       .querySelector<HTMLInputElement>('[aria-label="Select second"]')!
@@ -456,6 +492,7 @@ it("toolbar switches between open and selected messages and reuses preparation",
       .querySelector<HTMLInputElement>('[aria-label="Select second"]')!
       .click(),
   );
+  await open();
   await click("Forward");
   expect(
     fetcher.mock.calls.some(
@@ -546,6 +583,7 @@ it("batches status requests within the existing 50-command API limit", async () 
           .length,
     ),
   ).toEqual([50, 1]);
+  await flushToasts();
   expect(host.textContent).toContain("51 messages marked as read");
 });
 
@@ -588,11 +626,13 @@ it("bulk unread and Trash use the shared path", async () => {
   expect(mutations()).toHaveLength(1);
   expect(mutations()[0][1].body).toBe('{"action":"mark_unread"}');
   await tick(3000);
+  await flushToasts();
   await key("Delete");
   expect(
     mutations().filter(([, init]) => init.body === '{"action":"trash"}'),
   ).toHaveLength(2);
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain("2 messages moved to Trash");
 });
 it("conversation selection uses loaded members, never group representatives", async () => {
@@ -704,4 +744,70 @@ it("uses the same selection-mode presentation for conversation members", async (
   expect(list.classList.contains("selection-mode")).toBe(true);
   await selectAll();
   expect(list.classList.contains("selection-mode")).toBe(false);
+});
+
+it("opens the reader in the workspace and Back or Escape returns to the same list", async () => {
+  await mount({ auto: manual });
+  const list = host.querySelector(".mail-list-pane")!;
+  expect(host.querySelector("[data-reader]")).toBeNull();
+  await open();
+  expect(list.hasAttribute("hidden")).toBe(true);
+  expect(host.querySelector(".mail-detail-pane [data-reader]")).not.toBeNull();
+  expect(host.querySelector(".reader-back")?.textContent).toContain("Back to");
+  await back();
+  expect(list.hasAttribute("hidden")).toBe(false);
+  expect(host.querySelector("[data-reader]")).toBeNull();
+  expect(host.querySelector(".mail-list-row.selected")?.textContent).toContain(
+    "first",
+  );
+  await open();
+  await key("Escape");
+  expect(list.hasAttribute("hidden")).toBe(false);
+  expect(host.querySelector("[data-reader]")).toBeNull();
+});
+it("restores the list scroll position after reading a message", async () => {
+  await mount({ auto: manual, count: 30 });
+  const rows = host.querySelector<HTMLElement>(".mail-list-pane .mail-rows")!;
+  let top = 0;
+  Object.defineProperty(rows, "scrollTop", {
+    configurable: true,
+    get: () => top,
+    set: (value: number) => {
+      top = value;
+    },
+  });
+  top = 480;
+  await act(async () => rows.dispatchEvent(new Event("scroll")));
+  await open(12);
+  // A hidden list can lose its offset; returning must restore it.
+  top = 0;
+  await back();
+  expect(top).toBe(480);
+});
+it("leaving the reader cancels a pending auto-read", async () => {
+  await mount();
+  await open();
+  await tick(1000);
+  await back();
+  await tick(3000);
+  expect(mutations()).toHaveLength(0);
+});
+it("New message and Reply replace the workspace with the composer", async () => {
+  await mount({ auto: manual });
+  const list = host.querySelector(".mail-list-pane")!;
+  await click("New message");
+  expect(
+    host.querySelector(".mail-compose-pane .mail-composer"),
+  ).not.toBeNull();
+  expect(list.hasAttribute("hidden")).toBe(true);
+  await click("All Inboxes");
+  expect(host.querySelector(".mail-composer")).toBeNull();
+  expect(list.hasAttribute("hidden")).toBe(false);
+  await open();
+  await click("Reply");
+  expect(
+    host.querySelector(".mail-compose-pane .mail-composer"),
+  ).not.toBeNull();
+  expect(host.querySelector("[data-reader]")).toBeNull();
+  expect(list.hasAttribute("hidden")).toBe(true);
 });
