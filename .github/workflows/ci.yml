@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: CI only reads the repository. No secrets are referenced.
+permissions:
+  contents: read
+
+# Supersede outdated runs of the same PR; never cancel runs on main.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # pnpm version comes from package.json "packageManager" (pnpm@12.7.0).
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      # Repository-wide format:check is deferred until the legacy Sync Engine
+      # documents are reformatted; CI configuration is checked now.
+      - name: Format check (CI configuration)
+        run: pnpm exec prettier --check .github
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Verify Docker for Testcontainers
+        run: |
+          docker version
+          docker compose version
+          docker info --format 'Server {{.ServerVersion}}, {{.NCPU}} CPUs'
+      # Pulled up front so registry latency does not consume test hook timeouts.
+      - name: Pull PostgreSQL test image
+        run: docker pull postgres:18.6-bookworm
+      - name: Verify isolated test environment
+        run: |
+          if [ -e .env ]; then echo "::error::.env must not exist in CI"; exit 1; fi
+      # Integration tests fall back to TEST_DATABASE_URL when set; removing it
+      # (and DATABASE_URL) forces disposable Testcontainers PostgreSQL.
+      - name: Run Vitest (full suite, including tests/security)
+        run: env -u DATABASE_URL -u TEST_DATABASE_URL pnpm test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # Mirrors the Dockerfile build stage: non-secret placeholders plus
+      # throwaway random keys so configuration validation passes at build time.
+      - name: Build Next.js application and worker
+        env:
+          NODE_ENV: production
+          MAILDOCK_ENV: production
+          APP_ORIGIN: https://build.invalid
+          POSTGRES_PASSWORD: build-only-placeholder
+          ATTACHMENTS_PATH: /tmp/maildock-attachments
+        run: |
+          random_key() { node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"; }
+          AUTH_SECRET="$(random_key)" \
+          CREDENTIALS_ENCRYPTION_KEY="$(random_key)" \
+          env -u DATABASE_URL -u TEST_DATABASE_URL pnpm build
