@@ -25,7 +25,34 @@ export type ConnectionFailureCategory =
   | "authentication_rejected"
   | "starttls_unavailable"
   | "verification_failed"
+  | "server_rejected"
+  | "server_unavailable"
+  | "connection_lost"
+  | "mailbox_unavailable"
   | "internal_error";
+
+/** The step of a mailbox synchronization that was running when it failed. */
+export const syncPhases = [
+  "connect",
+  "open_mailbox",
+  "search",
+  "fetch",
+  "flags",
+  "status",
+  "save",
+] as const;
+export type SyncPhase = (typeof syncPhases)[number];
+
+/**
+ * Fixed protocol tokens describing a provider failure. They never carry server
+ * response text, command arguments or exception messages.
+ */
+export type ProviderFailureDiagnostics = Readonly<{
+  phase?: SyncPhase;
+  imapStatus?: "NO" | "BAD";
+  imapResponseCode?: string;
+  errorCode?: string;
+}>;
 
 export type ProtocolConnectionResult =
   | Readonly<{ success: true }>
@@ -42,11 +69,16 @@ export type ConnectionReport = Readonly<{
 
 export class MailProviderOperationError extends Error {
   readonly category: ConnectionFailureCategory;
+  readonly diagnostics: ProviderFailureDiagnostics;
 
-  constructor(failure: Exclude<ProtocolConnectionResult, { success: true }>) {
+  constructor(
+    failure: Exclude<ProtocolConnectionResult, { success: true }>,
+    diagnostics: ProviderFailureDiagnostics = {},
+  ) {
     super(failure.message);
     this.name = "MailProviderOperationError";
     this.category = failure.category;
+    this.diagnostics = diagnostics;
   }
 }
 

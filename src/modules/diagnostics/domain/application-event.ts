@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { syncPhases } from "../../accounts/domain/mail-provider";
 
 export const eventLevels = ["info", "warning", "error"] as const;
 export const eventAreas = [
@@ -68,6 +69,10 @@ export const diagnosticDetailsSchema = z
         "authentication_rejected",
         "starttls_unavailable",
         "verification_failed",
+        "server_rejected",
+        "server_unavailable",
+        "connection_lost",
+        "mailbox_unavailable",
         "internal_error",
       ])
       .optional(),
@@ -75,6 +80,18 @@ export const diagnosticDetailsSchema = z
     uidValidity: z
       .string()
       .regex(/^\d{1,20}$/)
+      .optional(),
+    // Fixed protocol tokens only: never server response text or error messages.
+    phase: z.enum(syncPhases).optional(),
+    reason: z.enum(["idle", "poll", "manual", "post-discovery"]).optional(),
+    imapStatus: z.enum(["NO", "BAD"]).optional(),
+    imapResponseCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9-]{0,39}$/)
+      .optional(),
+    errorCode: z
+      .string()
+      .regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/)
       .optional(),
   })
   .strip();

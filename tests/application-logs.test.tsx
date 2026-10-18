@@ -66,3 +66,43 @@ it("renders human events with expandable safe technical details and filters", as
   });
   expect(fetcher.mock.calls.at(-1)![0]).toContain("level=error");
 });
+it("explains provider failures with readable step, trigger and protocol tokens", async () => {
+  await mount([
+    {
+      id: "event-b",
+      createdAt: "2026-10-18T17:45:35Z",
+      level: "error",
+      area: "sync",
+      event: "mail.sync_failed",
+      message: "Mailbox synchronization failed",
+      accountName: "Gmail",
+      accountId: "account-a",
+      mailboxId: "box-b",
+      mailboxPath: "[Gmail]/All Mail",
+      details: {
+        category: "server_unavailable",
+        mailboxPath: "[Gmail]/All Mail",
+        phase: "fetch",
+        reason: "poll",
+        imapStatus: "NO",
+        imapResponseCode: "UNAVAILABLE",
+      },
+    },
+  ]);
+  await act(async () => host.querySelector("summary")!.click());
+  const text = host.textContent!;
+  expect(text).toContain("temporarily unavailable or limiting requests");
+  const facts = Object.fromEntries(
+    [...host.querySelectorAll("dl dt")].map((term) => [
+      term.textContent,
+      term.nextElementSibling?.textContent,
+    ]),
+  );
+  expect(facts).toMatchObject({
+    Category: "server_unavailable",
+    "Failed step": "Downloading messages",
+    "Triggered by": "Scheduled check",
+    "IMAP status": "NO",
+    "IMAP response code": "UNAVAILABLE",
+  });
+});
