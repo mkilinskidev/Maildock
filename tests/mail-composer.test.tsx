@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MailComposer, sendStatusText } from "@/components/mail-composer";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import { MailClient } from "@/components/mail-client";
+import { AppToaster } from "@/components/app-toaster";
 import {
   $getRoot,
   $createParagraphNode,
@@ -926,11 +927,14 @@ describe("compose UI", () => {
       root = createRoot(host);
       await act(async () =>
         root!.render(
-          <MailClient
-            accounts={accounts.slice(0, 1)}
-            mailboxesByAccount={{}}
-            rolesByAccount={{}}
-          />,
+          <>
+            <MailClient
+              accounts={accounts.slice(0, 1)}
+              mailboxesByAccount={{}}
+              rolesByAccount={{}}
+            />
+            <AppToaster />
+          </>,
         ),
       );
       await act(async () => {
@@ -942,7 +946,10 @@ describe("compose UI", () => {
       await input("Bcc", "hidden@example.com");
       await submit();
       expect(host.querySelector("form")).toBeNull();
-      expect(host.querySelector('[role="status"]')?.textContent).toContain(
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(host.querySelector("[data-sonner-toast]")?.textContent).toContain(
         sendStatusText(status, sentCopyStatus),
       );
       expect(host.innerHTML).not.toContain("hidden@example.com");
@@ -950,9 +957,9 @@ describe("compose UI", () => {
       if (status === "sent") {
         expect(host.textContent).not.toContain("Message could not be sent");
         await act(async () => {
-          await vi.advanceTimersByTimeAsync(5100);
+          await vi.advanceTimersByTimeAsync(5600);
         });
-        expect(Boolean(host.querySelector(".send-feedback"))).toBe(
+        expect(Boolean(host.querySelector("[data-sonner-toast]"))).toBe(
           !["not_required", "saved"].includes(sentCopyStatus),
         );
       }
