@@ -117,6 +117,10 @@ describe("compose UI", () => {
     return onQueued;
   }
   async function input(label: string, value: string) {
+    const toggle = [
+      ...host.querySelectorAll<HTMLButtonElement>(".composer-copies-toggle"),
+    ].find((button) => button.textContent === label);
+    if (toggle) await act(async () => toggle.click());
     const element = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(
       `[aria-label="${label}"]`,
     )!;
@@ -433,6 +437,53 @@ describe("compose UI", () => {
     });
     expect(body).not.toHaveProperty("from");
     expect(onQueued).toHaveBeenCalledExactlyOnceWith("durable-id");
+  });
+  it("opens Cc and Bcc independently from their own buttons unless they already have recipients", async () => {
+    await render();
+    expect(host.querySelector('[aria-label="Cc"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Bcc"]')).toBeNull();
+    const toggles = () =>
+      [
+        ...host.querySelectorAll<HTMLButtonElement>(".composer-copies-toggle"),
+      ].map((button) => button.textContent);
+    expect(toggles()).toEqual(["Cc", "Bcc"]);
+    const toRow = host.querySelector('[aria-label="To"]')!.closest("label")!;
+    expect(toRow.querySelectorAll(".composer-copies-toggle")).toHaveLength(2);
+    const button = (text: string) =>
+      [
+        ...host.querySelectorAll<HTMLButtonElement>(".composer-copies-toggle"),
+      ].find((item) => item.textContent === text)!;
+    await act(async () => button("Bcc").click());
+    expect(host.querySelector('[aria-label="Cc"]')).toBeNull();
+    expect(document.activeElement).toBe(
+      host.querySelector('[aria-label="Bcc"]'),
+    );
+    expect(toggles()).toEqual(["Cc"]);
+    await act(async () => button("Cc").click());
+    expect(document.activeElement).toBe(
+      host.querySelector('[aria-label="Cc"]'),
+    );
+    expect(toggles()).toEqual([]);
+    await act(async () => root!.unmount());
+    await render(vi.fn(), {
+      accountId: "second",
+      to: "sender@example.com",
+      cc: "copy@example.com",
+      subject: "Re: Subject",
+      plainText: "",
+      attachmentsOmitted: false,
+      source: {
+        accountId: "second",
+        mailboxId: "box",
+        messageId: "message",
+        mode: "reply_all",
+      },
+    } as ComposePrefill);
+    expect(
+      host.querySelector<HTMLInputElement>('[aria-label="Cc"]')!.value,
+    ).toBe("copy@example.com");
+    expect(host.querySelector('[aria-label="Bcc"]')).toBeNull();
+    expect(toggles()).toEqual(["Bcc"]);
   });
 
   it.each(["reply", "reply_all", "forward"] as const)(
@@ -943,9 +994,16 @@ describe("compose UI", () => {
         )!;
         button.click();
       });
+      expect(host.querySelector(".mail-compose-pane form")).not.toBeNull();
+      expect(
+        host.querySelector(".mail-list-pane")!.hasAttribute("hidden"),
+      ).toBe(true);
       await input("Bcc", "hidden@example.com");
       await submit();
       expect(host.querySelector("form")).toBeNull();
+      expect(
+        host.querySelector(".mail-list-pane")!.hasAttribute("hidden"),
+      ).toBe(false);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
@@ -965,4 +1023,52 @@ describe("compose UI", () => {
       }
     },
   );
+  it("closing a composer opened from the list saves the draft and returns to the list", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async (url, init) =>
+        savedDraftResponse(url, init) ??
+        Response.json({
+          mailboxes: [],
+          roles: [],
+          items: [],
+          nextCursor: null,
+        }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(
+        <MailClient
+          accounts={accounts.slice(0, 1)}
+          mailboxesByAccount={{}}
+          rolesByAccount={{}}
+        />,
+      ),
+    );
+    const list = host.querySelector(".mail-list-pane")!;
+    await act(async () =>
+      [...host.querySelectorAll("button")]
+        .find((item) => item.textContent === "New message")!
+        .click(),
+    );
+    expect(list.hasAttribute("hidden")).toBe(true);
+    await input("To", "jan@example.com");
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Close composer"]')!
+        .click(),
+    );
+    expect(host.querySelector(".mail-composer")).toBeNull();
+    expect(list.hasAttribute("hidden")).toBe(false);
+    expect(
+      fetch.mock.calls.some(
+        ([url, init]) =>
+          String(url) === "/api/drafts" && init?.method === "POST",
+      ),
+    ).toBe(true);
+  });
 });

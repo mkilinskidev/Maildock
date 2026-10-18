@@ -766,6 +766,19 @@
   --success: #27815d;
   --warning: #9a6a1b;
   --error: #c44952;
+  --panel: rgb(255 255 255 / 0.45);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23566171' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --app-gradient:
+    radial-gradient(
+      1100px 620px at 100% 0%,
+      rgb(82 104 201 / 0.3),
+      transparent 65%
+    ),
+    radial-gradient(
+      900px 680px at 0% 100%,
+      rgb(150 110 220 / 0.24),
+      transparent 60%
+    );
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -783,6 +796,19 @@
   --success: #70c8a0;
   --warning: #e0b979;
   --error: #f58a93;
+  --panel: rgb(27 31 39 / 0.55);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b2bbc8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --app-gradient:
+    radial-gradient(
+      1200px 680px at 100% 0%,
+      rgb(155 169 255 / 0.2),
+      transparent 65%
+    ),
+    radial-gradient(
+      1000px 700px at 0% 100%,
+      rgb(120 90 220 / 0.14),
+      transparent 60%
+    );
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]),
@@ -802,6 +828,19 @@
     --success: #70c8a0;
     --warning: #e0b979;
     --error: #f58a93;
+    --panel: rgb(27 31 39 / 0.55);
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b2bbc8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --app-gradient:
+      radial-gradient(
+        1200px 680px at 100% 0%,
+        rgb(155 169 255 / 0.2),
+        transparent 65%
+      ),
+      radial-gradient(
+        1000px 700px at 0% 100%,
+        rgb(120 90 220 / 0.14),
+        transparent 60%
+      );
   }
 }
 @theme inline {
@@ -828,7 +867,8 @@ body {
 }
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--app-gradient), var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font:
     14px/1.5 Inter,
@@ -962,11 +1002,9 @@ a {
 }
 
 .mail-app {
+  --sidebar-width: clamp(190px, 18vw, 260px);
   display: grid;
-  grid-template-columns: clamp(190px, 18vw, 260px) minmax(280px, 0.85fr) minmax(
-      320px,
-      1.6fr
-    );
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-rows: 52px minmax(0, 1fr);
   height: 100dvh;
   min-height: 500px;
@@ -1832,7 +1870,7 @@ label.checkbox input {
 }
 @media (max-width: 1050px) {
   .mail-app {
-    grid-template-columns: 190px minmax(275px, 340px) minmax(0, 1fr);
+    --sidebar-width: 190px;
   }
 }
 @media (max-width: 520px) {
@@ -2133,9 +2171,9 @@ label.checkbox input {
   font-size: 12px;
 }
 
-/* Desktop mail shell: retain three panes on narrow windows with horizontal overflow. */
+/* Two-panel mail shell: below this width the page scrolls horizontally. */
 .mail-app {
-  min-width: 880px;
+  min-width: 600px;
 }
 .app-bar {
   gap: 16px;
@@ -2149,13 +2187,6 @@ label.checkbox input {
   flex: 1;
   max-width: 620px;
   margin: 0 auto;
-}
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 10px 12px;
-  font-weight: 700;
 }
 .tree-account {
   margin-top: 12px;
@@ -2224,9 +2255,6 @@ label.checkbox input {
   overflow-y: auto;
 }
 .mail-sidebar-footer {
-  flex-shrink: 0;
-}
-.sidebar-brand {
   flex-shrink: 0;
 }
 .conversation-account {
@@ -2795,4 +2823,418 @@ label.checkbox input {
 }
 .settings-account-order-feedback:empty {
   display: none;
+}
+
+/* Two-panel shell: fixed navigation, one workspace for list, reader or compose. */
+.app-bar {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  backdrop-filter: blur(12px);
+}
+.mail-sidebar {
+  background: transparent;
+}
+/* The brand sits in the top bar above the sidebar, aligned to its width. */
+.app-bar-brand {
+  display: flex;
+  flex: 0 0 calc(var(--sidebar-width) - 34px);
+  align-items: center;
+  min-width: 0;
+  padding-left: 2px;
+}
+.mail-sidebar .compose-action {
+  flex-shrink: 0;
+  width: auto;
+  min-height: 40px;
+  margin: 2px 4px 14px;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px -10px var(--accent);
+}
+.mail-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+}
+.mail-workspace > .mail-list-pane,
+.mail-workspace > .mail-detail-pane {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+.mail-list-pane {
+  container: mail-list / inline-size;
+}
+.mail-list-pane[hidden] {
+  display: none;
+}
+.mail-pane-header {
+  padding-inline: 22px;
+}
+.mail-pane-header h1 {
+  font-size: 21px;
+}
+.mail-list-pane > .mail-interaction-toolbar {
+  padding: 8px 22px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.mail-list-row {
+  border-bottom-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+.mail-list-row:hover {
+  background: color-mix(in srgb, var(--hover) 70%, transparent);
+}
+.mail-list-row.selected {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+.mail-list-row.selected:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.mail-row-text {
+  display: block;
+  min-width: 0;
+}
+.mail-row-avatar {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: hsl(var(--avatar-hue) 55% 55% / 0.22);
+  color: hsl(var(--avatar-hue) 70% 72%);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+:root[data-theme="light"] .mail-row-avatar {
+  color: hsl(var(--avatar-hue) 50% 38%);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .mail-row-avatar,
+  :root[data-theme="system"] .mail-row-avatar {
+    color: hsl(var(--avatar-hue) 50% 38%);
+  }
+}
+.mail-row-label {
+  white-space: nowrap;
+}
+/* Only unread mail is bold; read senders use the regular weight. */
+.mail-list-row:not(.unread) .mail-row-top strong {
+  font-weight: 400;
+}
+/* Contain the visually hidden row labels so they cannot extend the page. */
+.mail-list-row {
+  position: relative;
+}
+
+/* Wide workspace: one line per message, like a full-screen mail list. */
+@container mail-list (min-width: 760px) {
+  .mail-list-row:has(> .mail-row-top) {
+    display: grid;
+    grid-template-columns:
+      6px 32px minmax(140px, 220px) minmax(0, 1fr)
+      auto auto;
+    grid-template-areas: "marker avatar sender text meta time";
+    align-items: center;
+    column-gap: 14px;
+    min-height: 58px;
+    padding: 8px 22px 8px 14px;
+  }
+  .mail-list-row:has(> .mail-row-top) > .mail-row-top {
+    display: contents;
+  }
+  .mail-list-row > .mail-row-top > .mail-row-marker {
+    grid-area: marker;
+  }
+  .mail-list-row > .mail-row-top > .mail-row-avatar {
+    display: grid;
+    grid-area: avatar;
+  }
+  .mail-list-row > .mail-row-top > strong {
+    grid-area: sender;
+    font-size: 13.5px;
+  }
+  .mail-list-row > .mail-row-top > time {
+    grid-area: time;
+    min-width: 48px;
+    text-align: right;
+    font-size: 12px;
+  }
+  .mail-list-row > .mail-row-text {
+    display: flex;
+    grid-area: text;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .mail-row-text > .mail-row-subject {
+    flex: 0 1 auto;
+    max-width: 65%;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    color: var(--secondary);
+    font-size: 13.5px;
+    font-weight: 400;
+  }
+  .mail-row-text > .mail-row-snippet,
+  .mail-row-text > .search-snippet {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .mail-list-row > .mail-row-bottom {
+    grid-area: meta;
+    margin: 0;
+    padding: 0;
+  }
+  .mail-list-row > .mail-row-bottom .mail-row-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .mail-list-row.conversation-child:has(> .mail-row-top) {
+    min-height: 48px;
+    grid-template-columns:
+      6px 28px minmax(120px, 200px) minmax(0, 1fr)
+      auto auto;
+  }
+  .conversation-child .mail-row-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+  .conversation-group-header {
+    min-height: 52px;
+    padding-inline: 22px;
+    background: transparent;
+  }
+  .search-count,
+  .mail-list-status {
+    padding-inline: 22px;
+  }
+}
+
+/* Reader and composer take the whole workspace. */
+.reader-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  min-height: 56px;
+  padding: 8px 16px 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.reader-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--secondary);
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reader-back:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.reader-bar > .mail-interaction-toolbar {
+  padding: 0;
+  border: 0;
+  flex-wrap: nowrap;
+}
+.mail-detail-pane:not(.mail-reader) {
+  overflow-y: auto;
+}
+.mail-reader > .mail-detail-header {
+  max-height: 40%;
+}
+.mail-compose-pane {
+  overflow-y: auto;
+}
+/* The composer is exactly as tall as the workspace: fields at the top,
+   attachments and actions at the bottom, and the body editor scrolls between. */
+.mail-compose-pane > .mail-composer {
+  width: 100%;
+  height: 100%;
+}
+.mail-compose-pane > .mail-composer > *,
+.mail-compose-pane .composer-fields > * {
+  flex-shrink: 0;
+}
+/* Fieldset content boxes do not stretch, so its children join the form's flex. */
+.mail-compose-pane .composer-fields {
+  display: contents;
+}
+.mail-compose-pane .composer-fields > * {
+  margin-inline: 20px;
+}
+.mail-compose-pane .composer-fields > :first-child {
+  margin-top: 14px;
+}
+.mail-compose-pane .composer-fields > label + label {
+  margin-top: 8px;
+}
+.mail-compose-pane .composer-fields > .rich-toolbar {
+  margin-top: 12px;
+}
+.mail-compose-pane .composer-fields > .rich-editor-container {
+  margin-bottom: 14px;
+}
+.mail-compose-pane .composer-fields > .rich-editor-container {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 220px;
+  overflow-y: auto;
+}
+.mail-compose-pane .rich-editor {
+  flex: 1 0 auto;
+}
+@media (max-width: 760px) {
+  .app-bar-right > span {
+    display: none;
+  }
+  .reader-bar {
+    flex-wrap: wrap;
+  }
+  .mail-pane-header {
+    padding-inline: 16px;
+  }
+}
+
+/* Reader attachments: the whole badge is the download control. */
+.mail-attachment-item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  max-width: 100%;
+}
+.mail-attachments button.mail-attachment,
+.mail-attachments a.mail-attachment {
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+.mail-attachments button.mail-attachment:hover:not(:disabled),
+.mail-attachments a.mail-attachment:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+}
+.mail-attachments button.mail-attachment:disabled {
+  cursor: progress;
+}
+.mail-attachment-status {
+  color: var(--accent);
+}
+/* Preparing a download: a highlight travels around the badge border. */
+@property --attachment-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.mail-attachments button.mail-attachment.preparing {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    conic-gradient(
+        from var(--attachment-angle),
+        var(--border) 0deg,
+        var(--border) 200deg,
+        var(--accent) 300deg,
+        var(--border) 360deg
+      )
+      border-box;
+  color: var(--text);
+  opacity: 1;
+  animation: attachment-border-spin 1.1s linear infinite;
+}
+@keyframes attachment-border-spin {
+  to {
+    --attachment-angle: 360deg;
+  }
+}
+
+/* Settings share the mail shell's surfaces so the app gradient shows through. */
+.settings-shell {
+  background: transparent;
+}
+.settings-header {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  backdrop-filter: blur(12px);
+}
+.settings-nav {
+  background: transparent;
+}
+.settings-pane {
+  background: var(--panel);
+}
+
+/* One select chevron for the whole app, replacing each platform's arrow.
+   Longhands with raised specificity survive rules using the background shorthand. */
+:root select:not([multiple]):not([size]) {
+  appearance: none;
+  padding-right: 30px;
+  background-image: var(--select-chevron);
+  background-position: right 9px center;
+  background-repeat: no-repeat;
+  background-size: 15px 15px;
+  cursor: pointer;
+}
+:root .rich-toolbar select:not([multiple]):not([size]) {
+  padding-right: 24px;
+  background-position: right 5px center;
+  background-size: 13px 13px;
+}
+:root select:disabled {
+  cursor: default;
+}
+
+/* Composer: Cc and Bcc each open from their own button at the end of the To row. */
+.composer-fields label.composer-to {
+  grid-template-columns: 65px minmax(0, 1fr) auto;
+}
+.composer-copies {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+.composer-copies-toggle {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.composer-copies-toggle:hover {
+  background: var(--hover);
+  color: var(--accent);
 }
