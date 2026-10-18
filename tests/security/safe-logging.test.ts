@@ -232,6 +232,7 @@ describe("F11 every registered Maildock job handler", () => {
       let handler!: (batch: unknown[]) => Promise<unknown>;
       const boss = {
         createQueue: vi.fn(),
+        updateQueue: vi.fn(),
         findJobs: vi.fn(async () => []),
         work: vi.fn(async (_queue, _options, work) => {
           handler = work;

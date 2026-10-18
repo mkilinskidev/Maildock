@@ -5,18 +5,62 @@ import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { MessageCommandService } from "../application/message-command-service";
+import { commandBusyDelaySeconds } from "../application/inbox-first-policy";
+import {
+  enqueueDeduplicated,
+  ensureHeartbeatQueue,
+} from "./deduplicated-enqueue";
+import { MailboxBusyError } from "./mailbox-lock";
 
 export const MESSAGE_COMMAND_QUEUE = "message-command-v1";
 export async function ensureMessageCommandQueue(boss: PgBoss) {
-  await boss.createQueue(MESSAGE_COMMAND_QUEUE, {
+  await ensureHeartbeatQueue(boss, MESSAGE_COMMAND_QUEUE, {
     retryLimit: 4,
     retryDelay: 15,
     retryBackoff: true,
     expireInSeconds: 900,
   });
 }
-export async function enqueueMessageCommand(boss: PgBoss, id: string) {
-  await boss.send(MESSAGE_COMMAND_QUEUE, { commandId: id });
+const commandPayload = z
+  .object({
+    commandId: z.uuid(),
+    deferrals: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+/**
+ * The single producer path for command jobs (API, poller, busy continuation).
+ *
+ * - "request": any queued or active job suppresses the send (a dead worker's
+ *   job leaves `active` through the pg-boss heartbeat, see deduplicated-enqueue);
+ * - "continue": called by the command's own active job, so only a queued
+ *   (created/retry) job counts; at most one successor exists.
+ */
+export function enqueueMessageCommand(
+  boss: PgBoss,
+  id: string,
+  options: {
+    mode?: "request" | "continue";
+    startAfter?: number;
+    deferrals?: number;
+  } = {},
+): Promise<boolean> {
+  return enqueueDeduplicated(
+    boss,
+    MESSAGE_COMMAND_QUEUE,
+    { commandId: id },
+    {
+      commandId: id,
+      ...(options.deferrals ? { deferrals: options.deferrals } : {}),
+    },
+    {
+      singletonKey: id,
+      ignoreActive: options.mode === "continue",
+      ...(options.startAfter === undefined
+        ? {}
+        : { startAfter: options.startAfter }),
+    },
+  );
 }
 export class PgBossMessageCommandScheduler {
   private readonly boss: PgBoss;
@@ -49,11 +93,28 @@ export async function registerMessageCommandWorker(
     MESSAGE_COMMAND_QUEUE,
     { localConcurrency: 4 },
     safeJobHandler("message-command", async (batch) => {
-      const id = z
-        .object({ commandId: z.uuid() })
-        .parse(batch[0]?.data).commandId;
-      const mailboxId = await service.mailboxId(id);
-      if (mailboxId) await withLock(mailboxId, () => service.run(id));
+      const { commandId, deferrals = 0 } = commandPayload.parse(batch[0]?.data);
+      const mailboxId = await service.mailboxId(commandId);
+      if (!mailboxId) return;
+      let started = false;
+      try {
+        await withLock(mailboxId, async () => {
+          started = true;
+          await service.run(commandId);
+        });
+      } catch (error) {
+        // Busy before run() started is not an operation failure: attempts and
+        // pg-boss retry are untouched. The lock is already released, so no
+        // connection or worker slot waits; one short, jittered successor
+        // continues the same durable command. A failed send throws, which
+        // falls back to the normal pg-boss retry (work is never dropped).
+        if (started || !(error instanceof MailboxBusyError)) throw error;
+        await enqueueMessageCommand(boss, commandId, {
+          mode: "continue",
+          startAfter: commandBusyDelaySeconds(deferrals),
+          deferrals: deferrals + 1,
+        });
+      }
     }),
   );
 }
@@ -74,7 +135,8 @@ export class MessageCommandPoller {
     if (this.timer) clearInterval(this.timer);
   }
   private async poll() {
+    // Same producer path as the API: queued/retry/active jobs are not duplicated.
     for (const id of await this.service.pendingIds())
-      await enqueueMessageCommand(this.boss, id);
+      await enqueueMessageCommand(this.boss, id).catch(() => undefined);
   }
 }

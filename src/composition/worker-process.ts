@@ -47,6 +47,7 @@ async function main() {
     worker.poller.stop();
     worker.backfillPoller.stop();
     worker.commandPoller.stop();
+    worker.contentPoller.stop();
     worker.outgoingPoller.stop();
     worker.sentCopyPoller.stop();
     const errors: unknown[] = [];
@@ -106,6 +107,7 @@ async function main() {
       worker.jobs.boss,
       worker.backfill,
       worker.withMailboxLock,
+      worker.logger,
     );
     await registerContentWorker(worker.jobs.boss, worker.content);
     await registerMessageCommandWorker(
@@ -121,6 +123,7 @@ async function main() {
     await worker.poller.start();
     await worker.backfillPoller.start();
     await worker.commandPoller.start();
+    await worker.contentPoller.start();
     await worker.sentCopyPoller.start();
     await worker.watchers.start();
   }
