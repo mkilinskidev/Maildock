@@ -56,7 +56,9 @@ it("renders human events with expandable safe technical details and filters", as
   expect(host.querySelector("details")?.open).toBe(false);
   await act(async () => host.querySelector("summary")!.click());
   expect(host.querySelector("details")?.open).toBe(true);
-  expect(host.querySelector("summary")?.textContent).toBe("Technical details");
+  expect(
+    host.querySelector("summary > .application-log-heading")?.textContent,
+  ).toContain("Mailbox synchronization failed");
   const level = host.querySelector("select")!;
   await act(async () => {
     level.value = "error";
