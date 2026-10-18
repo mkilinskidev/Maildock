@@ -55,18 +55,45 @@ An explicitly empty numeric variable is invalid; either omit it or provide a val
 
 ### Runtime and synchronization tuning
 
-| Variable                               | Default | Accepted range / meaning                                                       |
-| -------------------------------------- | ------: | ------------------------------------------------------------------------------ |
-| `LOG_LEVEL`                            |  `info` | `fatal`, `error`, `warn`, `info`, `debug`, or `trace`                          |
-| `DATABASE_POOL_SIZE`                   |      10 | 1–50, per postgres-js process                                                  |
-| `WORKER_CONCURRENCY`                   |       5 | 1–50, discovery/runtime worker tuning; not a universal queue concurrency limit |
-| `MAILDOCK_INITIAL_SYNC_DAYS`           |      30 | 1–365 days in the initial recent window                                        |
-| `MAILDOCK_MESSAGE_FETCH_BATCH_SIZE`    |     150 | 10–500                                                                         |
-| `MAILDOCK_BACKFILL_CHUNK_SIZE`         |     500 | 1–5000                                                                         |
-| `MAILDOCK_MESSAGE_SYNC_CONCURRENCY`    |       2 | 1–10                                                                           |
-| `MAILDOCK_MAIL_POLL_INTERVAL_SECONDS`  |     300 | 30–3600 seconds                                                                |
-| `MAILDOCK_CONTENT_POLL_INTERVAL_MS`    |     400 | 100–2500 ms; message-reader readiness polling                                  |
-| `MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES` | 5242880 | 1 KiB–20 MiB                                                                   |
+| Variable                               | Default | Accepted range / meaning                                                                                                                                                            |
+| -------------------------------------- | ------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`                            |  `info` | `fatal`, `error`, `warn`, `info`, `debug`, or `trace`                                                                                                                               |
+| `DATABASE_POOL_SIZE`                   |      10 | 1–50, per postgres-js process                                                                                                                                                       |
+| `WORKER_CONCURRENCY`                   |       5 | 1–50. Concurrent mailbox-discovery jobs per worker process. It does not limit any other queue.                                                                                      |
+| `MAILDOCK_INITIAL_SYNC_DAYS`           |      30 | 1–365 days covered by a mailbox's initial recent synchronization                                                                                                                    |
+| `MAILDOCK_MESSAGE_FETCH_BATCH_SIZE`    |     150 | 10–500. UIDs per FETCH batch in recent and delta synchronization. The first batch of an initial recent sync is capped at 25.                                                        |
+| `MAILDOCK_BACKFILL_CHUNK_SIZE`         |     500 | 1–5000. UIDs covered by one historical backfill job. The job commits internal sub-ranges of at most 100 UIDs, so a larger value means fewer, longer jobs, not larger FETCH batches. |
+| `MAILDOCK_MESSAGE_SYNC_CONCURRENCY`    |       2 | 1–10. Concurrency of the recent-sync worker and of the delta-sync worker, each per worker process. See below.                                                                       |
+| `MAILDOCK_MAIL_POLL_INTERVAL_SECONDS`  |     300 | 30–3600 seconds. Interval of the delta-sync fallback poller for all eligible mailboxes; IDLE notifications for the Inbox are independent of it.                                     |
+| `MAILDOCK_CONTENT_POLL_INTERVAL_MS`    |     400 | 100–2500 ms. Initial interval at which the message reader polls for a requested body; it backs off up to 2500 ms for slow fetches. Browser-side only, it does not affect workers.   |
+| `MAILDOCK_MAX_MESSAGE_TEXT_PART_BYTES` | 5242880 | 1 KiB–20 MiB                                                                                                                                                                        |
+
+`MAILDOCK_MESSAGE_SYNC_CONCURRENCY` sets the slot count of the recent-sync worker and of the delta-sync worker separately, so the process may run up to that many recent and that many delta jobs at once. Work for one mailbox is still serialized by the mailbox lock, and each additional slot can open an additional IMAP connection to the provider; many providers limit simultaneous connections.
+
+**Reserved Inbox delta capacity** is derived from this value, not configured separately. When it is 2 or more, one delta slot accepts only Inbox jobs and the others accept any delta job. With a value of 1 there is no reserved slot. Recent sync has no reserved slot.
+
+### Internal constants (not configurable)
+
+These values are fixed in the code. There are no environment variables for them, and Maildock does not support overriding them.
+
+| Behavior                                       | Value                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Backfill worker concurrency                    | 1 job per worker process                                                             |
+| Backfill sub-range size                        | 100 UIDs (never more than `MAILDOCK_BACKFILL_CHUNK_SIZE`)                            |
+| Message content fetch concurrency              | 2 jobs per worker process                                                            |
+| Attachment fetch concurrency                   | 2 jobs per worker process                                                            |
+| Message command concurrency                    | 4 jobs per worker process                                                            |
+| IMAP/SMTP connection and greeting timeout      | 10 s                                                                                 |
+| IMAP/SMTP socket inactivity timeout            | 15 s (6 min for IDLE connections, which renew IDLE every 4 min)                      |
+| Job expiration                                 | 900 s (mailbox discovery: 120 s)                                                     |
+| Job heartbeat (commands, content, attachments) | 90 s                                                                                 |
+| Retries                                        | 4 for discovery, sync, command and content jobs; none for attachment jobs            |
+| Yield delays                                   | 5 s (recent/delta), 10 s (backfill)                                                  |
+| Recovery poller intervals                      | Inbox initial-recent repair 30 s; backfill 60 s; commands, content, attachments 30 s |
+| Admission staleness bounds                     | ready but unclaimed 120 s; pending command 10 min; active job 15 min                 |
+| Initial Inbox protection                       | other folders defer initial recent sync for up to 60 s after Inbox discovery         |
+
+Size limits for attachments and MIME are configurable and listed below.
 
 ### Attachment and MIME limits
 

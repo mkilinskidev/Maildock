@@ -20,6 +20,8 @@ One installation has one immutable owner. There is no public registration. First
 
 There is no email-based forgotten-owner-password reset and the bootstrap secret cannot replace an existing owner.
 
+Bootstrap coordination uses the singleton `instance_state` row: only a SHA-256 digest and lease expiry are persisted. Web processes serialize issuance/renewal using a row lock and PostgreSQL time. Setup rechecks the credential under the same lock before creating the owner and stops credential rotation in the owner transaction; verified initial MFA clears the remaining digest in its completion transaction. Plaintext appears only in the deliberate bootstrap log message.
+
 ## Request and deployment boundaries
 
 State-changing owner APIs enforce authenticated owner access and the canonical Origin/CSRF boundary. Authentication admission controls are persisted in PostgreSQL and do not trust forwarded client-IP headers as identity.
@@ -34,7 +36,17 @@ Mail passwords, OAuth provider secrets and durable OAuth authorization state are
 
 ## Untrusted mail
 
-Received HTML is sanitized server-side and rendered in a sandboxed iframe with CSP. Remote images are blocked by default. Message bodies, request bodies and attachments are bounded; verified blob reads use stored metadata where required.
+### HTML isolation
+
+Received HTML is sanitized server-side and rendered in an iframe whose `sandbox` allows only popups (no scripts, forms or same-origin access) and whose document carries its own Content-Security-Policy: no scripts, objects, frames, connections, fonts or media, and no form submission. The frame sends no referrer. Message bodies and request bodies are size-bounded.
+
+### Remote content
+
+Remote images are blocked by default. They load only when the owner asks to load them for a message or has trusted the sender. Once allowed, the owner's browser fetches the image directly from the sender's server, so the sender can learn that the message was opened and the browser's IP address. Maildock does not proxy remote content. Keep the trusted-sender list short.
+
+### Attachments
+
+Incoming attachment binaries are fetched on demand, bounded by `MAILDOCK_MAX_ATTACHMENT_BYTES`, and stored as verified blobs outside PostgreSQL. Downloads require owner authentication and are served as `application/octet-stream` with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and a sandboxing CSP, so attachments are never rendered in the Maildock origin. Inline (CID) images are served only when they are referenced by the message and verified to be a safe raster image type. Maildock does not scan attachments for malware; treat downloaded files as untrusted.
 
 ## Remote effects and recovery
 
@@ -46,10 +58,12 @@ A database restore can revive old sessions, recovery codes and queued remote wor
 
 Operational logs are structured. Sensitive boundaries use fixed/allowlisted diagnostics rather than arbitrary dependency error objects. Do not log mail bodies, passwords, OAuth codes/tokens, TOTP material, recovery codes, database URLs or encryption keys.
 
-## Validation status
+## Limitations and operator responsibilities
 
-The initial white-box review produced twelve finding groups and all remediation items from that pass are closed in the current codebase. Dedicated security regression tests remain in `tests/security`.
+- Maildock has not been independently certified or externally audited, and this documentation makes no claim that it is free of vulnerabilities. Security regression tests in `tests/security` guard the boundaries described here; they are not a substitute for review.
+- Host and container administrators, and anyone with access to the application database role or its credentials, are outside the browser authentication boundary.
+- Operators are responsible for HTTPS and ingress, host patching, container image updates, private PostgreSQL networking, protecting `.env` and the key material, backups of the complete matched recovery set, and bounded log retention.
+- Mail providers remain authoritative and can change or delete mail independently; remote effects cannot be exactly-once and uncertain outcomes are surfaced rather than retried blindly.
+- Dependency patches are part of the supported build; see [Dependency patches](DEPENDENCY_PATCHES.md).
 
-This is not yet final V1 security sign-off. A second review of the remediated system, dependency/container/deployment checks and staging black-box validation remain release-gate work. Historical finding reports are available through Git history rather than the current operator documentation.
-
-Bootstrap coordination uses the singleton `instance_state` row: only a SHA-256 digest and lease expiry are persisted. Web processes serialize issuance/renewal using a row lock and PostgreSQL time. Setup rechecks the credential under the same lock before creating the owner and stops credential rotation in the owner transaction; verified initial MFA clears the remaining digest in its completion transaction. Plaintext appears only in the deliberate bootstrap log message.
+Report vulnerabilities as described in the repository [security policy](../SECURITY.md).

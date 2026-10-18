@@ -10,4 +10,4 @@ Do not publish credentials, mail content, tokens, recovery codes, private deploy
 
 If private vulnerability reporting is enabled for this repository, use it. Otherwise open a minimal issue asking for a private contact method without including sensitive technical details.
 
-The V1 candidate has completed its first white-box remediation pass. Final release security validation is still in progress.
+Maildock has not been independently certified or externally audited. See [Limitations and operator responsibilities](docs/SECURITY.md#limitations-and-operator-responsibilities) for what the project does and does not claim.
