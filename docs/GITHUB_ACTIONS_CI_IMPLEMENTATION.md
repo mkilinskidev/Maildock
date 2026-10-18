@@ -138,4 +138,4 @@ then runs CI once more on `main`.
 
 - Branch: `codex/v1-github-actions-ci`
 - Base: `d61bbb2b5ae140a4dd7cf786d5ef43826b175d28`
-- Implementation commit: recorded in a follow-up commit.
+- Implementation commit: `fca6b7713538b91af41d5ac6b27f1884dc933e69`
