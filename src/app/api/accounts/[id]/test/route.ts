@@ -16,10 +16,12 @@ export async function POST(
     if (denied) return denied;
     // An empty request tests the saved credentials; JSON supplies overrides.
     // `request.body` is a stream even for bodyless POSTs, so check the text.
-    const text = await request.text();
-    const unsupported = text ? requireJsonMediaType(request) : null;
+    const unsupported = (await request.clone().text())
+      ? requireJsonMediaType(request)
+      : null;
     if (unsupported) return unsupported;
     try {
+      const text = await request.text();
       const input = text ? JSON.parse(text) : undefined;
       return Response.json({
         result: await accountsService.testExisting(
