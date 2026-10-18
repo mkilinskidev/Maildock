@@ -447,7 +447,7 @@ describe("Phase 1C metadata normalization", () => {
       },
     );
     expect(result).toEqual({ uidValidity: "77", messageCount: 5 });
-    expect(ranges).toEqual(["1,2", "3,4", "5"]);
+    expect(ranges).toEqual(["5,4", "3,2", "1"]);
     expect(batches).toEqual([2, 2, 1]);
     expect(fetchQueries).toEqual(
       Array(3).fill({

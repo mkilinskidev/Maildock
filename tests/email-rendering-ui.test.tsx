@@ -65,6 +65,46 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe("received email reader", () => {
+  it("shows ready HTML immediately and stops polling a previous message", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: { url: string; signal: AbortSignal }[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit) => {
+          calls.push({ url, signal: init.signal as AbortSignal });
+          return Response.json({
+            document: `<p>${url}</p>`,
+            blocked: false,
+            pending: true,
+            inlineFailures: 0,
+          });
+        }),
+      );
+      await mount(<Reader value={detail} />);
+      // HTML is visible while inline images are still pending.
+      expect(host.querySelector("iframe")?.srcdoc).toContain("/message-a/");
+      expect(host.textContent).toContain("Preparing inline images");
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+      const before = calls.filter((c) => c.url.includes("message-a")).length;
+      expect(before).toBeGreaterThan(1);
+      await act(async () =>
+        root!.render(<Reader value={{ ...detail, id: "message-b" }} />),
+      );
+      expect(
+        calls
+          .filter((c) => c.url.includes("message-a"))
+          .every((c) => c.signal.aborted),
+      ).toBe(true);
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(calls.filter((c) => c.url.includes("message-a"))).toHaveLength(
+        before,
+      );
+      expect(calls.some((c) => c.url.includes("message-b"))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("gives both inline status notices the same reader spacing class", async () => {
     vi.stubGlobal(
       "fetch",

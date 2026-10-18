@@ -75,13 +75,22 @@ describe("Phase 1G job priority", () => {
       ) => {
         handler = callback;
       },
-      findJobs: async (name: string) => (name === queued ? [{}] : []),
+      getDb: () => ({
+        executeSql: async () => ({ rows: [] }),
+        beginTransaction: async () => ({
+          db: { executeSql: async () => ({ rows: [] }) },
+          commit: async () => {},
+          rollback: async () => {},
+        }),
+      }),
+      findJobs: async (name: string, options: { key: string }) =>
+        name === queued && options.key === mailboxId ? [{}] : [],
       send: async () => "job",
     } as unknown as PgBoss;
     const service = {
       run: async () => {
         entered = true;
-        return null;
+        return { outcome: "completed" };
       },
     } as unknown as BackfillSyncService;
     await registerBackfillWorker(boss, service, async (_id, work) => {

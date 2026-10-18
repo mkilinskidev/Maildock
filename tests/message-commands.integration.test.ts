@@ -14,7 +14,10 @@ import type {
 import { MailProviderOperationError } from "@/modules/accounts/domain/mail-provider";
 import { MessageCommandService } from "@/modules/mail/application/message-command-service";
 import { MailboxRoleService } from "@/modules/mail/application/mailbox-role-service";
-import { createMailboxLock } from "@/modules/mail/infrastructure/mailbox-lock";
+import {
+  createMailboxLock,
+  MailboxBusyError,
+} from "@/modules/mail/infrastructure/mailbox-lock";
 import { AesGcmSecretEncryption } from "@/shared/infrastructure/crypto/aes-gcm-secret-encryption";
 import { parseConfig } from "@/shared/infrastructure/config/config";
 import { createDatabase } from "@/shared/infrastructure/database/database";
@@ -417,6 +420,73 @@ describe("durable message commands", () => {
     await service.run(created.id);
     expect((await command(created.id)).status).toBe("failed");
     expect((await placement())?.actionHidden).toBe(false);
+  });
+  it("keeps the acknowledged flag change when post-ack reconciliation fails (12)", async () => {
+    const created = await service.create(
+      accountId,
+      sourceId,
+      messageId,
+      "mark_read",
+    );
+    const failing = new MessageCommandService(
+      database.db,
+      async () => {},
+      async () => {
+        throw new Error("teardown failed");
+      },
+      service["accounts"],
+      service["provider"],
+    );
+    await failing.run(created.id);
+    expect(await command(created.id)).toMatchObject({ status: "succeeded" });
+    expect((await placement())?.flags).toContain("\\Seen");
+    expect(calls).toEqual(["mark_read"]);
+    await failing.run(created.id); // replay is a no-op
+    expect(calls).toEqual(["mark_read"]);
+  });
+  it("runs parallel commands of one mailbox one at a time with no duplicate mutation (15)", async () => {
+    const otherMessage = randomUUID();
+    const now = new Date();
+    await database.db
+      .insert(messages)
+      .values({ id: otherMessage, accountId, internalDate: now, size: 1n });
+    await database.db.insert(mailboxMessages).values({
+      id: randomUUID(),
+      mailboxId: sourceId,
+      messageId: otherMessage,
+      uidValidity: 7n,
+      uid: 43n,
+      flags: [],
+      firstSynchronizedAt: now,
+      lastSynchronizedAt: now,
+    });
+    const first = await service.create(accountId, sourceId, messageId, "flag");
+    const second = await service.create(
+      accountId,
+      sourceId,
+      otherMessage,
+      "mark_read",
+    );
+    const results = await Promise.allSettled([
+      lock(sourceId, () => service.run(first.id)),
+      lock(sourceId, () => service.run(second.id)),
+    ]);
+    // The loser reports busy before run started; it is safe to repeat.
+    const busy = results.filter((r) => r.status === "rejected");
+    for (const result of busy)
+      expect((result as PromiseRejectedResult).reason).toBeInstanceOf(
+        MailboxBusyError,
+      );
+    for (const id of [first.id, second.id]) {
+      const row = await command(id);
+      if (row.status === "pending") {
+        expect(row.attempts).toBe(0);
+        await lock(sourceId, () => service.run(id));
+      }
+    }
+    expect((await command(first.id)).status).toBe("succeeded");
+    expect((await command(second.id)).status).toBe("succeeded");
+    expect([...calls].sort()).toEqual(["flag", "mark_read"]);
   });
   it("shares the mailbox advisory lock with synchronization", async () => {
     let release!: () => void;

@@ -31,9 +31,24 @@ const logger = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 function databaseRows<T>(rows: T[]): Database {
   const chain = {
     innerJoin: () => chain,
-    where: async () => rows,
+    where: () =>
+      Object.assign(Promise.resolve(rows), { orderBy: async () => [] }),
   };
   return { select: () => ({ from: () => chain }) } as unknown as Database;
+}
+
+// Each poll reads initial-recent rows first (none here), then delta rows.
+function pollerRows<T>(rows: T[]): Database {
+  let calls = 0;
+  const chain = () => {
+    const result = calls++ % 2 === 0 ? [] : rows;
+    const value = {
+      innerJoin: () => value,
+      where: () => ({ orderBy: async () => result }),
+    };
+    return value;
+  };
+  return { select: () => ({ from: chain }) } as unknown as Database;
 }
 
 function boss() {
@@ -186,7 +201,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
   it("polls initialized eligible mailboxes and coalesces pending jobs", async () => {
     const jobs = boss();
     const poller = new DeltaPoller(
-      databaseRows([{ accountId, mailboxId }]),
+      pollerRows([{ accountId, mailboxId }]),
       jobs.value,
       60,
     );
@@ -211,6 +226,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
     >();
     const jobs = {
       createQueue: async () => undefined,
+      getDb: () => ({ executeSql: async () => ({ rows: [] }) }),
       work: async (
         name: string,
         _options: unknown,
@@ -225,6 +241,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       await work();
     };
     const recent = {
+      shouldDeferInitialRecent: async () => false,
       runRecentSync: vi.fn(async () => undefined),
     } as unknown as MessageService;
     const delta = {

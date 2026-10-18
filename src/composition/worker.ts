@@ -17,7 +17,7 @@ import { ImapSmtpMailProvider } from "../modules/accounts/infrastructure/imap-sm
 import { MailboxService } from "../modules/mail/application/mailbox-service.js";
 import { MailboxDiscoveryService } from "../modules/mail/application/mailbox-discovery-service.js";
 import { MessageService } from "../modules/mail/application/message-service.js";
-import { MAILBOX_RECENT_SYNC_QUEUE } from "../modules/mail/infrastructure/recent-sync-jobs.js";
+import { enqueueRecent } from "../modules/mail/infrastructure/recent-sync-jobs.js";
 import { MessageContentService } from "../modules/mail/application/message-content-service.js";
 import { DeltaSyncService } from "../modules/mail/application/delta-sync-service.js";
 import { DeltaPoller } from "../modules/mail/infrastructure/delta-sync-jobs.js";
@@ -46,6 +46,8 @@ import {
   enqueueMessageCommand,
 } from "../modules/mail/infrastructure/message-command-jobs.js";
 
+import { ContentRepairPoller } from "../modules/mail/infrastructure/content-jobs.js";
+
 export function createWorkerComposition() {
   const config = getConfig();
   const logger = createLogger(config);
@@ -68,11 +70,7 @@ export function createWorkerComposition() {
   const jobs = new JobRuntime(config, logger);
   const recentSyncScheduler = {
     schedule: async (accountId: string, mailboxId: string) =>
-      (await jobs.boss.send(
-        MAILBOX_RECENT_SYNC_QUEUE,
-        { version: 1, accountId, mailboxId },
-        { singletonKey: mailboxId, priority: 10 },
-      )) !== null,
+      enqueueRecent(jobs.boss, accountId, mailboxId),
   };
   const messages = new MessageService(
     database.db,
@@ -129,12 +127,21 @@ export function createWorkerComposition() {
   );
   const commands = new MessageCommandService(
     database.db,
-    (id) => enqueueMessageCommand(jobs.boss, id),
+    async (id) => {
+      await enqueueMessageCommand(jobs.boss, id);
+    },
     async (accountId, mailboxId) => {
       await enqueueDelta(jobs.boss, accountId, mailboxId, "manual");
     },
     accounts,
     provider,
+  );
+  const content = new MessageContentService(
+    database.db,
+    undefined,
+    accounts,
+    provider,
+    config,
   );
   return {
     events,
@@ -171,6 +178,7 @@ export function createWorkerComposition() {
       provider,
       messages,
       config.backfillChunkSize,
+      logger,
     ),
     backfillPoller: new BackfillPoller(database.db, jobs.boss),
     watchers: new IdleWatcherManager(database.db, accounts, jobs.boss, logger),
@@ -182,12 +190,7 @@ export function createWorkerComposition() {
       messages,
     ),
     messages,
-    content: new MessageContentService(
-      database.db,
-      undefined,
-      accounts,
-      provider,
-      config,
-    ),
+    content,
+    contentPoller: new ContentRepairPoller(jobs.boss, content),
   };
 }

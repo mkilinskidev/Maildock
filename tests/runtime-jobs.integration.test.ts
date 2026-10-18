@@ -6,6 +6,8 @@ import {
 } from "testcontainers";
 import { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { createDatabase } from "@/shared/infrastructure/database/database";
 import { fetchNextJob } from "../node_modules/pg-boss/dist/plans.js";
 import {
   enqueueDelta,
@@ -35,6 +37,13 @@ describe("Phase 3G.3 real PostgreSQL queue reliability", () => {
       )
       .start();
     const connectionString = `postgresql://test:test@${container.getHost()}:${container.getMappedPort(5432)}/reliability`;
+    // Producers derive INBOX-first priority from the application schema.
+    const database = createDatabase({
+      databaseUrl: connectionString,
+      databasePoolSize: 1,
+    });
+    await migrate(database.db, { migrationsFolder: "db/migrations" });
+    await database.client.end();
     boss = new PgBoss({ connectionString });
     producer = new PgBoss({ connectionString });
     await boss.start();

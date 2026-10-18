@@ -6,8 +6,6 @@ Maildock is a single-owner, self-hosted web mail client for managing multiple em
 
 It keeps a local PostgreSQL read model for fast browsing and search while IMAP/SMTP providers remain authoritative for mail. Maildock supports standard IMAP/SMTP accounts plus OAuth for Microsoft and Google accounts, durable background synchronization and sending, attachments, local drafts, conversations, rich HTML mail, signatures, search, notifications, and account diagnostics.
 
-> **Release status:** the V1 feature set is frozen and the first security-remediation pass is complete. Final release validation is still in progress; do not treat the current branch as a published stable release yet.
-
 ## Quick start for local evaluation
 
 You need Docker with Docker Compose.
@@ -66,12 +64,10 @@ For a real server, do not use the development override. Read [Installation & dep
 - [OAuth providers](docs/OAUTH.md) — Microsoft and Google application setup.
 - [Backup & recovery](docs/BACKUP_AND_RECOVERY.md) — the supported matched backup set, restore procedure, post-restore security maintenance.
 - [Security model](docs/SECURITY.md) — owner authentication, mandatory MFA, credential protection, network and content boundaries.
-- [Architecture](docs/ARCHITECTURE.md) — current V1 system design and data/identity rules.
-- [Development](docs/DEVELOPMENT.md) — local toolchain, commands, tests and repository structure.
+- [Architecture](docs/ARCHITECTURE.md) — system design, synchronization scheduling, job recovery and data/identity rules.
+- [Development](docs/DEVELOPMENT.md) — local toolchain, validation commands, CI and repository structure.
 - [Dependency patches](docs/DEPENDENCY_PATCHES.md) — why Maildock carries pinned package patches.
 - [Architecture Decision Records](docs/adr/README.md) — durable design decisions.
-
-Security-development reports and phase-by-phase implementation notes were intentionally removed from the current documentation surface. Their history remains available in Git; the files above describe the product as it exists now.
 
 ## Production shape
 
@@ -94,7 +90,7 @@ Maildock app  ---> IMAP / SMTP providers
 
 The base `docker-compose.yml` publishes neither the app nor PostgreSQL on the host. Production requires HTTPS at the canonical `APP_ORIGIN` and a private path from ingress to the app. PostgreSQL must not be Internet-accessible.
 
-The application image starts migrations, the web process, and the background worker. The same image can run only `web` or `worker` with `MAILDOCK_ROLE` in custom deployments, but the base V1 stack runs both together.
+The application image starts migrations, the web process, and the background worker. The same image can run only `web` or `worker` with `MAILDOCK_ROLE` in custom deployments, but the base stack runs both together.
 
 ## Core characteristics
 
@@ -102,7 +98,7 @@ The application image starts migrations, the web process, and the background wor
 - Mandatory TOTP MFA with recovery codes.
 - Multiple IMAP/SMTP accounts with encrypted passwords/tokens.
 - Microsoft 365 / Outlook.com and Gmail / Google Workspace OAuth through the same IMAP/SMTP mail pipeline.
-- Progressive synchronization: recent mail first, historical metadata backfill afterwards, incremental synchronization prioritized over backfill.
+- Progressive synchronization: recent mail first, historical metadata backfill afterwards, with Inbox and user actions prioritized over background work (see [Synchronization overview](#synchronization-overview)).
 - PostgreSQL-backed durable jobs through pg-boss.
 - Local full-text search across synchronized mail.
 - Durable message actions and outgoing mail with explicit uncertainty handling.
@@ -110,6 +106,18 @@ The application image starts migrations, the web process, and the background wor
 - Rich received HTML isolated in a sandboxed iframe; remote images are blocked by default.
 - Rich compose, signatures, local drafts, conversation view, desktop notifications and diagnostics.
 - Structured operational logs with secret-safe diagnostic boundaries.
+
+## Synchronization overview
+
+Ordinary browsing and search read from the local PostgreSQL copy, not from the provider. Synchronization keeps that copy current:
+
+- **Inbox first.** When an account is added, Maildock discovers its folders and synchronizes the Inbox first. Other folders wait briefly for the Inbox's first attempt (bounded to one minute), then synchronize their recent window. Afterwards, new mail in the Inbox is picked up through IMAP IDLE notifications where the server supports them, with periodic polling as a fallback. Other folders are checked by polling.
+- **Your actions come first.** Actions such as move, archive, delete and flag changes are stored durably and shown immediately in the interface. Background synchronization of the same folder steps aside until the action has been sent to the provider.
+- **Older mail in the background.** After the recent window, Maildock gradually downloads older message metadata in small committed steps. This work yields to newer mail, user actions and message or attachment downloads, so it can be delayed while other work continues. A synchronization step that has already started is not interrupted; older-mail work pauses only between steps.
+- **Opening messages and attachments.** Message bodies and attachments are downloaded when needed. Requests from the interface are handled separately from folder synchronization, and background history yields to them for the same account.
+- **Recovery.** Progress is stored in PostgreSQL. After a restart, crash or lost job, periodic recovery checks re-queue unfinished work and background synchronization continues from the last committed position. Actions whose outcome at the provider is uncertain, such as a move interrupted mid-flight, are reconciled rather than repeated blindly.
+
+These priorities govern when work is admitted; they are not a strict global ordering and do not promise any particular delivery latency. Details are in [Architecture](docs/ARCHITECTURE.md#synchronization).
 
 ## Health endpoints
 

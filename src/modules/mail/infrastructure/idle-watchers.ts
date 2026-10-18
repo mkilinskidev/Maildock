@@ -11,6 +11,7 @@ import {
   mailboxes,
 } from "../../../shared/infrastructure/database/schema";
 import { enqueueDelta } from "./delta-sync-jobs";
+import { isInboxPath } from "../application/inbox-first-policy";
 
 type Watch = { stop(): void };
 export function idleReconnectDelay(backoff: number, random: number): number {
@@ -80,8 +81,7 @@ export class IdleWatcherManager {
         );
       const inboxes = eligible.filter(
         (row) =>
-          row.remotePath.toUpperCase() === "INBOX" &&
-          row.capabilities.includes("IDLE"),
+          isInboxPath(row.remotePath) && row.capabilities.includes("IDLE"),
       );
       const desired = new Set(inboxes.map((row) => row.mailboxId));
       for (const [id, watch] of this.watches)

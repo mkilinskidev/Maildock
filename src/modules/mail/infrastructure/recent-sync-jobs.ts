@@ -7,8 +7,13 @@ import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
 import type { MessageService } from "../application/message-service";
 import type { RecentSyncScheduler } from "../application/recent-sync-scheduler";
+import { recentSyncPriority } from "../application/initial-inbox-sync";
+import { FRESH_DEFER_SECONDS } from "../application/inbox-first-policy";
+import { MailboxBusyError } from "./mailbox-lock";
+import { higherPriorityWorkWaiting } from "./sync-admission";
+import { MAILBOX_RECENT_SYNC_QUEUE } from "./sync-queues";
 
-export const MAILBOX_RECENT_SYNC_QUEUE = "mailbox-recent-sync-v1";
+export { MAILBOX_RECENT_SYNC_QUEUE };
 
 export const recentSyncPayloadSchema = z
   .object({
@@ -27,6 +32,63 @@ async function ensureQueue(boss: PgBoss): Promise<void> {
     retryDelayMax: 15 * 60,
     expireInSeconds: 15 * 60,
   });
+}
+
+/** All recent producers use this transaction, including deferred successors and repair. */
+export async function enqueueRecent(
+  boss: PgBoss,
+  accountId: string,
+  mailboxId: string,
+  mode: "request" | "defer" | "repair" = "request",
+): Promise<boolean> {
+  const db = boss.getDb();
+  if (!db.beginTransaction)
+    throw new Error("Recent enqueue requires transactions.");
+  const tx = await db.beginTransaction();
+  try {
+    await tx.db.executeSql(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`maildock-sync-enqueue:${MAILBOX_RECENT_SYNC_QUEUE}:${mailboxId}`],
+    );
+    const jobs = await boss.findJobs(MAILBOX_RECENT_SYNC_QUEUE, {
+      key: mailboxId,
+      db: tx.db,
+    });
+    if (
+      jobs.some(
+        (job) =>
+          job.state === "created" ||
+          job.state === "retry" ||
+          (mode === "repair" && job.state === "active"),
+      )
+    ) {
+      await tx.commit();
+      return false;
+    }
+    const { rows } = await tx.db.executeSql(
+      "SELECT remote_path FROM mailboxes WHERE id = $1 AND account_id = $2",
+      [mailboxId, accountId],
+    );
+    const mailbox = rows[0] as { remote_path: string } | undefined;
+    if (!mailbox)
+      throw new Error("Recent mailbox does not exist for this account.");
+    const id = await boss.send(
+      MAILBOX_RECENT_SYNC_QUEUE,
+      { version: 1, accountId, mailboxId },
+      {
+        singletonKey: mailboxId,
+        priority: recentSyncPriority(mailbox.remote_path),
+        ...(mode === "defer" ? { startAfter: FRESH_DEFER_SECONDS } : {}),
+        db: tx.db,
+      },
+    );
+    if (!id) throw new Error("Recent enqueue did not create a durable job.");
+    await tx.commit();
+    return true;
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
 }
 
 export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
@@ -53,12 +115,7 @@ export class PgBossRecentSyncScheduler implements RecentSyncScheduler {
 
   async schedule(accountId: string, mailboxId: string): Promise<boolean> {
     await this.start();
-    const id = await this.boss.send(
-      MAILBOX_RECENT_SYNC_QUEUE,
-      { version: 1, accountId, mailboxId },
-      { singletonKey: mailboxId, priority: 10 },
-    );
-    return id !== null;
+    return enqueueRecent(this.boss, accountId, mailboxId);
   }
 }
 
@@ -79,9 +136,45 @@ export async function registerRecentSyncWorker(
       const job = batch[0];
       if (!job) throw new Error("Recent sync received an empty batch.");
       const payload = recentSyncPayloadSchema.parse(job.data);
-      await withLock(payload.mailboxId, () =>
-        service.runRecentSync(payload.accountId, payload.mailboxId),
-      );
+      const successor = async () => {
+        // Commit a successor before acknowledging this job. Failed send throws,
+        // preserving pg-boss retry; repair also covers a crash between these steps.
+        await enqueueRecent(
+          boss,
+          payload.accountId,
+          payload.mailboxId,
+          "defer",
+        );
+      };
+      const defer = async () => {
+        if (
+          !(await service.shouldDeferInitialRecent(
+            payload.accountId,
+            payload.mailboxId,
+          )) &&
+          !(await higherPriorityWorkWaiting(
+            boss,
+            payload.accountId,
+            payload.mailboxId,
+            "fresh",
+          ))
+        )
+          return false;
+        await successor();
+        return true;
+      };
+      if (await defer()) return;
+      try {
+        await withLock(payload.mailboxId, async () => {
+          if (await defer()) return;
+          await service.runRecentSync(payload.accountId, payload.mailboxId);
+        });
+      } catch (error) {
+        // Busy is not a sync failure: nothing ran. Requeue shortly instead of
+        // consuming exponential retry; the lock holder finishes first.
+        if (!(error instanceof MailboxBusyError)) throw error;
+        await successor();
+      }
     }),
   );
 }

@@ -4,18 +4,29 @@ import { safeJobHandler } from "../../../shared/infrastructure/logging/diagnosti
 import { PgBoss } from "pg-boss";
 import { z } from "zod";
 import type { AppConfig } from "../../../shared/infrastructure/config/config";
+import {
+  enqueueDeduplicated,
+  ensureHeartbeatQueue,
+} from "./deduplicated-enqueue";
 import type { AttachmentService } from "../application/attachment-service";
 
 export const ATTACHMENT_QUEUE = "attachment-fetch-v1";
 export const attachmentJob = z.object({ attachmentId: z.uuid() }).strict();
 export async function ensureAttachmentQueue(boss: PgBoss) {
-  await boss.createQueue(ATTACHMENT_QUEUE, {
+  await ensureHeartbeatQueue(boss, ATTACHMENT_QUEUE, {
     retryLimit: 0,
     expireInSeconds: 900,
   });
 }
+/** Request and repair share this path: a queued or active job for the attachment suppresses the send. */
 export async function enqueueAttachment(boss: PgBoss, id: string) {
-  await boss.send(ATTACHMENT_QUEUE, { attachmentId: id }, { singletonKey: id });
+  await enqueueDeduplicated(
+    boss,
+    ATTACHMENT_QUEUE,
+    { attachmentId: id },
+    { attachmentId: id },
+    { singletonKey: id },
+  );
 }
 export class PgBossAttachmentScheduler {
   private readonly boss: PgBoss;

@@ -2,6 +2,14 @@ import type { createWorkerDatabase } from "../../../shared/infrastructure/databa
 
 type DatabaseClient = ReturnType<typeof createWorkerDatabase>["client"];
 
+/** The lock was held elsewhere; the callback did not start. */
+export class MailboxBusyError extends Error {
+  constructor() {
+    super("Mailbox sync is already running.");
+    this.name = "MailboxBusyError";
+  }
+}
+
 export function createMailboxLock(client: DatabaseClient) {
   return async (
     mailboxId: string,
@@ -12,8 +20,7 @@ export function createMailboxLock(client: DatabaseClient) {
       const result = await connection<
         { acquired: boolean }[]
       >`select pg_try_advisory_lock(hashtextextended(${`mailbox-sync:${mailboxId}`}, 0)) as acquired`;
-      if (!result[0]?.acquired)
-        throw new Error("Mailbox sync is already running.");
+      if (!result[0]?.acquired) throw new MailboxBusyError();
       try {
         await work();
       } finally {

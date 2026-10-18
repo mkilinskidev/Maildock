@@ -13,6 +13,7 @@ import { OAuthAuthorizationError } from "../../accounts/domain/oauth-mail-provid
 import { mailAccounts } from "../../../shared/infrastructure/database/schema";
 import type { MailboxService } from "./mailbox-service";
 import type { MessageService } from "./message-service";
+import { isInboxPath } from "./inbox-first-policy";
 
 function sanitizedDiscoveryError(error: unknown): string {
   if (error instanceof OAuthAuthorizationError) return error.message;
@@ -60,13 +61,32 @@ export class MailboxDiscoveryService {
         .where(eq(mailAccounts.id, accountId));
       if (this.messages) {
         const selectable = await this.mailboxes.listForAccount(accountId);
-        await Promise.allSettled(
-          selectable
-            .filter((mailbox) => mailbox.selectable)
+        const eligible = selectable.filter((mailbox) => mailbox.selectable);
+        const inbox = eligible.find((mailbox) =>
+          isInboxPath(mailbox.remotePath),
+        );
+        const failures: unknown[] = [];
+        if (inbox) {
+          try {
+            await this.messages.requestSync(accountId, inbox.id);
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        const results = await Promise.allSettled(
+          eligible
+            .filter((mailbox) => mailbox.id !== inbox?.id)
             .map((mailbox) =>
               this.messages!.requestSync(accountId, mailbox.id),
             ),
         );
+        for (const result of results)
+          if (result.status === "rejected") failures.push(result.reason);
+        if (failures.length)
+          throw new AggregateError(
+            failures,
+            "Mailbox synchronization scheduling failed.",
+          );
       }
     } catch (error) {
       const failedAt = new Date();
