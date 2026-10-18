@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MailClient } from "@/components/mail-client";
+import { AppToaster } from "@/components/app-toaster";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { AutoReadPreference } from "@/modules/mail/domain/mail-interactions";
@@ -126,6 +127,10 @@ beforeEach(() => {
   submitted.mockClear();
 });
 afterEach(async () => {
+  // Let in-flight work finish so its toasts cannot leak into the next test.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
   await act(async () => root.unmount());
   document.body.innerHTML = "";
   vi.useRealTimers();
@@ -227,16 +232,19 @@ async function mount(
   vi.stubGlobal("fetch", fetcher);
   await act(async () =>
     root.render(
-      <MailClient
-        initialNotification={
-          options.all ? undefined : { accountId: "a", mailboxId: "a-inbox" }
-        }
-        accounts={accounts}
-        mailboxesByAccount={boxes}
-        rolesByAccount={roles}
-        initialConversationView={options.conversation}
-        initialAutoRead={options.auto}
-      />,
+      <>
+        <MailClient
+          initialNotification={
+            options.all ? undefined : { accountId: "a", mailboxId: "a-inbox" }
+          }
+          accounts={accounts}
+          mailboxesByAccount={boxes}
+          rolesByAccount={roles}
+          initialConversationView={options.conversation}
+          initialAutoRead={options.auto}
+        />
+        <AppToaster />
+      </>,
     ),
   );
   if (options.all) await click("All Inboxes");
@@ -268,6 +276,12 @@ async function selectAll() {
 async function tick(ms: number) {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+// Sonner publishes toasts on a zero-delay timeout.
+async function flushToasts() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
   });
 }
 const mutations = () =>
@@ -352,6 +366,7 @@ it("bulk read keeps each All Inboxes account and mailbox and reports confirmed c
   ]);
   expect(host.textContent).not.toContain("2 messages marked as read");
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain("2 messages marked as read");
 });
 it("rolls back only a failed enqueue and preserves the successful optimistic row", async () => {
@@ -363,6 +378,7 @@ it("rolls back only a failed enqueue and preserves the successful optimistic row
   expect(rows[0].classList.contains("unread")).toBe(false);
   expect(rows[1].classList.contains("unread")).toBe(true);
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain(
     "Message marked as read · 1 message action failed",
   );
@@ -374,6 +390,7 @@ it("reconciles partial remote failures across accounts without claiming all succ
   await selectAll();
   await click("Mark read");
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain("Remote failed");
   expect(host.textContent).toContain(
     "Message marked as read · 1 message action failed",
@@ -390,6 +407,7 @@ it("restores only the failed archived row", async () => {
   expect(host.querySelectorAll(".mail-list-row")).toHaveLength(1);
   expect(host.querySelector(".mail-list-row")?.textContent).toContain("second");
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain(
     "Message archived · 1 message action failed",
   );
@@ -546,6 +564,7 @@ it("batches status requests within the existing 50-command API limit", async () 
           .length,
     ),
   ).toEqual([50, 1]);
+  await flushToasts();
   expect(host.textContent).toContain("51 messages marked as read");
 });
 
@@ -588,11 +607,13 @@ it("bulk unread and Trash use the shared path", async () => {
   expect(mutations()).toHaveLength(1);
   expect(mutations()[0][1].body).toBe('{"action":"mark_unread"}');
   await tick(3000);
+  await flushToasts();
   await key("Delete");
   expect(
     mutations().filter(([, init]) => init.body === '{"action":"trash"}'),
   ).toHaveLength(2);
   await tick(3000);
+  await flushToasts();
   expect(host.textContent).toContain("2 messages moved to Trash");
 });
 it("conversation selection uses loaded members, never group representatives", async () => {

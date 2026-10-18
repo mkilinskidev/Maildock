@@ -38,6 +38,7 @@ import type {
 } from "@/modules/mail/application/message-service";
 import { LogoutButton } from "@/components/logout-button";
 import { ThemeControl } from "@/components/theme-control";
+import { notify } from "@/components/notify";
 import {
   MailComposer,
   sendStatusText,
@@ -124,40 +125,54 @@ export function MailClient({
   const [prepareLocation, setPrepareLocation] = useState("");
   const [composing, setComposing] = useState(false);
   const [outgoing, setOutgoing] = useState<Record<string, SendFeedback>>({});
-  const sentFeedbackTimers = useRef(
-    new Map<string, ReturnType<typeof setTimeout>>(),
-  );
+  const shownOutgoing = useRef(new Map<string, string>());
   useEffect(() => {
-    const timers = sentFeedbackTimers.current;
-    for (const [id, timer] of timers) {
-      if (!autoDismissSentFeedback(outgoing[id])) {
-        clearTimeout(timer);
-        timers.delete(id);
+    const shown = shownOutgoing.current;
+    for (const id of shown.keys())
+      if (!outgoing[id]) {
+        notify.dismiss(`outgoing-${id}`);
+        shown.delete(id);
       }
-    }
     for (const [id, item] of Object.entries(outgoing)) {
-      if (!autoDismissSentFeedback(item) || timers.has(id)) continue;
-      timers.set(
-        id,
-        setTimeout(() => {
-          timers.delete(id);
-          setOutgoing((current) => {
-            if (!autoDismissSentFeedback(current[id])) return current;
-            const next = { ...current };
-            delete next[id];
-            return next;
-          });
-        }, 5000),
-      );
+      const text = [
+        item.status === "sent" && item.sentCopyError
+          ? item.sentCopyError
+          : sendStatusText(item.status, item.sentCopyStatus),
+        item.status === "sent" && item.error ? ` · ${item.error}` : "",
+        item.status === "failed" && item.error ? ` · ${item.error}` : "",
+      ].join("");
+      const signature = `${item.status}|${item.sentCopyStatus ?? ""}|${text}`;
+      if (shown.get(id) === signature) continue;
+      shown.set(id, signature);
+      const toastId = `outgoing-${id}`;
+      const inProgress =
+        ["queued", "sending"].includes(item.status) ||
+        (item.status === "sent" &&
+          ["pending", "saving"].includes(item.sentCopyStatus ?? ""));
+      const forget = () => {
+        shown.delete(id);
+        setOutgoing((current) => {
+          if (!current[id]) return current;
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+      };
+      if (inProgress) notify.loading(text, { id: toastId });
+      else if (autoDismissSentFeedback(item))
+        notify.success(text, {
+          id: toastId,
+          onDismiss: forget,
+          onAutoClose: forget,
+        });
+      else
+        (item.status === "failed" ? notify.error : notify.warning)(text, {
+          id: toastId,
+          duration: Infinity,
+          onDismiss: forget,
+        });
     }
   }, [outgoing]);
-  useEffect(() => {
-    const timers = sentFeedbackTimers.current;
-    return () => {
-      for (const timer of timers.values()) clearTimeout(timer);
-      timers.clear();
-    };
-  }, []);
   useEffect(() => {
     const ids = Object.entries(outgoing)
       .filter(
@@ -285,7 +300,6 @@ export function MailClient({
       }
     >(),
   );
-  const [actionFeedback, setActionFeedback] = useState("");
   const [actionError, setActionError] = useState("");
   function finishFeedback(id: string | undefined, succeeded: boolean) {
     if (!id) return;
@@ -303,18 +317,15 @@ export function MailClient({
       flag: "flagged",
       unflag: "unflagged",
     }[group.action];
-    setActionFeedback(
-      [
-        group.succeeded
-          ? `${group.succeeded === 1 ? "Message" : `${group.succeeded} messages`} ${verb}`
-          : "",
-        group.failed
-          ? `${group.failed} message action${group.failed === 1 ? "" : "s"} failed`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    );
+    const okText = group.succeeded
+      ? `${group.succeeded === 1 ? "Message" : `${group.succeeded} messages`} ${verb}`
+      : "";
+    const failText = group.failed
+      ? `${group.failed} message action${group.failed === 1 ? "" : "s"} failed`
+      : "";
+    const text = [okText, failText].filter(Boolean).join(" · ");
+    if (failText) notify.error(text);
+    else notify.success(text);
   }
   const [countAdjustments, setCountAdjustments] = useState<CountAdjustment[]>(
     [],
@@ -1296,7 +1307,7 @@ export function MailClient({
       const response = await fetch(`${base}/refresh`, { method: "POST" });
       if (!response.ok)
         throw new Error("Synchronization could not be requested.");
-      setActionFeedback(
+      notify.info(
         "Sync requested. Messages update as synchronization completes.",
       );
       const result = await fetch(`${base}?pageSize=50`);
@@ -1719,18 +1730,6 @@ export function MailClient({
         className={`mail-detail-pane${!composing && detail ? " mail-reader" : ""}`}
         aria-label="Message detail"
       >
-        {actionFeedback ? (
-          <div className="send-feedback" role="status">
-            {actionFeedback}
-            <button
-              className="icon-button"
-              aria-label="Dismiss action status"
-              onClick={() => setActionFeedback("")}
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
         {!composing && (selectedTargets.length || openedTarget) ? (
           <MailToolbar
             count={selectedTargets.length}
@@ -1748,36 +1747,6 @@ export function MailClient({
             }
           />
         ) : null}
-        {Object.entries(outgoing).map(([id, item]) => (
-          <div
-            className={`send-feedback send-${item.status}${item.status === "sent" && ["failed", "uncertain"].includes(item.sentCopyStatus ?? "") ? " send-copy-warning" : ""}`}
-            role="status"
-            key={id}
-          >
-            <span>
-              {item.status === "sent" && item.sentCopyError
-                ? item.sentCopyError
-                : sendStatusText(item.status, item.sentCopyStatus)}
-              {item.status === "sent" && item.error ? ` · ${item.error}` : ""}
-              {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
-            </span>
-            {!["queued", "sending"].includes(item.status) ? (
-              <button
-                className="icon-button"
-                aria-label="Dismiss send status"
-                onClick={() =>
-                  setOutgoing((current) => {
-                    const next = { ...current };
-                    delete next[id];
-                    return next;
-                  })
-                }
-              >
-                ×
-              </button>
-            ) : null}
-          </div>
-        ))}
         {composing ? (
           <MailComposer
             key={draft?.id ?? "compose"}

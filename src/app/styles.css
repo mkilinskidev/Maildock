@@ -722,29 +722,6 @@
   align-items: center;
   gap: 8px;
 }
-.send-feedback {
-  display: flex;
-  min-height: 57px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--border);
-  color: var(--secondary);
-  font-size: 13px;
-}
-.send-sent {
-  color: var(--success);
-}
-.send-failed {
-  color: var(--error);
-}
-.send-uncertain {
-  color: var(--warning);
-}
-.send-copy-warning {
-  color: var(--warning);
-}
 .sent-copy-settings {
   margin: 16px 0;
 }
@@ -1430,8 +1407,7 @@ a {
   overflow: hidden;
 }
 .mail-reader > .mail-detail-header,
-.mail-reader > .mail-privacy,
-.mail-reader > .send-feedback {
+.mail-reader > .mail-privacy {
   flex: none;
 }
 .mail-reader > .mail-detail-header {

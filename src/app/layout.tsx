@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { AppToaster } from "@/components/app-toaster";
+
 import "./styles.css";
 
 export const metadata: Metadata = {
@@ -19,7 +21,10 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <AppToaster />
+      </body>
     </html>
   );
 }
