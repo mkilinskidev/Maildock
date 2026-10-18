@@ -15,7 +15,10 @@ export async function POST(
     const denied = await requireOwnerApiAccess(request);
     if (denied) return denied;
     // An empty request tests the saved credentials; JSON supplies overrides.
-    const unsupported = request.body ? requireJsonMediaType(request) : null;
+    // `request.body` is a stream even for bodyless POSTs, so check the text.
+    const unsupported = (await request.clone().text())
+      ? requireJsonMediaType(request)
+      : null;
     if (unsupported) return unsupported;
     try {
       const text = await request.text();

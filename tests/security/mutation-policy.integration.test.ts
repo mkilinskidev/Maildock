@@ -331,6 +331,13 @@ describe("F4 real HTTP handlers and authenticated session boundary", () => {
     expect((await testAccount(empty, context)).status).toBe(200);
     expect(runtime.testExisting).toHaveBeenCalledExactlyOnceWith(id, undefined);
     runtime.testExisting.mockClear();
+    // An empty body stream (as real servers expose for bodyless POSTs) is still bodyless.
+    expect(
+      (await testAccount(request("POST", "", origin, "text/plain"), context))
+        .status,
+    ).toBe(200);
+    expect(runtime.testExisting).toHaveBeenCalledExactlyOnceWith(id, undefined);
+    runtime.testExisting.mockClear();
     expect(
       (await testAccount(request("POST", "{}", origin, "text/plain"), context))
         .status,
