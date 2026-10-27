@@ -13,7 +13,10 @@ const acknowledgedMutations = new Set([
 ]);
 
 /** The owner observes asynchronous failures; protocol promises still reject normally. */
-export function guardImapClient<T extends EventClient>(client: T): T {
+export function guardImapClient<T extends EventClient>(
+  client: T,
+  diagnostics?: { failure(error: unknown): void; close(): void },
+): T {
   let firstFailure: unknown;
   let failed = false;
   const check = () => {
@@ -24,6 +27,8 @@ export function guardImapClient<T extends EventClient>(client: T): T {
     failed = true;
     firstFailure =
       error instanceof Error ? error : new Error("IMAP client failed.");
+    diagnostics?.failure(error);
+    diagnostics?.close();
     try {
       client.close();
     } catch {
@@ -35,6 +40,11 @@ export function guardImapClient<T extends EventClient>(client: T): T {
       const value: unknown = Reflect.get(target, property, target);
       if (typeof value !== "function") return value;
       const name = String(property);
+      if (name === "close")
+        return (...args: unknown[]) => {
+          diagnostics?.close();
+          return Reflect.apply(value, target, args);
+        };
       if (cleanup.has(name) || name === "on") return value.bind(target);
       return (...args: unknown[]) => {
         check();

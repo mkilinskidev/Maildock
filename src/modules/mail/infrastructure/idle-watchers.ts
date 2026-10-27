@@ -5,6 +5,7 @@ import type { PgBoss } from "pg-boss";
 
 import type { AccountsService } from "../../accounts/application/accounts-service";
 import { imapOptions } from "../../accounts/infrastructure/imap-smtp-mail-provider";
+import { createImapSessionDiagnostics } from "../../accounts/infrastructure/imap-session-diagnostics";
 import type { Database } from "../../../shared/infrastructure/database/database";
 import {
   mailAccounts,
@@ -122,22 +123,34 @@ export class IdleWatcherManager {
     };
     const loop = async () => {
       while (!cancelled && !this.stopped) {
+        let diagnostics:
+          ReturnType<typeof createImapSessionDiagnostics> | undefined;
         try {
           const account =
             await this.accounts.getProviderImapAccountForWork(accountId);
           if (cancelled || this.stopped) break;
-          client = this.createClient({
+          const options = {
             ...imapOptions(account.imap),
             disableAutoIdle: false,
             autoIdleDelay: 1000,
             maxIdleTime: 4 * 60_000,
             socketTimeout: 6 * 60_000,
+          };
+          diagnostics = createImapSessionDiagnostics(
+            { accountId, operation: "idle" },
+            options,
+          );
+          client = this.createClient({
+            ...options,
+            logger: diagnostics.logger,
+            logRaw: false,
+            emitLogs: false,
           });
           const active = client;
           const closed = new Promise<void>((resolve) =>
             active.once("close", resolve),
           );
-          active.on("error", () => undefined);
+          active.on("error", diagnostics.failure);
           active.on("exists", wake);
           active.on("flags", wake);
           active.on("expunge", wake);
@@ -170,6 +183,7 @@ export class IdleWatcherManager {
             "IDLE watcher disconnected",
           );
         } finally {
+          diagnostics?.close();
           client?.close();
           client = undefined;
         }

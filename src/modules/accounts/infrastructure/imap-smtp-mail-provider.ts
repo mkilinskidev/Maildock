@@ -11,6 +11,11 @@ import nodemailer from "nodemailer";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { assertImapHealthy, guardImapClient } from "./imap-client-lifecycle";
+import {
+  createImapSessionDiagnostics,
+  imapFailureSessionId,
+  type ImapDiagnosticContext,
+} from "./imap-session-diagnostics";
 import { decodeAttachment } from "./decode-attachment";
 import { discoverAttachments } from "../../mail/domain/attachments";
 import { BlobLimitError } from "../../../shared/application/blob-storage";
@@ -289,7 +294,9 @@ export function providerFailureDiagnostics(
       ? candidate.serverResponseCode.toUpperCase()
       : "";
   const code = typeof candidate?.code === "string" ? candidate.code : "";
+  const imapSessionId = imapFailureSessionId(error);
   return {
+    ...(imapSessionId ? { imapSessionId } : {}),
     ...(status === "NO" || status === "BAD" ? { imapStatus: status } : {}),
     ...(/^[A-Z][A-Z0-9-]{0,39}$/.test(responseCode)
       ? { imapResponseCode: responseCode }
@@ -625,7 +632,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     let client: ImapClient | undefined;
     let appendStarted = false;
     try {
-      client = this.createImap(imapOptions(account.imap));
+      client = this.createImap(imapOptions(account.imap), {
+        accountId: account.accountId,
+        operation: "append",
+      });
       await client.connect();
       // ImapFlow filters APPEND flags against the selected mailbox's
       // PERMANENTFLAGS. EXAMINE may report none, silently dropping \Seen.
@@ -669,7 +679,10 @@ export class ImapSmtpMailProvider implements MailProvider {
   ): Promise<SentCopyLookupResult> {
     let client: ImapClient | undefined;
     try {
-      client = this.createImap(imapOptions(account.imap));
+      client = this.createImap(imapOptions(account.imap), {
+        accountId: account.accountId,
+        operation: "sent_copy_lookup",
+      });
       await client.connect();
       const selected = await client.mailboxOpen(remotePath, { readOnly: true });
       const uids = await client.search(
@@ -807,15 +820,35 @@ export class ImapSmtpMailProvider implements MailProvider {
     private readonly factories: ProtocolClientFactories = defaultFactories,
   ) {}
 
-  private createImap(options: ImapFlowOptions): ImapClient {
-    return guardImapClient(this.factories.createImap(options));
+  private createImap(
+    options: ImapFlowOptions,
+    context: ImapDiagnosticContext,
+  ): ImapClient {
+    const diagnostics = createImapSessionDiagnostics(context, options);
+    try {
+      return guardImapClient(
+        this.factories.createImap({
+          ...options,
+          logger: diagnostics.logger,
+          logRaw: false,
+          emitLogs: false,
+        }),
+        diagnostics,
+      );
+    } catch (error) {
+      diagnostics.close();
+      throw error;
+    }
   }
 
   async mutateMessage(
     account: ProviderImapAccount,
     request: RemoteMutationRequest,
   ): Promise<RemoteMutationResult> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "message_command",
+    });
     let connected = false;
     let selected = false;
     try {
@@ -959,7 +992,7 @@ export class ImapSmtpMailProvider implements MailProvider {
 
   async testConnection(account: ProviderAccount): Promise<ConnectionReport> {
     return {
-      imap: await this.testImap(account.imap),
+      imap: await this.testImap(account.imap, account.accountId),
       smtp: await this.testSmtp(account.smtp),
     };
   }
@@ -967,7 +1000,10 @@ export class ImapSmtpMailProvider implements MailProvider {
   async listMailboxes(
     account: ProviderImapAccount,
   ): Promise<MailboxDiscoveryResult> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "discovery",
+    });
     let connected = false;
     try {
       await client.connect();
@@ -1010,7 +1046,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     request: RecentMailboxSyncRequest,
     rawSink: RecentMailboxSyncSink,
   ): Promise<RecentMailboxSyncResult> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "recent_sync",
+    });
     const phase: { current: SyncPhase } = { current: "connect" };
     const sink = trackSink(rawSink, phase);
     let connected = false;
@@ -1099,7 +1138,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     request: BackfillMailboxSyncRequest,
     rawSink: BackfillMailboxSyncSink,
   ): Promise<void> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "backfill_sync",
+    });
     const phase: { current: SyncPhase } = { current: "connect" };
     const sink = trackSink(rawSink, phase);
     let connected = false;
@@ -1229,7 +1271,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     batchSize: number,
     rawSink: DeltaMailboxSyncSink,
   ): Promise<void> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "delta_sync",
+    });
     const phase: { current: SyncPhase } = { current: "connect" };
     const sink = trackSink(rawSink, phase);
     let connected = false;
@@ -1455,7 +1500,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     },
     consume: (bytes: AsyncIterable<Uint8Array>) => Promise<T>,
   ): Promise<T> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "attachment",
+    });
     try {
       const uid = Number(request.uid);
       if (
@@ -1551,7 +1599,10 @@ export class ImapSmtpMailProvider implements MailProvider {
     account: ProviderImapAccount,
     request: DisplayContentRequest,
   ): Promise<DisplayContentResult> {
-    const client = this.createImap(imapOptions(account.imap));
+    const client = this.createImap(imapOptions(account.imap), {
+      accountId: account.accountId,
+      operation: "message_content",
+    });
     let connected = false;
     let selected = false;
     try {
@@ -1677,8 +1728,12 @@ export class ImapSmtpMailProvider implements MailProvider {
 
   private async testImap(
     connection: ProviderConnection,
+    accountId: string,
   ): Promise<ProtocolConnectionResult> {
-    const client = this.createImap(imapOptions(connection));
+    const client = this.createImap(imapOptions(connection), {
+      accountId,
+      operation: "connection_test",
+    });
     try {
       await client.connect();
       await client.logout();

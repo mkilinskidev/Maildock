@@ -48,6 +48,7 @@ export type SyncPhase = (typeof syncPhases)[number];
  * response text, command arguments or exception messages.
  */
 export type ProviderFailureDiagnostics = Readonly<{
+  imapSessionId?: string;
   phase?: SyncPhase;
   imapStatus?: "NO" | "BAD";
   imapResponseCode?: string;

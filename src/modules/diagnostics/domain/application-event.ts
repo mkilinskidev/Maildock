@@ -83,6 +83,7 @@ export const diagnosticDetailsSchema = z
       .optional(),
     // Fixed protocol tokens only: never server response text or error messages.
     phase: z.enum(syncPhases).optional(),
+    imapSessionId: z.uuid().optional(),
     reason: z.enum(["idle", "poll", "manual", "post-discovery"]).optional(),
     imapStatus: z.enum(["NO", "BAD"]).optional(),
     imapResponseCode: z
