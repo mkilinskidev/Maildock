@@ -5,6 +5,7 @@ import { createLogger } from "../../../shared/infrastructure/logging/logger";
 
 export type ImapDiagnosticContext = Readonly<{
   accountId?: string;
+  initializationDeadlineMs?: number;
   operation:
     | "append"
     | "sent_copy_lookup"
@@ -69,10 +70,15 @@ export function createImapSessionDiagnostics(
   context: ImapDiagnosticContext,
   options: Pick<
     ImapFlowOptions,
-    "connectionTimeout" | "greetingTimeout" | "socketTimeout"
+    | "connectionTimeout"
+    | "greetingTimeout"
+    | "socketTimeout"
+    | "oauthAuthenticationTimeout"
   >,
   write: (entry: Record<string, unknown>) => void = (entry) =>
-    logger.warn(entry, "IMAP session timed out"),
+    entry.event === "mail.imap_authentication_slow"
+      ? logger.info(entry, "Slow IMAP authentication completed")
+      : logger.warn(entry, "IMAP session timed out"),
   now: () => number = () => performance.now(),
 ) {
   const sessionId = randomUUID();
@@ -130,6 +136,7 @@ export function createImapSessionDiagnostics(
         connectionTimeoutMs: options.connectionTimeout,
         greetingTimeoutMs: options.greetingTimeout,
         socketTimeoutMs: options.socketTimeout,
+        oauthAuthenticationTimeoutMs: options.oauthAuthenticationTimeout,
       });
     } catch {
       // Diagnostics must never change a protocol result or its teardown.
@@ -161,6 +168,21 @@ export function createImapSessionDiagnostics(
         if (pending && typeof entry.msg === "string") {
           const match = /^([a-zA-Z0-9]+) (OK|NO|BAD)(?:\s|$)/.exec(entry.msg);
           if (match?.[1] === pending.tag) {
+            if (
+              pending.command === "AUTHENTICATE" &&
+              match[2] === "OK" &&
+              options.oauthAuthenticationTimeout &&
+              at - pending.started >= 15_000
+            ) {
+              write({
+                event: "mail.imap_authentication_slow",
+                ...context,
+                imapSessionId: sessionId,
+                authenticationDurationMs: elapsed(pending.started, at),
+                oauthAuthenticationTimeoutMs:
+                  options.oauthAuthenticationTimeout,
+              });
+            }
             if (pending.command === "COMPRESS" && match[2] === "OK")
               compressionEnabled = true;
             completed = {

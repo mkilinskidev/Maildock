@@ -145,6 +145,7 @@ export function createWorkerComposition() {
   );
   return {
     events,
+    deltaConnectionExperiment: provider,
     attachments,
     attachmentPoller: new AttachmentPoller(attachments),
     outgoing,

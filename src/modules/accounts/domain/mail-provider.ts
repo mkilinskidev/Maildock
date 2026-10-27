@@ -16,7 +16,11 @@ export type ProviderAccount = Readonly<{
   smtp: ProviderConnection;
 }>;
 
-export type ProviderImapAccount = Pick<ProviderAccount, "accountId" | "imap">;
+export type ProviderImapAccount = Pick<ProviderAccount, "accountId" | "imap"> &
+  Readonly<{
+    oauthProviderId?: string | null;
+    signal?: AbortSignal;
+  }>;
 
 export type ConnectionFailureCategory =
   | "dns_or_host_unreachable"

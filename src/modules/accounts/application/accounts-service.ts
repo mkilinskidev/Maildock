@@ -456,6 +456,7 @@ export class AccountsService {
     if (!row.enabled) throw new DisabledMailAccountError();
     return {
       accountId: row.id,
+      oauthProviderId: row.oauthProviderId,
       imap: {
         host: row.imapHost,
         port: row.imapPort,

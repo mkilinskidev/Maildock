@@ -39,6 +39,10 @@ vi.mock("@/composition/worker", async () => {
       return {
         logger: createLogger({ logLevel: "info" }),
         events: { cleanup: async () => {} },
+        deltaConnectionExperiment: {
+          startDeltaConnectionExperiment: vi.fn(),
+          stopDeltaConnectionExperiment: vi.fn(),
+        },
         database: {
           db: {},
           client: Object.assign(

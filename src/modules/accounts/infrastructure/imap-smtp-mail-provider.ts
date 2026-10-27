@@ -12,6 +12,10 @@ import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { assertImapHealthy, guardImapClient } from "./imap-client-lifecycle";
 import {
+  GmailDeltaConnectionExperiment,
+  GMAIL_DELTA_INITIALIZATION_TIMEOUT_MS,
+} from "./gmail-delta-connection-experiment";
+import {
   createImapSessionDiagnostics,
   imapFailureSessionId,
   type ImapDiagnosticContext,
@@ -820,13 +824,26 @@ export class ImapSmtpMailProvider implements MailProvider {
     private readonly factories: ProtocolClientFactories = defaultFactories,
   ) {}
 
+  private readonly gmailDeltaConnections = new GmailDeltaConnectionExperiment();
+  private readonly sessionDiagnostics = new WeakMap<
+    ImapClient,
+    ReturnType<typeof createImapSessionDiagnostics>
+  >();
+
+  startDeltaConnectionExperiment(): void {
+    this.gmailDeltaConnections.start();
+  }
+  stopDeltaConnectionExperiment(): void {
+    this.gmailDeltaConnections.stop();
+  }
+
   private createImap(
     options: ImapFlowOptions,
     context: ImapDiagnosticContext,
   ): ImapClient {
     const diagnostics = createImapSessionDiagnostics(context, options);
     try {
-      return guardImapClient(
+      const client = guardImapClient(
         this.factories.createImap({
           ...options,
           logger: diagnostics.logger,
@@ -835,6 +852,8 @@ export class ImapSmtpMailProvider implements MailProvider {
         }),
         diagnostics,
       );
+      this.sessionDiagnostics.set(client, diagnostics);
+      return client;
     } catch (error) {
       diagnostics.close();
       throw error;
@@ -1271,16 +1290,34 @@ export class ImapSmtpMailProvider implements MailProvider {
     batchSize: number,
     rawSink: DeltaMailboxSyncSink,
   ): Promise<void> {
-    const client = this.createImap(imapOptions(account.imap), {
+    const experiment =
+      account.oauthProviderId === "google" &&
+      account.imap.credential.kind === "oauth2";
+    const options = imapOptions(account.imap);
+    if (experiment)
+      options.oauthAuthenticationTimeout =
+        GMAIL_DELTA_INITIALIZATION_TIMEOUT_MS;
+    const client = this.createImap(options, {
       accountId: account.accountId,
       operation: "delta_sync",
+      ...(experiment
+        ? { initializationDeadlineMs: GMAIL_DELTA_INITIALIZATION_TIMEOUT_MS }
+        : {}),
     });
     const phase: { current: SyncPhase } = { current: "connect" };
     const sink = trackSink(rawSink, phase);
     let connected = false;
     let selected = false;
     try {
-      await client.connect();
+      if (experiment) {
+        await this.gmailDeltaConnections.connect(
+          client,
+          account.signal,
+          (error) => this.sessionDiagnostics.get(client)?.failure(error),
+        );
+      } else {
+        await client.connect();
+      }
       connected = true;
       phase.current = "open_mailbox";
       const mailbox = await client.mailboxOpen(remotePath, { readOnly: true });

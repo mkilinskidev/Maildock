@@ -43,6 +43,46 @@ index e61aa226f02e55076d33bb811155371a72ed457d..9e85e59de7ce189887f398195e71381c
 +}
  module.exports = exports.default;
  Object.defineProperty(module.exports, 'default', { value: exports.default, enumerable: false, writable: true, configurable: true });
+diff --git a/dist/cjs/imap-flow.js b/dist/cjs/imap-flow.js
+index 395e9c78f176f155fe462e9b8f9e1d5c3216d875..2910e26b2d65c2e4656bbb6164036c3d0bf9b4df 100644
+--- a/dist/cjs/imap-flow.js
++++ b/dist/cjs/imap-flow.js
+@@ -1561,7 +1561,21 @@ class ImapFlow extends node_events_1.EventEmitter {
+             loginMethod = 'LOGIN';
+         }
+         if (this.options.auth.accessToken) {
+-            this.authenticated = await this.run('AUTHENTICATE', this.options.auth.user, { accessToken: this.options.auth.accessToken });
++            // Maildock experiment: only OAuth AUTHENTICATE gets the opt-in budget.
++            // Restore the ordinary inactivity watchdog before any later command.
++            const authenticationTimeout = Number(this.options.oauthAuthenticationTimeout);
++            const extended = Number.isFinite(authenticationTimeout) && authenticationTimeout > 0;
++            if (extended && this.socket && !this.socket.destroyed) {
++                this.socket.setTimeout(authenticationTimeout);
++            }
++            try {
++                this.authenticated = await this.run('AUTHENTICATE', this.options.auth.user, { accessToken: this.options.auth.accessToken });
++            }
++            finally {
++                if (extended && this.socket && !this.socket.destroyed) {
++                    this.socket.setTimeout(this.socketTimeout);
++                }
++            }
+         }
+         else if (this.options.auth.pass) {
+             if ((this.capabilities.has('AUTH=LOGIN') || this.capabilities.has('AUTH=PLAIN')) && loginMethod !== 'LOGIN') {
+diff --git a/dist/cjs/types.d.ts b/dist/cjs/types.d.ts
+index d584e74d176a3aaf62f08df2339b479b08a7ec08..dab15b4508a79c3fc84883084e32a186f58623db 100644
+--- a/dist/cjs/types.d.ts
++++ b/dist/cjs/types.d.ts
+@@ -28,6 +28,8 @@ export interface AuthOptions {
+     authzid?: string | undefined;
+ }
+ export interface ImapFlowOptions {
++    /** Opt-in OAuth AUTHENTICATE inactivity budget; later commands retain socketTimeout. */
++    oauthAuthenticationTimeout?: number | undefined;
+     /** Hostname of the IMAP server */
+     host?: string | undefined;
+     /** Port number for the IMAP server */
 diff --git a/dist/esm/commands/store.js b/dist/esm/commands/store.js
 index bd5628acf78a55fa1ba9f7e0d34cdbe42d391d13..2a4ee6befb720d3f9837ffb502833317450b7c33 100644
 --- a/dist/esm/commands/store.js
@@ -86,3 +126,43 @@ index bd5628acf78a55fa1ba9f7e0d34cdbe42d391d13..2a4ee6befb720d3f9837ffb502833317
 +    error.code = 'ConditionalStoreFailed';
 +    return error;
 +}
+diff --git a/dist/esm/imap-flow.js b/dist/esm/imap-flow.js
+index 2dc5e2d7a3736187bccb100dd878273e19f7fa30..d7dde6db07d92747cfa4c5b3b27853bc17acefa2 100644
+--- a/dist/esm/imap-flow.js
++++ b/dist/esm/imap-flow.js
+@@ -1521,7 +1521,21 @@ export class ImapFlow extends EventEmitter {
+             loginMethod = 'LOGIN';
+         }
+         if (this.options.auth.accessToken) {
+-            this.authenticated = await this.run('AUTHENTICATE', this.options.auth.user, { accessToken: this.options.auth.accessToken });
++            // Maildock experiment: only OAuth AUTHENTICATE gets the opt-in budget.
++            // Restore the ordinary inactivity watchdog before any later command.
++            const authenticationTimeout = Number(this.options.oauthAuthenticationTimeout);
++            const extended = Number.isFinite(authenticationTimeout) && authenticationTimeout > 0;
++            if (extended && this.socket && !this.socket.destroyed) {
++                this.socket.setTimeout(authenticationTimeout);
++            }
++            try {
++                this.authenticated = await this.run('AUTHENTICATE', this.options.auth.user, { accessToken: this.options.auth.accessToken });
++            }
++            finally {
++                if (extended && this.socket && !this.socket.destroyed) {
++                    this.socket.setTimeout(this.socketTimeout);
++                }
++            }
+         }
+         else if (this.options.auth.pass) {
+             if ((this.capabilities.has('AUTH=LOGIN') || this.capabilities.has('AUTH=PLAIN')) && loginMethod !== 'LOGIN') {
+diff --git a/dist/esm/types.d.ts b/dist/esm/types.d.ts
+index d584e74d176a3aaf62f08df2339b479b08a7ec08..dab15b4508a79c3fc84883084e32a186f58623db 100644
+--- a/dist/esm/types.d.ts
++++ b/dist/esm/types.d.ts
+@@ -28,6 +28,8 @@ export interface AuthOptions {
+     authzid?: string | undefined;
+ }
+ export interface ImapFlowOptions {
++    /** Opt-in OAuth AUTHENTICATE inactivity budget; later commands retain socketTimeout. */
++    oauthAuthenticationTimeout?: number | undefined;
+     /** Hostname of the IMAP server */
+     host?: string | undefined;
+     /** Port number for the IMAP server */

@@ -222,7 +222,7 @@ describe("Phase 1E delta scheduling and IDLE", () => {
   it("runs recent and delta workers through the same mailbox lock callback", async () => {
     const handlers = new Map<
       string,
-      (jobs: { data: unknown }[]) => Promise<void>
+      (jobs: { data: unknown; signal?: AbortSignal }[]) => Promise<void>
     >();
     const jobs = {
       createQueue: async () => undefined,
@@ -230,7 +230,9 @@ describe("Phase 1E delta scheduling and IDLE", () => {
       work: async (
         name: string,
         _options: unknown,
-        handler: (jobs: { data: unknown }[]) => Promise<void>,
+        handler: (
+          jobs: { data: unknown; signal?: AbortSignal }[],
+        ) => Promise<void>,
       ) => {
         handlers.set(name, handler);
       },
@@ -254,14 +256,22 @@ describe("Phase 1E delta scheduling and IDLE", () => {
         data: { version: 1, accountId, mailboxId },
       },
     ]);
+    const signal = new AbortController().signal;
     await handlers.get(MAILBOX_DELTA_SYNC_QUEUE)!([
       {
         data: { version: 1, accountId, mailboxId, reason: "poll" },
+        signal,
       },
     ]);
     expect(locked).toEqual([mailboxId, mailboxId]);
     expect(recent.runRecentSync).toHaveBeenCalledOnce();
     expect(delta.run).toHaveBeenCalledOnce();
+    expect(delta.run).toHaveBeenCalledWith(
+      accountId,
+      mailboxId,
+      "poll",
+      signal,
+    );
   });
 
   it.each(["exists", "flags", "expunge", "mailboxClose"] as const)(

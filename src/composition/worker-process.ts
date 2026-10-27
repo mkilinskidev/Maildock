@@ -34,6 +34,7 @@ async function main() {
   function requestShutdown(signal: string) {
     if (stopping) return;
     stopping = true;
+    worker.deltaConnectionExperiment.stopDeltaConnectionExperiment();
     shutdownController.abort();
     clearInterval(retentionTimer);
     worker.logger.info(
@@ -43,6 +44,7 @@ async function main() {
   }
 
   async function stopBusinessWorkers() {
+    worker.deltaConnectionExperiment.stopDeltaConnectionExperiment();
     worker.attachmentPoller.stop();
     worker.poller.stop();
     worker.backfillPoller.stop();
@@ -85,6 +87,7 @@ async function main() {
     while (!stopping && !(await isInstanceReady(worker.database.db)))
       await waitForReadinessPoll();
     if (stopping) return;
+    worker.deltaConnectionExperiment.startDeltaConnectionExperiment();
     await worker.jobs.start();
     await registerAttachmentWorker(worker.jobs.boss, worker.attachments);
     await worker.attachmentPoller.start();

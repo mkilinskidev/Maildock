@@ -35,6 +35,7 @@ export class DeltaSyncService {
     accountId: string,
     mailboxId: string,
     reason: DeltaReason,
+    signal?: AbortSignal,
   ): Promise<void> {
     const [mailbox] = await this.database
       .select()
@@ -84,7 +85,7 @@ export class DeltaSyncService {
       if (!this.provider.synchronizeDeltaMailbox)
         throw new Error("Delta provider is unavailable.");
       await this.provider.synchronizeDeltaMailbox(
-        account,
+        signal ? { ...account, signal } : account,
         mailbox.remotePath,
         this.batchSize,
         {

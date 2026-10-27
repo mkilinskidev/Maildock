@@ -126,7 +126,9 @@ export async function registerDeltaWorker(
           yielded = true;
           return;
         }
-        await service.run(accountId, mailboxId, reason);
+        if (job.signal)
+          await service.run(accountId, mailboxId, reason, job.signal);
+        else await service.run(accountId, mailboxId, reason);
       });
     } catch (error) {
       // Busy means nothing ran: requeue shortly instead of burning backoff.
