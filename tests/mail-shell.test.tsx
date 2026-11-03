@@ -201,6 +201,42 @@ async function mount(
   );
   return fetcher;
 }
+it("refreshes account warnings without reloading and keeps the last status after an invalid response", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const fetcher = await mount();
+  const originalFetch = fetcher.getMockImplementation()!;
+  let accountResponse: unknown = {
+    accounts: [
+      {
+        ...accounts[0],
+        oauthProviderName: "Google",
+        oauthStatus: "reconnect_required",
+      },
+      accounts[1],
+    ],
+  };
+  fetcher.mockImplementation(async (input, init) =>
+    String(input) === "/api/accounts"
+      ? Response.json(accountResponse)
+      : originalFetch(input, init),
+  );
+  expect(host.querySelector(".tree-account-warning")).toBeNull();
+  await act(async () => vi.advanceTimersByTimeAsync(20_000));
+  expect(
+    host.querySelector(".tree-account-warning")?.getAttribute("title"),
+  ).toContain(
+    "Google authorization expired or was revoked. Reconnect the account",
+  );
+  await click("Account a");
+  expect(host.querySelector(".tree-account-warning")).not.toBeNull();
+  accountResponse = {};
+  await act(async () => vi.advanceTimersByTimeAsync(20_000));
+  expect(host.querySelector(".tree-account-warning")).not.toBeNull();
+  accountResponse = { accounts };
+  await act(async () => vi.advanceTimersByTimeAsync(20_000));
+  expect(host.querySelector(".tree-account-warning")).toBeNull();
+});
 it.each([false, true])(
   "notification click opens the source account/mailbox/message from All Inboxes (conversation=%s)",
   async (conversation) => {

@@ -237,10 +237,10 @@ export function MailboxTree({
           ? undefined
           : account.oauthStatus === "reconnect_required"
             ? `${account.oauthProviderName ?? "Provider"} authorization expired or was revoked. Reconnect the account in Accounts & settings to resume mail synchronization.`
-            : account.imapResult.status === "error"
+            : account.imapResult?.status === "error"
               ? account.imapResult.error ||
                 "The mail server connection failed. Check Accounts & settings."
-              : account.mailboxDiscovery.status === "failed"
+              : account.mailboxDiscovery?.status === "failed"
                 ? account.mailboxDiscovery.error ||
                   "Folders could not be loaded. Check Accounts & settings."
                 : undefined;

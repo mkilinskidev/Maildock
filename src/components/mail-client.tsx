@@ -1038,7 +1038,8 @@ export function MailClient({
             return response.json() as Promise<{ accounts: MailAccountView[] }>;
           })
           .then((result) => {
-            if (!cancelled) setLiveAccounts(result.accounts);
+            if (!cancelled && Array.isArray(result.accounts))
+              setLiveAccounts(result.accounts);
           }),
         ...accounts.map(async ({ id: pollAccountId }) => {
           return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
