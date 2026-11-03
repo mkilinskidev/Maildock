@@ -2194,6 +2194,13 @@ label.checkbox input {
 .mail-folders .tree-disclosure {
   font-weight: 650;
 }
+.tree-account-warning {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--warning);
+  cursor: help;
+}
 .mail-folders .contains-selection {
   color: var(--accent);
 }

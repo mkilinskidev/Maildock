@@ -122,6 +122,7 @@ export function MailClient({
   };
 }) {
   const conversationView = initialConversationView;
+  const [liveAccounts, setLiveAccounts] = useState(accounts);
   const listModeRef = useRef(conversationView);
   const [listReloadNonce, setListReloadNonce] = useState(0);
   const [memberSelection, setMemberSelection] = useState<{
@@ -1030,8 +1031,16 @@ export function MailClient({
     const load = () => {
       if (document.visibilityState !== "visible" || busy) return;
       busy = true;
-      void Promise.allSettled(
-        accounts.map(async ({ id: pollAccountId }) => {
+      void Promise.allSettled([
+        fetch("/api/accounts", { cache: "no-store" })
+          .then(async (response) => {
+            if (!response.ok) throw new Error("Accounts could not be loaded.");
+            return response.json() as Promise<{ accounts: MailAccountView[] }>;
+          })
+          .then((result) => {
+            if (!cancelled) setLiveAccounts(result.accounts);
+          }),
+        ...accounts.map(async ({ id: pollAccountId }) => {
           return fetch(`/api/accounts/${pollAccountId}/mailboxes`, {
             cache: "no-store",
           })
@@ -1073,7 +1082,7 @@ export function MailClient({
               // Keep the last known counts; the next poll retries.
             });
         }),
-      ).finally(() => {
+      ]).finally(() => {
         busy = false;
       });
     };
@@ -1510,7 +1519,7 @@ export function MailClient({
           New message
         </button>
         <MailboxTree
-          accounts={accounts}
+          accounts={liveAccounts}
           boxes={liveMailboxesByAccount}
           roles={liveRolesByAccount}
           accountId={accountId}

@@ -1,6 +1,13 @@
 "use client";
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Folder, Inbox, Mail } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Folder,
+  Inbox,
+  Mail,
+} from "lucide-react";
 import type { MailAccountView } from "@/modules/accounts/application/accounts-service";
 import type { MailboxView } from "@/modules/mail/application/mailbox-service";
 import type { MailboxRoleView } from "@/modules/mail/application/mailbox-role-service";
@@ -89,7 +96,12 @@ export function MailboxTree({
   );
   const toggle = (key: string) =>
     setCollapsed((c) => ({ ...c, [key]: !c[key] }));
-  const disclosure = (key: string, label: string, active = false) => (
+  const disclosure = (
+    key: string,
+    label: string,
+    active = false,
+    warning?: string,
+  ) => (
     <button
       className={`tree-disclosure${active ? " contains-selection" : ""}`}
       aria-expanded={!collapsed[key]}
@@ -97,6 +109,16 @@ export function MailboxTree({
     >
       {collapsed[key] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
       <span className="folder-name">{label}</span>
+      {warning ? (
+        <span
+          className="tree-account-warning"
+          title={warning}
+          role="img"
+          aria-label={warning}
+        >
+          <CircleAlert size={16} aria-hidden="true" />
+        </span>
+      ) : null}
     </button>
   );
   const mailbox = (account: string, box: MailboxView, label = box.name) => {
@@ -211,6 +233,17 @@ export function MailboxTree({
         );
         const key = `account:${account.id}`;
         const otherKey = `other:${account.id}`;
+        const warning = !account.enabled
+          ? undefined
+          : account.oauthStatus === "reconnect_required"
+            ? `${account.oauthProviderName ?? "Provider"} authorization expired or was revoked. Reconnect the account in Accounts & settings to resume mail synchronization.`
+            : account.imapResult.status === "error"
+              ? account.imapResult.error ||
+                "The mail server connection failed. Check Accounts & settings."
+              : account.mailboxDiscovery.status === "failed"
+                ? account.mailboxDiscovery.error ||
+                  "Folders could not be loaded. Check Accounts & settings."
+                : undefined;
         return (
           <section
             className="tree-account"
@@ -224,6 +257,7 @@ export function MailboxTree({
                 !showDrafts &&
                 !allInboxes &&
                 accountId === account.id,
+              warning,
             )}
             {!collapsed[key] ? (
               <div className="tree-account-folders">
